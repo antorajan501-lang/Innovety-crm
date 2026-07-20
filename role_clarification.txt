@@ -1,0 +1,61 @@
+================================================================================
+                    MRF CRM ROLE & PERMISSIONS CLARIFICATION
+================================================================================
+
+This document details the responsibilities, actions, and features available for each of the three user roles (ADMIN, TEAM_LEADER, INTERN) defined within the MRF Enterprise CRM.
+
+--------------------------------------------------------------------------------
+1. ADMIN ROLE
+--------------------------------------------------------------------------------
+The Admin possesses full site-wide configuration rights and system monitoring tools.
+
+Key Permissions:
+- Site Settings: Edit company branding, shift core timing boundaries (deadlines), 
+  office GPS geofencing coordinates (Latitude, Longitude), office location names, 
+  and allowed ranges.
+- Intern Registry: Onboard new interns, modify status, download registry, or bulk import.
+- Team Leaders: Onboard team leaders, modify status, or reset credentials.
+- Teams Hub: Create workspace teams, edit description, assign leaders, and allocate 
+  interns to teams.
+- Task Management: Assign tasks to individuals or entire teams. Monitor progress 
+  on the timeline backlog and Kanban boards. Update task status, story points, type, 
+  priority, and review intern submissions.
+- Attendance Audits: Review all system-wide clock-in/out records, verify IPs, 
+  browser headers, and reverse-geocoded addresses.
+- System Logs: Monitor system-wide operations and audit trails.
+- Announcements: Post general system announcements.
+
+--------------------------------------------------------------------------------
+2. TEAM_LEADER ROLE
+--------------------------------------------------------------------------------
+The Team Leader manages allocated teams, delegates tasks, and verifies work submissions.
+
+Key Permissions:
+- Team Hub: View lead workspace teams, check active members (teammates), review 
+  assigned team tasks.
+- Task Management: Create and assign tasks to members of their team. Edit task details, 
+  story points, priorities, and update status. Review task submissions from interns 
+  under their purview (approve or reject).
+- Attendance Audits: View attendance logs of interns belonging to their teams.
+- Ticket Desk: Raise or resolve support tickets.
+- Announcements: Broadcast targeted team announcements.
+
+--------------------------------------------------------------------------------
+3. INTERN ROLE
+--------------------------------------------------------------------------------
+The Intern role represents the active team member completing tasks and logging daily attendance.
+
+Key Permissions:
+- Dashboard: View task status charts, log in/out widgets, recent notifications.
+- Attendance Clock: Clock-in and clock-out daily. Geolocation coordinates and 
+  reverse-geocoded address names are validated against the admin's configured 
+  office location radius. Includes Google Maps interactive visualization of their 
+  current check-in position.
+- Team Hub: Access their assigned team workspace, review team details, contact 
+  their Team Leader, view teammates, and inspect team tasks.
+- Tasks Board: View assigned tasks. Drag tasks between "To Do", "In Progress", 
+  and "In Review" statuses. Toggle subtask checklists. Upload work files or submit notes.
+- Ticket Desk: Open support tickets for technical or HR queries.
+- Announcements: Receive general or team-specific broadcasts.
+
+================================================================================

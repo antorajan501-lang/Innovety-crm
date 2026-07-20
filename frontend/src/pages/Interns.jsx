@@ -1,0 +1,566 @@
+import React, { useState, useEffect } from 'react';
+import api from '../services/api';
+import {
+  Plus,
+  Search,
+  Filter,
+  Trash2,
+  Lock,
+  Download,
+  Upload,
+  MoreVertical,
+  X,
+  CheckCircle,
+  AlertCircle,
+  Edit2
+} from 'lucide-react';
+
+const Interns = () => {
+  const [users, setUsers] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  // Modals state
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState(null);
+
+  // Form states
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    dob: '',
+    college: '',
+    department: '',
+    joiningDate: '',
+    role: 'INTERN'
+  });
+
+  const [importText, setImportText] = useState('');
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [alertMsg, setAlertMsg] = useState({ type: '', text: '' });
+  const [loading, setLoading] = useState(false);
+
+  const fetchUsers = async () => {
+    try {
+      setLoading(true);
+      const res = await api.get('/users', {
+        params: {
+          page,
+          search,
+          role: 'INTERN',
+          status: statusFilter,
+          limit: 15
+        }
+      });
+      setUsers(res.data.users);
+      setTotalCount(res.data.meta.totalCount);
+      setLoading(false);
+    } catch (err) {
+      console.error(err);
+      setAlertMsg({ type: 'error', text: 'Failed to fetch users registry.' });
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchUsers();
+  }, [page, statusFilter]);
+
+  const handleSearchSubmit = (e) => {
+    e.preventDefault();
+    setPage(1);
+    fetchUsers();
+  };
+
+  const handleInputChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleCreateSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      await api.post('/users', formData);
+      setCreateModalOpen(false);
+      setFormData({
+        name: '',
+        email: '',
+        phone: '',
+        dob: '',
+        college: '',
+        department: '',
+        joiningDate: '',
+        role: 'INTERN'
+      });
+      setAlertMsg({ type: 'success', text: 'User onboarded successfully! Welcome email is being dispatched.' });
+      fetchUsers();
+    } catch (err) {
+      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to onboard user.' });
+      setLoading(false);
+    }
+  };
+
+  const handleEditSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      setLoading(true);
+      await api.put(`/users/${selectedUser.id}`, { ...formData, role: 'INTERN' });
+      setEditModalOpen(false);
+      setSelectedUser(null);
+      setAlertMsg({ type: 'success', text: 'User details updated.' });
+      fetchUsers();
+    } catch (err) {
+      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to edit user details.' });
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this user? This action is permanent.')) return;
+    try {
+      await api.delete(`/users/${id}`);
+      setAlertMsg({ type: 'success', text: 'User account removed.' });
+      fetchUsers();
+    } catch (err) {
+      setAlertMsg({ type: 'error', text: 'Failed to delete user.' });
+    }
+  };
+
+  const handleToggleStatus = async (id, currentStatus) => {
+    const nextStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    try {
+      await api.put(`/users/${id}/status`, { status: nextStatus });
+      setAlertMsg({ type: 'success', text: `User status set to ${nextStatus}.` });
+      fetchUsers();
+    } catch (err) {
+      setAlertMsg({ type: 'error', text: 'Failed to toggle status.' });
+    }
+  };
+
+  const handleResetPassword = async (id) => {
+    try {
+      const res = await api.put(`/users/${id}/reset-password`);
+      setAlertMsg({
+        type: 'success',
+        text: `Password reset to default DOB format. Temporary: "${res.data.tempPassword}"`
+      });
+    } catch (err) {
+      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to reset password.' });
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(`Delete ${selectedIds.length} users?`)) return;
+
+    try {
+      await api.post('/users/bulk-delete', { ids: selectedIds });
+      setSelectedIds([]);
+      setAlertMsg({ type: 'success', text: 'Selected accounts deleted.' });
+      fetchUsers();
+    } catch (err) {
+      setAlertMsg({ type: 'error', text: 'Bulk delete operations failed.' });
+    }
+  };
+
+  const handleImportSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      // Parse CSV text to JSON list
+      const lines = importText.split('\n');
+      const headers = lines[0].split(',').map(h => h.trim());
+      const parsedUsers = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        const columns = lines[i].split(',').map(c => c.trim());
+        const userObj = {};
+        headers.forEach((header, idx) => {
+          userObj[header] = columns[idx];
+        });
+        userObj['role'] = 'INTERN';
+        parsedUsers.push(userObj);
+      }
+
+      setLoading(true);
+      const res = await api.post('/users/bulk-import', { usersList: parsedUsers });
+      setImportModalOpen(false);
+      setImportText('');
+      setAlertMsg({
+        type: 'success',
+        text: `Import completed. Created: ${res.data.createdCount}. Skipped: ${res.data.skipped.length}.`
+      });
+      fetchUsers();
+    } catch (err) {
+      setAlertMsg({ type: 'error', text: 'Invalid CSV format or values. Ensure columns match: name,email,dob,role,phone,college,department' });
+      setLoading(false);
+    }
+  };
+
+  const triggerExport = () => {
+    const headers = 'Employee ID,Name,Email,Phone,College,Department,Role,Status,Joining Date\n';
+    const csvRows = users.map(u => 
+      `"${u.employeeId}","${u.name}","${u.email}","${u.phone || ''}","${u.college || ''}","${u.department || ''}","${u.role}","${u.status}","${new Date(u.joiningDate).toLocaleDateString()}"`
+    ).join('\n');
+    
+    const blob = new Blob([headers + csvRows], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.setAttribute('href', url);
+    a.setAttribute('download', 'interns_registry.csv');
+    a.click();
+  };
+
+  const openEditModal = (user) => {
+    setSelectedUser(user);
+    setFormData({
+      name: user.name,
+      email: user.email,
+      phone: user.phone || '',
+      dob: user.dob ? user.dob.split('T')[0] : '',
+      college: user.college || '',
+      department: user.department || '',
+      joiningDate: user.joiningDate ? user.joiningDate.split('T')[0] : '',
+      role: 'INTERN'
+    });
+    setEditModalOpen(true);
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      {/* Alert Header Banner */}
+      {alertMsg.text && (
+        <div className={`flex items-center gap-2 p-4 rounded-xl border ${alertMsg.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-500'}`}>
+          {alertMsg.type === 'success' ? <CheckCircle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+          <span className="text-xs font-semibold">{alertMsg.text}</span>
+          <button className="ml-auto" onClick={() => setAlertMsg({ type: '', text: '' })}>
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Control Actions Bar */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-card p-4 rounded-2xl border border-border/40 shadow-premium">
+        {/* Search */}
+        <form onSubmit={handleSearchSubmit} className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search by ID, name, email..."
+            className="w-full pl-9 bg-muted/40 focus:bg-card"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </form>
+
+        {/* Buttons */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Filters */}
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-muted/40">
+            <option value="">All Statuses</option>
+            <option value="ACTIVE">Active</option>
+            <option value="INACTIVE">Inactive</option>
+          </select>
+
+          <button onClick={triggerExport} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-muted">
+            <Download className="h-3.5 w-3.5" />
+            <span>Export CSV</span>
+          </button>
+
+          <button onClick={() => setImportModalOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-muted">
+            <Upload className="h-3.5 w-3.5" />
+            <span>Import</span>
+          </button>
+
+          <button onClick={() => setCreateModalOpen(true)} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground shadow-md hover:bg-primary-hover">
+            <Plus className="h-3.5 w-3.5" />
+            <span>Add Intern</span>
+          </button>
+
+          {selectedIds.length > 0 && (
+            <button onClick={handleBulkDelete} className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-2 text-xs font-semibold text-white shadow-md">
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Delete Selected ({selectedIds.length})</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Grid Registry Table */}
+      <div className="overflow-x-auto rounded-2xl border border-border/40 bg-card shadow-premium">
+        <table className="w-full border-collapse text-left text-sm">
+          <thead>
+            <tr className="border-b border-border/40 bg-muted/30 text-xs font-semibold text-muted-foreground uppercase">
+              <th className="px-6 py-4">
+                <input 
+                  type="checkbox"
+                  checked={users.length > 0 && selectedIds.length === users.length}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedIds(users.map(u => u.id));
+                    } else {
+                      setSelectedIds([]);
+                    }
+                  }}
+                />
+              </th>
+              <th className="px-6 py-4">Employee ID</th>
+              <th className="px-6 py-4">Intern Name</th>
+              <th className="px-6 py-4">Email</th>
+              <th className="px-6 py-4">Department</th>
+              <th className="px-6 py-4">College</th>
+              <th className="px-6 py-4">Status</th>
+              <th className="px-6 py-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {users.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="px-6 py-10 text-center text-muted-foreground">
+                  No interns or users registered matching search filter.
+                </td>
+              </tr>
+            ) : (
+              users.map((item) => (
+                <tr key={item.id} className="hover:bg-muted/15 transition-all">
+                  <td className="px-6 py-4">
+                    <input 
+                      type="checkbox"
+                      checked={selectedIds.includes(item.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedIds([...selectedIds, item.id]);
+                        } else {
+                          setSelectedIds(selectedIds.filter(id => id !== item.id));
+                        }
+                      }}
+                    />
+                  </td>
+                  <td className="px-6 py-4 font-mono font-bold text-xs">{item.employeeId}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <img 
+                        src={item.profilePic ? `http://localhost:5000${item.profilePic}` : `https://api.dicebear.com/7.x/initials/svg?seed=${item.name}`}
+                        className="h-8 w-8 rounded-lg object-cover"
+                        alt={item.name}
+                      />
+                      <span className="font-semibold">{item.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-xs text-muted-foreground">{item.email}</td>
+                  <td className="px-6 py-4">{item.department || 'N/A'}</td>
+                  <td className="px-6 py-4 max-w-[150px] truncate">{item.college || 'N/A'}</td>
+                  <td className="px-6 py-4">
+                    <button 
+                      onClick={() => handleToggleStatus(item.id, item.status)}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase transition-all ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-500'}`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${item.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      <span>{item.status}</span>
+                    </button>
+                  </td>
+                  <td className="px-6 py-4 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <button onClick={() => handleResetPassword(item.id)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Reset password to DOB">
+                        <Lock className="h-3.5 w-3.5" />
+                      </button>
+                      <button onClick={() => openEditModal(item)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+                        <Edit2 className="h-3.5 w-3.5" />
+                      </button>
+                      <button onClick={() => handleDeleteUser(item.id)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-danger">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pagination Controls */}
+      <div className="flex justify-between items-center px-2">
+        <span className="text-xs text-muted-foreground">Total records: {totalCount}</span>
+        <div className="flex gap-2">
+          <button 
+            disabled={page === 1}
+            onClick={() => setPage(page - 1)}
+            className="px-3 py-1 bg-card border rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-muted"
+          >
+            Prev
+          </button>
+          <button 
+            disabled={users.length < 15}
+            onClick={() => setPage(page + 1)}
+            className="px-3 py-1 bg-card border rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-muted"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
+      {/* Onboard Create User Modal */}
+      {createModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+              <h3 className="text-base font-bold">Onboard New Intern</h3>
+              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => setCreateModalOpen(false)}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateSubmit} className="mt-4 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Full Name *</label>
+                  <input type="text" name="name" required value={formData.name} onChange={handleInputChange} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Email Address *</label>
+                  <input type="email" name="email" required value={formData.email} onChange={handleInputChange} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Phone Number</label>
+                  <input type="text" name="phone" value={formData.phone} onChange={handleInputChange} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Date of Birth *</label>
+                  <input type="date" name="dob" required value={formData.dob} onChange={handleInputChange} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">College Name</label>
+                  <input type="text" name="college" value={formData.college} onChange={handleInputChange} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Department</label>
+                  <input type="text" name="department" value={formData.department} onChange={handleInputChange} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5 col-span-2">
+                  <label className="text-xs font-semibold text-muted-foreground">Joining Date</label>
+                  <input type="date" name="joiningDate" value={formData.joiningDate} onChange={handleInputChange} className="w-full" />
+                </div>
+              </div>
+
+              <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
+                Onboard Intern
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {editModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+              <h3 className="text-base font-bold">Edit User Details</h3>
+              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => {
+                setEditModalOpen(false);
+                setSelectedUser(null);
+              }}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditSubmit} className="mt-4 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Full Name *</label>
+                  <input type="text" name="name" required value={formData.name} onChange={handleInputChange} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Email Address *</label>
+                  <input type="email" name="email" required value={formData.email} onChange={handleInputChange} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Phone Number</label>
+                  <input type="text" name="phone" value={formData.phone} onChange={handleInputChange} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Date of Birth</label>
+                  <input type="date" name="dob" value={formData.dob} onChange={handleInputChange} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">College Name</label>
+                  <input type="text" name="college" value={formData.college} onChange={handleInputChange} />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Department</label>
+                  <input type="text" name="department" value={formData.department} onChange={handleInputChange} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5 col-span-2">
+                  <label className="text-xs font-semibold text-muted-foreground">Joining Date</label>
+                  <input type="date" name="joiningDate" value={formData.joiningDate} onChange={handleInputChange} className="w-full" />
+                </div>
+              </div>
+
+              <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
+                Save Updates
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CSV Import Modal */}
+      {importModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+              <h3 className="text-base font-bold">Bulk Import Interns (CSV)</h3>
+              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => setImportModalOpen(false)}>
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleImportSubmit} className="mt-4 space-y-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-muted-foreground">CSV Text Data</label>
+                <textarea
+                  rows={8}
+                  placeholder="name,email,dob,role,phone,college,department&#10;John Doe,john@example.com,2000-08-15,INTERN,12345678,MIT,CS&#10;Jane Smith,jane@example.com,1998-05-12,TEAM_LEADER,,IIT,EE"
+                  className="w-full border border-border p-3 text-xs bg-muted/40 font-mono rounded-lg outline-none"
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  required
+                />
+              </div>
+              
+              <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
+                Execute Bulk Import
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Interns;

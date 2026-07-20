@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 248, 250, 252;
+    --foreground: 15, 23, 42;
+    
+    --card: 255, 255, 255;
+    --card-foreground: 15, 23, 42;
+    
+    --popover: 255, 255, 255;
+    --border: 226, 232, 240;
+    
+    --primary: 37, 99, 235;
+    --primary-hover: 29, 78, 216;
+    --primary-foreground: 255, 255, 255;
+    
+    --secondary: 59, 130, 246;
+    --accent: 241, 245, 249;
+    
+    --muted: 248, 250, 252;
+    --muted-foreground: 100, 116, 139;
+    
+    --success: 16, 185, 129;
+    --warning: 245, 158, 11;
+    --danger: 239, 68, 68;
+  }
+
+  .dark {
+    --background: 15, 23, 42;
+    --foreground: 248, 250, 252;
+    
+    --card: 30, 41, 59;
+    --card-foreground: 248, 250, 252;
+    
+    --popover: 30, 41, 59;
+    --border: 51, 65, 85;
+    
+    --primary: 59, 130, 246;
+    --primary-hover: 37, 99, 235;
+    --primary-foreground: 248, 250, 252;
+    
+    --secondary: 30, 41, 59;
+    --accent: 30, 41, 59;
+    
+    --muted: 15, 23, 42;
+    --muted-foreground: 148, 163, 184;
+    
+    --success: 16, 185, 129;
+    --warning: 245, 158, 11;
+    --danger: 239, 68, 68;
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground transition-colors duration-200 antialiased text-base leading-relaxed;
+    font-family: 'Inter', 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    letter-spacing: -0.011em;
+  }
+
+  h1 {
+    @apply text-[30px] sm:text-[36px] font-extrabold tracking-tight leading-tight;
+  }
+  h2 {
+    @apply text-[22px] sm:text-[26px] font-bold tracking-tight leading-snug;
+  }
+  h3 {
+    @apply text-[18px] sm:text-[20px] font-bold leading-normal;
+  }
+
+  button {
+    @apply transition-all duration-200;
+  }
+}
+
+/* Custom premium scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-border/80 rounded-full hover:bg-muted-foreground/30 transition-colors;
+}
+
+/* Glassmorphism utility classes */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.45);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.dark .glass-panel {
+  background: rgba(22, 28, 45, 0.45);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Micro-animations */
+.hover-premium {
+  @apply transition-all duration-300 ease-out hover:-translate-y-[2px] hover:shadow-lg hover:shadow-primary/5;
+}
+
+/* Pulse animation for active trackers */
+@keyframes online-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.5; }
+}
+
+.pulse-active {
+  animation: online-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Custom Loading Skeleton */
+.skeleton {
+  @apply bg-muted animate-pulse rounded-md;
+}
+
+/* Outlines and clean inputs */
+input, select, textarea {
+  @apply outline-none border border-border bg-card text-foreground px-4 py-2 text-sm rounded-lg focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all;
+}

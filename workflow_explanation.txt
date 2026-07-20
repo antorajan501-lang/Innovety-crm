@@ -1,0 +1,87 @@
+========================================================================
+                      MRF ENTERPRISE CRM WORKFLOW
+========================================================================
+
+This document details the overall system architecture, data models, 
+authentication mechanisms, and role-based workflows for Admins, 
+Team Leaders, and Interns.
+
+------------------------------------------------------------------------
+1. SYSTEM ARCHITECTURE
+------------------------------------------------------------------------
+The CRM is divided into two primary execution spaces:
+- Frontend (Client Space): Built with React 18, Vite, Tailwind CSS, 
+  and Lucide icons. Visual analytics utilize Recharts. Routing is 
+  managed via React Router.
+- Backend (API Server): Powered by Node.js, Express, and Prisma ORM. 
+  Authentication uses JWT, and media uploads (avatars, attachments) 
+  are handled via Multer middleware.
+
+------------------------------------------------------------------------
+2. DATABASE DATA MODELS (Prisma Schema)
+------------------------------------------------------------------------
+- SystemSettings: Singleton config recording allowed shift start times, 
+  office target coordinates (Latitude/Longitude), acceptable geofencing 
+  bounds radius, and officeLocationName.
+- User: Contains authentication details, employee id, role (ADMIN, 
+  TEAM_LEADER, INTERN), college/department details, profile pictures, 
+  and password fields.
+- Team: Grouping container mapping a Team Leader, assigned Interns, 
+  sprint deliverables, and team task items.
+- Task: Board issue tickets tracking sprint name, priority, deadline, 
+  story points, type (TASK, BUG, STORY), and assignee.
+- Attendance: Logs daily check-ins/outs with IP records, exact resolved 
+  addresses, and geofence verification indicators.
+- Ticket: Support desk reports raised by users for technical or HR issue 
+  resolution tracking.
+- Announcement: General broadcast board items mapping scope (Global or 
+  Team scope).
+
+------------------------------------------------------------------------
+3. CORE PROCESS FLOWS
+------------------------------------------------------------------------
+
+A. USER ONBOARDING & AUTHENTICATION
+  1. Admins onboard Team Leaders and Interns via the User Registry.
+  2. Temporary passwords default to their Date of Birth (YYYY-MM-DD).
+  3. The first login triggers a mandatory change password warning box 
+     stating that a custom password must be registered.
+  4. Subsequent logins issue a JWT token attached as an authorization 
+     bearer in Axios headers.
+
+B. ATTENDANCE Shift CLOCK-IN/OUT
+  1. Intern opens the Attendance page. The system retrieves target coordinates 
+     and location tolerances from the settings API.
+  2. User triggers Clock In: Geolocation API requests GPS coordinates.
+  3. Coordinates are reverse-geocoded to a human-readable address 
+     leveraging Nominatim OpenStreetMap API.
+  4. Payloads are sent formatted as: [Address] (Lat: XX, Lon: YY).
+  5. The backend parses coordinates, measures standard Haversine distance 
+     against office location settings, and marks user as PRESENT or LATE.
+  6. Clock-in logs are instantly displayed on an interactive Google Map 
+     embed widget on the panel.
+
+C. TASK & WORKSPACE BOARD MANAGEMENT
+  1. Admins or Leaders create tasks assigning Sprint names, deadlines, 
+     story points, and assignee interns.
+  2. Sub-tabs allow developers to explore various workspace aspects:
+     - Board: Classic Kanban column board (To Do, In Progress, In Review, 
+       Done) with drag-and-drop state updates.
+     - Backlog: List-based view organizing backlog items and sprint scopes.
+     - Timeline: Visual Gantt-style timeline tracking deadlines.
+     - Code: Mock git repository streams tracking active intern commits 
+       and pull requests.
+     - Development: Integrations switches for third-party platforms.
+     - Docs: Catalog containing onboard specifications and coding styles.
+     - Forms: Interface for submitting skip leave applications.
+
+D. BULLETIN ANNOUNCEMENTS & ALERTS
+  1. Staff can publish general posts targeting Global or specific team scopes.
+  2. Targeted announcements display inside the target team hub workspace 
+     and dashboard alerts logs.
+
+E. EXPORTABLE REPORTING
+  1. Admins or Leaders configure dates, criteria, and filters on Reports.
+  2. Generates live preview tables. Clicking download triggers direct CSV 
+     binary files retrieval.
+========================================================================

@@ -1,0 +1,313 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  TEAM_LEADER
+  INTERN
+}
+
+enum TicketCategory {
+  TECHNICAL
+  PROJECT
+  HR
+  SOFTWARE
+  HARDWARE
+  GENERAL
+}
+
+enum TicketStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  WAITING_FOR_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum AttendanceStatus {
+  PRESENT
+  LATE
+  HALF_DAY
+  ABSENT
+  LEAVE
+  WORK_FROM_HOME
+}
+
+model User {
+  id               String           @id @default(uuid())
+  employeeId       String           @unique // Auto-generated string (e.g. IN-1001)
+  name             String
+  email            String           @unique
+  password         String
+  phone            String?
+  dob              DateTime?        // Date of birth
+  college          String?
+  department       String?
+  joiningDate      DateTime         @default(now())
+  role             Role             @default(INTERN)
+  status           String           @default("ACTIVE") // ACTIVE, INACTIVE
+  profilePic       String?          // File path/URL
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  // Relationships
+  ledTeams         Team[]           @relation("TeamLeader")
+  teamMembers      TeamMember[]
+  attendances      Attendance[]
+  assignedTasks    Task[]           @relation("TaskAssignee")
+  createdTasks     Task[]           @relation("TaskCreator")
+  submissions      TaskSubmission[]
+  raisedTickets    Ticket[]         @relation("TicketCreator")
+  assignedTickets  Ticket[]         @relation("TicketAssignee")
+  announcements    Announcement[]   @relation("AnnouncementCreator")
+  notifications    Notification[]
+  activityLogs     ActivityLog[]
+  comments         Comment[]
+  leaves           LeaveRequest[]   @relation("UserLeaves")
+}
+
+model Team {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  description String?
+  leaderId    String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  // Relations
+  leader      User?        @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+  members     TeamMember[]
+  tasks       Task[]
+}
+
+model TeamMember {
+  id        String   @id @default(uuid())
+  teamId    String
+  userId    String
+  joinedAt  DateTime @default(now())
+
+  // Relations
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model Attendance {
+  id               String           @id @default(uuid())
+  userId           String
+  date             DateTime         @db.Date
+  clockIn          DateTime
+  clockOut     DateTime?
+  clockInLocation  String?
+  clockOutLocation String?
+  ipAddress    String?
+  browser      String?
+  device       String?
+  workingHours Float?           // Decimals representing decimal hours
+  status       AttendanceStatus @default(PRESENT)
+  editedBy     String?          // User ID who edited attendance
+
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+}
+
+model Task {
+  id          String       @id @default(uuid())
+  title       String
+  description String
+  priority    TaskPriority @default(MEDIUM)
+  status      TaskStatus   @default(PENDING)
+  deadline    DateTime
+  teamId      String?
+  assigneeId  String
+  creatorId   String
+  attachments String[]     // List of file paths
+  type        String?      @default("TASK") // TASK, BUG, STORY
+  storyPoints Int?         @default(0)
+  sprintName  String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  team        Team?        @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  assignee    User         @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  creator     User         @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  submissions TaskSubmission[]
+  comments    Comment[]
+  history     TaskHistory[]
+  subtasks    Subtask[]
+}
+
+model TaskSubmission {
+  id          String   @id @default(uuid())
+  taskId      String
+  userId      String
+  submitNotes String?
+  files       String[] // File paths/URLs uploaded by intern
+  submittedAt DateTime @default(now())
+
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Comment {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+  text      String
+  createdAt DateTime @default(now())
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TaskHistory {
+  id        String   @id @default(uuid())
+  taskId      String
+  userId      String
+  action      String   // "STATUS_CHANGE", "ASSIGNED", "EDITED", "SUBMITTED", "COMMENT"
+  detail      String
+  createdAt DateTime @default(now())
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model Ticket {
+  id          String         @id @default(uuid())
+  title       String
+  description String
+  category    TicketCategory
+  status      TicketStatus   @default(OPEN)
+  creatorId   String
+  assigneeId  String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  creator     User           @relation("TicketCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  assignee    User?          @relation("TicketAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+}
+
+model Announcement {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  creatorId String
+  targetTeamId String? // If null, general announcement for all
+  createdAt DateTime @default(now())
+
+  creator   User     @relation("AnnouncementCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // "TASK_ASSIGNED", "TASK_APPROVED", "TICKET_CREATED", etc.
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String   // LOGIN, CLOCK_IN, TASK_CREATE, etc.
+  details   String
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SystemSettings {
+  id               String   @id @default("GLOBAL")
+  companyName      String   @default("MRF Enterprise")
+  senderEmail      String   @default("no-reply@mrf-enterprise.com")
+  internShiftStart String   @default("09:30") // Format HH:MM
+  internShiftEnd   String   @default("18:30")
+  tlShiftStart     String   @default("09:30")
+  tlShiftEnd       String   @default("18:30")
+  officeLatitude   Float    @default(12.971598)
+  officeLongitude  Float    @default(77.594562)
+  allowedRadiusMeters Float  @default(200.0)
+  officeLocationName  String @default("MRF Headquarters")
+  updatedAt        DateTime @updatedAt
+}
+
+model Subtask {
+  id        String   @id @default(uuid())
+  taskId    String
+  title     String
+  isDone    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model Repository {
+  id           String   @id @default(uuid())
+  name         String   @unique
+  url          String?
+  status       String   @default("Passing") // Passing, Failed, Building
+  lang         String   @default("React/JS")
+  commitsCount Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  branches     Branch[]
+}
+
+model LeaveRequest {
+  id           String   @id @default(uuid())
+  userId       String
+  startDate    DateTime
+  endDate      DateTime
+  subject      String?
+  letterContent String?
+  reason       String
+  contactPhone String?
+  status       String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  type         String   @default("LEAVE")   // LEAVE, WFH
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation("UserLeaves", fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Branch {
+  id           String     @id @default(uuid())
+  repoId       String
+  name         String
+  url          String?
+  isDefault    Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+
+  repository   Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
+
+  @@unique([repoId, name])
+}
