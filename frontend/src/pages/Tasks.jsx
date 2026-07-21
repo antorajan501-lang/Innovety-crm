@@ -106,6 +106,23 @@ const Tasks = () => {
   const [repositories, setRepositories] = useState([]);
   const [newRepoForm, setNewRepoForm] = useState({ name: '', url: '', lang: 'React/JS' });
   const [showAddRepo, setShowAddRepo] = useState(false);
+  
+  // Custom Confirmation Modal state
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: null
+  });
+
+  // Custom Prompt Modal state
+  const [promptModal, setPromptModal] = useState({
+    isOpen: false,
+    title: '',
+    placeholder: '',
+    value: '',
+    onConfirm: null
+  });
 
   const subTabs = ['Summary', 'Backlog', 'Board', 'Code', 'Timeline', 'Docs', 'Forms', 'Development'];
 
@@ -144,15 +161,21 @@ const Tasks = () => {
     }
   };
 
-  const handleDeleteRepo = async (repoId) => {
-    if (!window.confirm('Are you sure you want to delete this repository link?')) return;
-    try {
-      await api.delete(`/repositories/${repoId}`);
-      setRepositories(repositories.filter(r => r.id !== repoId));
-      setAlertMsg('Repository link removed successfully.');
-    } catch (err) {
-      setAlertMsg('Failed to delete repository.');
-    }
+  const handleDeleteRepo = (repoId) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Remove Repository Link',
+      message: 'Are you sure you want to delete this repository link?',
+      onConfirm: async () => {
+        try {
+          await api.delete(`/repositories/${repoId}`);
+          setRepositories(repositories.filter(r => r.id !== repoId));
+          setAlertMsg('Repository link removed successfully.');
+        } catch (err) {
+          setAlertMsg('Failed to delete repository.');
+        }
+      }
+    });
   };
 
   const handleCreateBranch = async (repoId, name) => {
@@ -173,23 +196,29 @@ const Tasks = () => {
     }
   };
 
-  const handleDeleteBranch = async (repoId, branchId) => {
-    if (!window.confirm('Are you sure you want to delete this branch?')) return;
-    try {
-      await api.delete(`/repositories/${repoId}/branches/${branchId}`);
-      setRepositories(repositories.map(r => {
-        if (r.id === repoId) {
-          return {
-            ...r,
-            branches: r.branches.filter(b => b.id !== branchId)
-          };
+  const handleDeleteBranch = (repoId, branchId) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Branch',
+      message: 'Are you sure you want to delete this branch?',
+      onConfirm: async () => {
+        try {
+          await api.delete(`/repositories/${repoId}/branches/${branchId}`);
+          setRepositories(repositories.map(r => {
+            if (r.id === repoId) {
+              return {
+                ...r,
+                branches: r.branches.filter(b => b.id !== branchId)
+              };
+            }
+            return r;
+          }));
+          setAlertMsg('Branch removed successfully.');
+        } catch (err) {
+          setAlertMsg('Failed to delete branch.');
         }
-        return r;
-      }));
-      setAlertMsg('Branch removed successfully.');
-    } catch (err) {
-      setAlertMsg('Failed to delete branch.');
-    }
+      }
+    });
   };
 
   const fetchTeamMembers = async () => {
@@ -857,8 +886,13 @@ const Tasks = () => {
                         {['ADMIN', 'TEAM_LEADER', 'INTERN'].includes(user.role) && (
                           <button
                             onClick={() => {
-                              const name = window.prompt('Enter new branch name:');
-                              if (name && name.trim()) handleCreateBranch(repo.id, name.trim());
+                              setPromptModal({
+                                isOpen: true,
+                                title: 'Create Git Branch',
+                                placeholder: 'e.g. feat/attendance-map',
+                                value: '',
+                                onConfirm: (name) => handleCreateBranch(repo.id, name)
+                              });
                             }}
                             className="text-[9px] text-primary font-bold hover:underline"
                           >
@@ -956,7 +990,7 @@ const Tasks = () => {
     const integrations = [
       { name: 'GitHub Integration', desc: 'Sync commit history and verify pull requests directly.', icon: CodeIcon, connected: true, tagColor: 'text-emerald-500 bg-emerald-500/10' },
       { name: 'Slack Alerts Channel', desc: 'Alert notifications on task allocation and reviews.', icon: MessageSquare, connected: true, tagColor: 'text-emerald-500 bg-emerald-500/10' },
-      { name: 'Jira Ticketing Bridge', desc: 'Sync tickets desk queries to backlog workspaces.', icon: FolderOpen, connected: false, tagColor: 'text-slate-500 bg-slate-500/10' },
+      { name: 'Ticketing Bridge', desc: 'Sync tickets desk queries to backlog workspaces.', icon: FolderOpen, connected: false, tagColor: 'text-slate-500 bg-slate-500/10' },
       { name: 'Figma Assets Sync', desc: 'Verify UI designs references inside doc specs.', icon: Settings, connected: false, tagColor: 'text-slate-500 bg-slate-500/10' }
     ];
 
@@ -1947,6 +1981,73 @@ const Tasks = () => {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Custom Confirmation Modal */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
+            <h3 className="text-base font-bold text-foreground">{confirmModal.title}</h3>
+            <p className="mt-2.5 text-xs text-muted-foreground leading-relaxed">{confirmModal.message}</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button 
+                onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+                className="rounded-xl px-4 py-2 text-xs font-semibold hover:bg-muted border border-border/30 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={async () => {
+                  if (confirmModal.onConfirm) {
+                    await confirmModal.onConfirm();
+                  }
+                  setConfirmModal({ ...confirmModal, isOpen: false });
+                }}
+                className="rounded-xl bg-danger px-4 py-2 text-xs font-semibold text-white shadow-md hover:bg-danger-hover active:scale-95 transition-all"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Prompt Modal */}
+      {promptModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
+            <h3 className="text-base font-bold text-foreground">{promptModal.title}</h3>
+            <div className="mt-4 flex flex-col gap-1.5">
+              <input 
+                type="text" 
+                placeholder={promptModal.placeholder}
+                value={promptModal.value}
+                onChange={(e) => setPromptModal({ ...promptModal, value: e.target.value })}
+                className="w-full text-xs border border-border/40 bg-background px-3 py-2 rounded-xl focus:outline-none focus:ring-1 focus:ring-primary text-foreground"
+                autoFocus
+              />
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button 
+                onClick={() => setPromptModal({ ...promptModal, isOpen: false })}
+                className="rounded-xl px-4 py-2 text-xs font-semibold hover:bg-muted border border-border/30 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={async () => {
+                  if (promptModal.onConfirm && promptModal.value.trim()) {
+                    await promptModal.onConfirm(promptModal.value.trim());
+                  }
+                  setPromptModal({ ...promptModal, isOpen: false });
+                }}
+                className="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white shadow-md hover:bg-primary-hover active:scale-95 transition-all"
+              >
+                Create
+              </button>
+            </div>
           </div>
         </div>
       )}

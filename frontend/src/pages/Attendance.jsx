@@ -221,18 +221,15 @@ const Attendance = () => {
     try {
       setLoading(true);
       const coords = await getCoordinatesObj();
-      if (!coords) {
-        setAlert('GPS coordinates are required to mark attendance. Please enable location access.');
-        setLoading(false);
-        return;
+      let location = 'Location not available';
+      if (coords) {
+        setCurrentCoords(coords);
+        const address = await geocodePosition(coords.lat, coords.lon);
+        location = address 
+          ? `${address} (Lat: ${coords.lat}, Lon: ${coords.lon})`
+          : `Lat: ${coords.lat}, Lon: ${coords.lon}`;
       }
       
-      setCurrentCoords(coords);
-      const address = await geocodePosition(coords.lat, coords.lon);
-      const location = address 
-        ? `${address} (Lat: ${coords.lat}, Lon: ${coords.lon})`
-        : `Lat: ${coords.lat}, Lon: ${coords.lon}`;
-
       const res = await api.post('/attendance/clock-in', { location });
       setClockedRecord(res.data);
       setAlert(`Successfully clocked in today! Status: ${res.data.status}`);
@@ -247,17 +244,14 @@ const Attendance = () => {
     try {
       setLoading(true);
       const coords = await getCoordinatesObj();
-      if (!coords) {
-        setAlert('GPS coordinates are required to mark attendance. Please enable location access.');
-        setLoading(false);
-        return;
+      let location = 'Location not available';
+      if (coords) {
+        setCurrentCoords(coords);
+        const address = await geocodePosition(coords.lat, coords.lon);
+        location = address 
+          ? `${address} (Lat: ${coords.lat}, Lon: ${coords.lon})`
+          : `Lat: ${coords.lat}, Lon: ${coords.lon}`;
       }
-      
-      setCurrentCoords(coords);
-      const address = await geocodePosition(coords.lat, coords.lon);
-      const location = address 
-        ? `${address} (Lat: ${coords.lat}, Lon: ${coords.lon})`
-        : `Lat: ${coords.lat}, Lon: ${coords.lon}`;
 
       const res = await api.post('/attendance/clock-out', { location });
       setClockedRecord(res.data);

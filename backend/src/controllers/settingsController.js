@@ -12,7 +12,7 @@ const getSettings = async (req, res) => {
       settings = await prisma.systemSettings.create({
         data: {
           id: 'GLOBAL',
-          companyName: 'MRF Enterprise',
+          companyName: 'INNOVEITY',
           senderEmail: 'somusuraj72@gmail.com',
           internShiftStart: '09:30',
           internShiftEnd: '18:30',
@@ -62,7 +62,7 @@ const updateSettings = async (req, res) => {
       },
       create: {
         id: 'GLOBAL',
-        companyName: companyName || 'MRF Enterprise',
+        companyName: companyName || 'INNOVEITY',
         senderEmail: senderEmail || 'somusuraj72@gmail.com',
         internShiftStart: internShiftStart || '09:30',
         internShiftEnd: internShiftEnd || '18:30',

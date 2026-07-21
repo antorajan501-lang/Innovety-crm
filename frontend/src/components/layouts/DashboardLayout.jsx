@@ -196,11 +196,17 @@ const DashboardLayout = ({ children }) => {
           {/* Logo Header */}
           <div className="flex h-16 items-center justify-between px-6 border-b border-border/40">
             <Link to="/" className="flex items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 p-2 text-white shadow-md shadow-blue-500/20">
-                <ShieldCheck className="h-5 w-5" />
-              </div>
-              {!isCollapsed && (
-                <span className="text-base font-extrabold tracking-tight bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">MRF Enterprise</span>
+              {isCollapsed ? (
+                <div className="w-9 h-9 overflow-hidden relative rounded-xl border border-border/40 flex items-center justify-center bg-white shadow-sm">
+                  <img 
+                    src="/logo.png" 
+                    alt="INNOVEITY Icon" 
+                    className="absolute left-1 max-w-none h-6" 
+                    style={{ width: '120.9px' }} 
+                  />
+                </div>
+              ) : (
+                <img src="/logo.png" alt="INNOVEITY" className="h-11 object-contain" />
               )}
             </Link>
             <button className="rounded-lg p-1.5 hover:bg-muted md:hidden" onClick={() => setSidebarOpen(false)}>
@@ -232,9 +238,9 @@ const DashboardLayout = ({ children }) => {
                         key={item.label}
                         to={item.path}
                         title={isCollapsed ? item.label : undefined}
-                        className={`flex items-center gap-3 rounded-xl px-3 py-2 text-[14px] font-semibold transition-all relative group ${
+                        className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-[14px] font-semibold transition-all relative group ${
                           isActive 
-                            ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' 
+                            ? 'bg-gradient-to-r from-primary to-secondary text-primary-foreground shadow-md shadow-primary/20 hover:shadow-lg hover:shadow-primary/30' 
                             : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
                         }`}
                         onClick={() => setSidebarOpen(false)}

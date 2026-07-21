@@ -96,54 +96,6 @@ const clockIn = async (req, res) => {
 
     const { location } = req.body;
 
-    const parseCoordinates = (locStr) => {
-      if (!locStr) return null;
-      const match = locStr.match(/Lat:\s*([-\d.]+),\s*Lon:\s*([-\d.]+)/i);
-      if (match) {
-        return {
-          latitude: parseFloat(match[1]),
-          longitude: parseFloat(match[2])
-        };
-      }
-      return null;
-    };
-
-    const getDistanceFromLatLonInMeters = (lat1, lon1, lat2, lon2) => {
-      const R = 6371e3;
-      const dLat = (lat2 - lat1) * (Math.PI / 180);
-      const dLon = (lon2 - lon1) * (Math.PI / 180);
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    };
-
-    const userCoords = parseCoordinates(location);
-    if (!userCoords) {
-      return res.status(400).json({ message: 'GPS coordinates are required to mark attendance. Please enable location access.' });
-    }
-
-    if (settings && !approvedLeave) {
-      const officeLat = settings.officeLatitude || 12.971598;
-      const officeLon = settings.officeLongitude || 77.594562;
-      const allowedRad = settings.allowedRadiusMeters || 200.0;
-      
-      const distance = getDistanceFromLatLonInMeters(
-        userCoords.latitude,
-        userCoords.longitude,
-        officeLat,
-        officeLon
-      );
-
-      if (distance > allowedRad) {
-        return res.status(400).json({
-          message: `Outside allowed location boundary. Distance: ${Math.round(distance)}m, Allowed Max: ${allowedRad}m.`
-        });
-      }
-    }
-
     const attendance = await prisma.attendance.create({
       data: {
         userId,
@@ -216,58 +168,6 @@ const clockOut = async (req, res) => {
     }
 
     const { location } = req.body;
-
-    const parseCoordinates = (locStr) => {
-      if (!locStr) return null;
-      const match = locStr.match(/Lat:\s*([-\d.]+),\s*Lon:\s*([-\d.]+)/i);
-      if (match) {
-        return {
-          latitude: parseFloat(match[1]),
-          longitude: parseFloat(match[2])
-        };
-      }
-      return null;
-    };
-
-    const getDistanceFromLatLonInMeters = (lat1, lon1, lat2, lon2) => {
-      const R = 6371e3;
-      const dLat = (lat2 - lat1) * (Math.PI / 180);
-      const dLon = (lon2 - lon1) * (Math.PI / 180);
-      const a =
-        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    };
-
-    const userCoords = parseCoordinates(location);
-    if (!userCoords) {
-      return res.status(400).json({ message: 'GPS coordinates are required to mark attendance. Please enable location access.' });
-    }
-
-    let settings = await prisma.systemSettings.findUnique({
-      where: { id: 'GLOBAL' }
-    });
-
-    if (settings) {
-      const officeLat = settings.officeLatitude || 12.971598;
-      const officeLon = settings.officeLongitude || 77.594562;
-      const allowedRad = settings.allowedRadiusMeters || 200.0;
-      
-      const distance = getDistanceFromLatLonInMeters(
-        userCoords.latitude,
-        userCoords.longitude,
-        officeLat,
-        officeLon
-      );
-
-      if (distance > allowedRad) {
-        return res.status(400).json({
-          message: `Outside allowed location boundary. Distance: ${Math.round(distance)}m, Allowed Max: ${allowedRad}m.`
-        });
-      }
-    }
 
     const updatedAttendance = await prisma.attendance.update({
       where: { id: attendance.id },

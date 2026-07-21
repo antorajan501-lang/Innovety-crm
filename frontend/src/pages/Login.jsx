@@ -67,20 +67,20 @@ const Login = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0a0f1d] px-4 py-12">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050b0a] px-4 py-12">
       {/* Background Gradients */}
-      <div className="absolute top-[-20%] left-[-10%] h-[600px] w-[600px] rounded-full bg-indigo-500/10 blur-[120px]" />
-      <div className="absolute bottom-[-20%] right-[-10%] h-[600px] w-[600px] rounded-full bg-violet-600/10 blur-[120px]" />
+      <div className="absolute top-[-20%] left-[-10%] h-[600px] w-[600px] rounded-full bg-primary/15 blur-[120px]" />
+      <div className="absolute bottom-[-20%] right-[-10%] h-[600px] w-[600px] rounded-full bg-secondary/15 blur-[120px]" />
 
-      <div className="w-full max-w-md rounded-2xl border border-white/5 bg-slate-900/60 p-8 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-300">
+      <div className="w-full max-w-md rounded-2xl border border-primary/10 bg-[#0d1f1c]/75 p-8 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-300">
         <div className="flex flex-col items-center justify-center text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-600 p-2.5 text-white mb-4 shadow-lg shadow-indigo-500/20">
-            <ShieldCheck className="h-7 w-7" />
-          </div>
-          <h2 className="text-2xl font-bold tracking-tight text-white">
-            {forgotMode ? 'Reset Password' : 'Sign in to MRF CRM'}
+          <h1 className="text-3xl font-black tracking-widest text-primary mb-2 uppercase">
+            INNOVEITY
+          </h1>
+          <h2 className="text-lg font-semibold tracking-tight text-slate-200">
+            {forgotMode ? 'Reset Password' : 'Sign in to your portal'}
           </h2>
-          <p className="mt-1.5 text-sm text-slate-400">
+          <p className="mt-1.5 text-sm text-teal-100/60">
             {forgotMode 
               ? 'Enter email to reset password to Date of Birth format.'
               : 'Enterprise Intern & Operations Management'
@@ -110,7 +110,7 @@ const Login = () => {
                 <input
                   type="email"
                   placeholder="name@company.com"
-                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-indigo-500/50 focus:ring-indigo-500/20 placeholder:text-slate-600"
+                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-primary/50 focus:ring-primary/20 placeholder:text-slate-600"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                 />
@@ -126,7 +126,7 @@ const Login = () => {
                     setForgotMode(true);
                     setError('');
                   }}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 hover:underline"
+                  className="text-xs text-primary hover:text-primary-hover hover:underline"
                 >
                   Forgot password?
                 </button>
@@ -136,7 +136,7 @@ const Login = () => {
                 <input
                   type="password"
                   placeholder="••••••••"
-                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-indigo-500/50 focus:ring-indigo-500/20 placeholder:text-slate-600"
+                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-primary/50 focus:ring-primary/20 placeholder:text-slate-600"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
@@ -146,7 +146,7 @@ const Login = () => {
             <button
               type="submit"
               disabled={loading}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 text-sm font-semibold text-white transition-all hover:bg-indigo-500 active:scale-95 disabled:opacity-50"
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-white transition-all hover:bg-primary-hover active:scale-95 disabled:opacity-50"
             >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -167,7 +167,7 @@ const Login = () => {
                 <input
                   type="email"
                   placeholder="name@company.com"
-                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-indigo-500/50 focus:ring-indigo-500/20 placeholder:text-slate-600"
+                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-primary/50 focus:ring-primary/20 placeholder:text-slate-600"
                   value={resetEmail}
                   onChange={(e) => setResetEmail(e.target.value)}
                 />
@@ -177,7 +177,7 @@ const Login = () => {
             <button
               type="submit"
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 text-sm font-semibold text-white transition-all hover:bg-indigo-500 active:scale-95 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-white transition-all hover:bg-primary-hover active:scale-95 disabled:opacity-50"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <span>Send Reset Instructions</span>}
             </button>

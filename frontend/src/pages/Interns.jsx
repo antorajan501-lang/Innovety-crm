@@ -22,11 +22,18 @@ const Interns = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  // Modals state
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  
+  // Custom Confirmation Modal state
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: null
+  });
 
   // Form states
   const [formData, setFormData] = useState({
@@ -120,15 +127,21 @@ const Interns = () => {
     }
   };
 
-  const handleDeleteUser = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this user? This action is permanent.')) return;
-    try {
-      await api.delete(`/users/${id}`);
-      setAlertMsg({ type: 'success', text: 'User account removed.' });
-      fetchUsers();
-    } catch (err) {
-      setAlertMsg({ type: 'error', text: 'Failed to delete user.' });
-    }
+  const handleDeleteUser = (id) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete User Account',
+      message: 'Are you sure you want to delete this user? This action is permanent.',
+      onConfirm: async () => {
+        try {
+          await api.delete(`/users/${id}`);
+          setAlertMsg({ type: 'success', text: 'User account removed.' });
+          fetchUsers();
+        } catch (err) {
+          setAlertMsg({ type: 'error', text: 'Failed to delete user.' });
+        }
+      }
+    });
   };
 
   const handleToggleStatus = async (id, currentStatus) => {
@@ -154,18 +167,23 @@ const Interns = () => {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkDelete = () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`Delete ${selectedIds.length} users?`)) return;
-
-    try {
-      await api.post('/users/bulk-delete', { ids: selectedIds });
-      setSelectedIds([]);
-      setAlertMsg({ type: 'success', text: 'Selected accounts deleted.' });
-      fetchUsers();
-    } catch (err) {
-      setAlertMsg({ type: 'error', text: 'Bulk delete operations failed.' });
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Bulk Delete Accounts',
+      message: `Are you sure you want to delete the ${selectedIds.length} selected user accounts? This action is permanent.`,
+      onConfirm: async () => {
+        try {
+          await api.post('/users/bulk-delete', { ids: selectedIds });
+          setSelectedIds([]);
+          setAlertMsg({ type: 'success', text: 'Selected accounts deleted.' });
+          fetchUsers();
+        } catch (err) {
+          setAlertMsg({ type: 'error', text: 'Bulk delete operations failed.' });
+        }
+      }
+    });
   };
 
   const handleImportSubmit = async (e) => {
@@ -556,6 +574,35 @@ const Interns = () => {
                 Execute Bulk Import
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Custom Confirmation Modal */}
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
+            <h3 className="text-base font-bold text-foreground">{confirmModal.title}</h3>
+            <p className="mt-2.5 text-xs text-muted-foreground leading-relaxed">{confirmModal.message}</p>
+            <div className="mt-6 flex justify-end gap-3">
+              <button 
+                onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+                className="rounded-xl px-4 py-2 text-xs font-semibold hover:bg-muted border border-border/30 transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={async () => {
+                  if (confirmModal.onConfirm) {
+                    await confirmModal.onConfirm();
+                  }
+                  setConfirmModal({ ...confirmModal, isOpen: false });
+                }}
+                className="rounded-xl bg-danger px-4 py-2 text-xs font-semibold text-white shadow-md hover:bg-danger-hover active:scale-95 transition-all"
+              >
+                Confirm
+              </button>
+            </div>
           </div>
         </div>
       )}

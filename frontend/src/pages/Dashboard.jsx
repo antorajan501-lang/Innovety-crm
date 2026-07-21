@@ -268,22 +268,112 @@ const Dashboard = () => {
     }
   };
 
-  const COLORS = ['#2563EB', '#3B82F6', '#10B981', '#F59E0B', '#EF4444'];
+  const COLORS = ['rgb(20, 184, 166)', 'rgb(6, 182, 212)', 'rgb(16, 185, 129)', 'rgb(245, 158, 11)', 'rgb(239, 68, 68)'];
 
   const adminStatsWidgets = [
-    { label: 'Total Interns', value: stats.totalInterns, icon: Users, color: 'text-blue-600 bg-blue-600/10' },
-    { label: 'Team Leaders', value: stats.totalLeaders, icon: Briefcase, color: 'text-indigo-600 bg-indigo-600/10' },
-    { label: 'Active Teams', value: stats.totalTeams, icon: Briefcase, color: 'text-sky-600 bg-sky-600/10' },
-    { label: 'Present Today', value: stats.presentToday, icon: UserCheck, color: 'text-emerald-600 bg-emerald-600/10' },
-    { label: 'Late Clock-Ins', value: stats.lateToday, icon: Clock, color: 'text-amber-600 bg-amber-600/10' },
-    { label: 'Open Tickets', value: stats.openTickets, icon: AlertCircle, color: 'text-rose-600 bg-rose-600/10' }
+    { 
+      label: 'Total Interns', 
+      value: stats.totalInterns, 
+      icon: Users, 
+      color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/30', 
+      borderClass: 'border-t-indigo-500',
+      bgClass: 'bg-gradient-to-br from-card to-indigo-50/45 dark:to-indigo-950/10',
+      labelClass: 'text-indigo-600 dark:text-indigo-400',
+      valueClass: 'text-indigo-700 dark:text-indigo-300'
+    },
+    { 
+      label: 'Team Leaders', 
+      value: stats.totalLeaders, 
+      icon: Briefcase, 
+      color: 'text-blue-600 bg-blue-50 dark:bg-blue-950/30', 
+      borderClass: 'border-t-blue-500',
+      bgClass: 'bg-gradient-to-br from-card to-blue-50/45 dark:to-blue-950/10',
+      labelClass: 'text-blue-600 dark:text-blue-400',
+      valueClass: 'text-blue-700 dark:text-blue-300'
+    },
+    { 
+      label: 'Active Teams', 
+      value: stats.totalTeams, 
+      icon: Briefcase, 
+      color: 'text-cyan-600 bg-cyan-50 dark:bg-cyan-950/30', 
+      borderClass: 'border-t-cyan-500',
+      bgClass: 'bg-gradient-to-br from-card to-cyan-50/45 dark:to-cyan-950/10',
+      labelClass: 'text-cyan-700 dark:text-cyan-400',
+      valueClass: 'text-cyan-700 dark:text-cyan-300'
+    },
+    { 
+      label: 'Present Today', 
+      value: stats.presentToday, 
+      icon: UserCheck, 
+      color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30', 
+      borderClass: 'border-t-emerald-500',
+      bgClass: 'bg-gradient-to-br from-card to-emerald-50/45 dark:to-emerald-950/10',
+      labelClass: 'text-emerald-700 dark:text-emerald-400',
+      valueClass: 'text-emerald-700 dark:text-emerald-300'
+    },
+    { 
+      label: 'Late Clock-Ins', 
+      value: stats.lateToday, 
+      icon: Clock, 
+      color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/30', 
+      borderClass: 'border-t-amber-500',
+      bgClass: 'bg-gradient-to-br from-card to-amber-50/45 dark:to-amber-950/10',
+      labelClass: 'text-amber-700 dark:text-amber-400',
+      valueClass: 'text-amber-700 dark:text-amber-300'
+    },
+    { 
+      label: 'Open Tickets', 
+      value: stats.openTickets, 
+      icon: AlertCircle, 
+      color: 'text-rose-600 bg-rose-50 dark:bg-rose-950/30', 
+      borderClass: 'border-t-rose-500',
+      bgClass: 'bg-gradient-to-br from-card to-rose-50/45 dark:to-rose-950/10',
+      labelClass: 'text-rose-700 dark:text-rose-400',
+      valueClass: 'text-rose-700 dark:text-rose-300'
+    }
   ];
 
   const internStatsWidgets = [
-    { label: 'My Open Tasks', value: stats.pendingTasks, icon: Briefcase, color: 'text-blue-600 bg-blue-600/10' },
-    { label: 'Completed Tasks', value: stats.completedTasks, icon: CheckCircle, color: 'text-emerald-600 bg-emerald-600/10' },
-    { label: 'My Open Tickets', value: stats.openTickets, icon: AlertCircle, color: 'text-rose-600 bg-rose-600/10' },
-    { label: 'Attendance Rate', value: `${stats.attendanceRate}%`, icon: Clock, color: 'text-amber-600 bg-amber-600/10' }
+    { 
+      label: 'My Open Tasks', 
+      value: stats.pendingTasks, 
+      icon: Briefcase, 
+      color: 'text-indigo-600 bg-indigo-50 dark:bg-indigo-950/30', 
+      borderClass: 'border-t-indigo-500',
+      bgClass: 'bg-gradient-to-br from-card to-indigo-50/45 dark:to-indigo-950/10',
+      labelClass: 'text-indigo-600 dark:text-indigo-400',
+      valueClass: 'text-indigo-700 dark:text-indigo-300'
+    },
+    { 
+      label: 'Completed Tasks', 
+      value: stats.completedTasks, 
+      icon: CheckCircle, 
+      color: 'text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30', 
+      borderClass: 'border-t-emerald-500',
+      bgClass: 'bg-gradient-to-br from-card to-emerald-50/45 dark:to-emerald-950/10',
+      labelClass: 'text-emerald-700 dark:text-emerald-400',
+      valueClass: 'text-emerald-700 dark:text-emerald-300'
+    },
+    { 
+      label: 'My Open Tickets', 
+      value: stats.openTickets, 
+      icon: AlertCircle, 
+      color: 'text-rose-600 bg-rose-600/10', 
+      borderClass: 'border-t-rose-500',
+      bgClass: 'bg-gradient-to-br from-card to-rose-50/45 dark:to-rose-950/10',
+      labelClass: 'text-rose-700 dark:text-rose-400',
+      valueClass: 'text-rose-700 dark:text-rose-300'
+    },
+    { 
+      label: 'Attendance Rate', 
+      value: `${stats.attendanceRate}%`, 
+      icon: Clock, 
+      color: 'text-amber-600 bg-amber-50 dark:bg-amber-950/30', 
+      borderClass: 'border-t-amber-500',
+      bgClass: 'bg-gradient-to-br from-card to-amber-50/45 dark:to-amber-950/10',
+      labelClass: 'text-amber-700 dark:text-amber-400',
+      valueClass: 'text-amber-700 dark:text-amber-300'
+    }
   ];
 
   if (loading) {
@@ -306,18 +396,21 @@ const Dashboard = () => {
     <div className="space-y-6 animate-in fade-in duration-300">
       
       {/* Welcome Banner */}
-      <div className="relative rounded-2xl bg-gradient-to-r from-blue-600/10 to-indigo-600/10 border border-primary/10 p-6 flex flex-col sm:flex-row justify-between sm:items-center gap-4 text-left">
-        <div>
-          <h2 className="text-[22px] sm:text-[26px] font-extrabold tracking-tight">Welcome back, {user?.name}!</h2>
-          <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-600 p-8 flex flex-col sm:flex-row justify-between sm:items-center gap-6 text-left shadow-lg text-white">
+        <div className="absolute right-0 top-0 h-40 w-40 rounded-full bg-white/10 blur-2xl pointer-events-none" />
+        <div className="absolute left-1/3 bottom-0 h-32 w-32 rounded-full bg-teal-400/20 blur-2xl pointer-events-none" />
+        
+        <div className="relative z-10">
+          <h2 className="text-[24px] sm:text-[30px] font-extrabold tracking-tight text-white leading-none">Welcome back, {user?.name}!</h2>
+          <p className="mt-2 text-sm text-emerald-50/90 max-w-xl leading-relaxed">
             {user.role === 'ADMIN' && 'Access real-time system presence, geofenced records, and task metrics.'}
             {user.role === 'TEAM_LEADER' && 'Review active workspaces sprint velocities, pending requests, and project branches.'}
             {user.role === 'INTERN' && 'Check assigned cards, branch allocations, and submit clock-in logs.'}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="inline-flex items-center gap-1.5 text-xs bg-emerald-500/10 text-emerald-600 px-3 py-1.5 rounded-full font-bold">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+        <div className="flex items-center gap-2 shrink-0 relative z-10">
+          <span className="inline-flex items-center gap-1.5 text-xs bg-white/20 text-white backdrop-blur-md px-3.5 py-2 rounded-full font-bold shadow-sm">
+            <span className="h-2 w-2 rounded-full bg-emerald-200 animate-ping" />
             <span>Active Session</span>
           </span>
         </div>
@@ -433,14 +526,14 @@ const Dashboard = () => {
         {(user.role === 'ADMIN' ? adminStatsWidgets : internStatsWidgets).map((widget, i) => {
           const Icon = widget.icon;
           return (
-            <div key={i} className="rounded-2xl border border-border/40 bg-card p-5 shadow-premium hover-premium text-left">
+            <div key={i} className={`rounded-2xl border-t-4 ${widget.borderClass} border-x border-b border-border/40 ${widget.bgClass} p-5 shadow-premium hover-premium text-left`}>
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">{widget.label}</span>
+                <span className={`text-[10px] font-extrabold uppercase tracking-wider ${widget.labelClass}`}>{widget.label}</span>
                 <div className={`rounded-xl p-2.5 ${widget.color}`}>
                   <Icon className="h-5 w-5" />
                 </div>
               </div>
-              <p className="mt-4 text-[26px] font-extrabold tracking-tight leading-none">{widget.value}</p>
+              <p className={`mt-4 text-[28px] font-extrabold tracking-tight leading-none ${widget.valueClass}`}>{widget.value}</p>
             </div>
           );
         })}
@@ -514,7 +607,7 @@ const Dashboard = () => {
               {user.role === 'INTERN' && (
                 <>
                   <Link to="/attendance" className="flex items-center gap-3 bg-muted/50 hover:bg-muted border border-border/40 p-3 rounded-xl transition-all">
-                    <Clock className="h-4.5 w-4.5 text-blue-600" />
+                    <Clock className="h-4.5 w-4.5 text-primary" />
                     <div>
                       <h4 className="text-xs font-bold text-foreground">Apply Leave / WFH</h4>
                       <p className="text-[10px] text-muted-foreground mt-0.5">Submit leave dates for approval.</p>
@@ -532,7 +625,7 @@ const Dashboard = () => {
               {user.role === 'ADMIN' && (
                 <>
                   <Link to="/interns" className="flex items-center gap-3 bg-muted/50 hover:bg-muted border border-border/40 p-3 rounded-xl transition-all">
-                    <Users className="h-4.5 w-4.5 text-blue-600" />
+                    <Users className="h-4.5 w-4.5 text-primary" />
                     <div>
                       <h4 className="text-xs font-bold text-foreground">Register New Intern</h4>
                       <p className="text-[10px] text-muted-foreground mt-0.5">Add details & credentials.</p>
@@ -548,7 +641,7 @@ const Dashboard = () => {
                 </>
               )}
               <Link to="/profile" className="flex items-center gap-3 bg-muted/50 hover:bg-muted border border-border/40 p-3 rounded-xl transition-all">
-                <UserIcon className="h-4.5 w-4.5 text-indigo-600" />
+                <UserIcon className="h-4.5 w-4.5 text-secondary" />
                 <div>
                   <h4 className="text-xs font-bold text-foreground">Change Password</h4>
                   <p className="text-[10px] text-muted-foreground mt-0.5">Update authentication parameters.</p>
@@ -584,7 +677,7 @@ const Dashboard = () => {
               ].map((ev, idx) => (
                 <div key={idx} className="flex flex-col gap-1 border-b border-border/20 pb-3 last:border-0 last:pb-0">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] bg-blue-500/10 text-blue-600 px-2 py-0.5 rounded font-extrabold uppercase shrink-0">{ev.type}</span>
+                    <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-extrabold uppercase shrink-0">{ev.type}</span>
                     <span className="text-[10px] text-muted-foreground font-mono font-semibold">{ev.time}</span>
                   </div>
                   <p className="text-xs text-foreground font-semibold mt-1">{ev.desc}</p>
@@ -603,7 +696,7 @@ const Dashboard = () => {
                 onlineUsers.slice(0, 5).map((onlineUser) => (
                   <div key={onlineUser.id || onlineUser} className="flex items-center gap-3">
                     <div className="relative">
-                      <div className="h-8 w-8 rounded-lg bg-indigo-500/10 text-indigo-600 flex items-center justify-center font-bold text-xs uppercase">
+                      <div className="h-8 w-8 rounded-lg bg-secondary/10 text-secondary flex items-center justify-center font-bold text-xs uppercase">
                         {(onlineUser.name || 'U').substring(0, 2)}
                       </div>
                       <span className="absolute bottom-0 right-0 h-2 w-2 rounded-full bg-success ring-2 ring-card" />
@@ -658,7 +751,7 @@ const Dashboard = () => {
           <div className="rounded-2xl border border-border/40 bg-card p-6 shadow-premium text-left">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold">Team Performance Rankings</h3>
-              <Award className="h-4 w-4 text-indigo-600" />
+              <Award className="h-4 w-4 text-primary" />
             </div>
             <div className="space-y-4">
               {teamPerformances.length === 0 ? (
@@ -672,7 +765,7 @@ const Dashboard = () => {
                     </div>
                     <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2.5">
                       <div 
-                        className="bg-gradient-to-r from-blue-600 to-indigo-600 h-2.5 rounded-full transition-all"
+                        className="bg-gradient-to-r from-primary to-secondary h-2.5 rounded-full transition-all"
                         style={{ width: `${team.performance}%` }}
                       />
                     </div>
