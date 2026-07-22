@@ -425,6 +425,7 @@ const DashboardLayout = ({ children }) => {
                   src={user?.profilePic ? getUploadUrl(user.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`}
                   alt={user?.name}
                   className="h-8 w-8 rounded-lg object-cover ring-2 ring-primary/20"
+                  onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`; }}
                 />
                 <div className="hidden text-left md:block pr-1">
                   <p className="text-xs font-extrabold leading-none">{user?.name}</p>

@@ -176,6 +176,7 @@ const Profile = () => {
               src={previewUrl || (user?.profilePic ? getUploadUrl(user.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`)}
               alt={user?.name}
               className="h-28 w-28 rounded-2xl object-cover ring-4 ring-primary/10 shadow-lg transition-all group-hover:opacity-90"
+              onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`; }}
             />
             <input 
               type="file" 

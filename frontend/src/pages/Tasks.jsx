@@ -705,6 +705,7 @@ const Tasks = () => {
                     className="h-5 w-5 rounded-full border object-cover"
                     title={task.assignee?.name}
                     alt="avatar"
+                    onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${task.assignee?.name}`; }}
                   />
                 </div>
               </div>
@@ -1164,6 +1165,7 @@ const Tasks = () => {
                   className="h-6 w-6 rounded-full border border-card object-cover"
                   title={member.name}
                   alt="avatar"
+                  onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${member.name}`; }}
                 />
               ))}
               {teamMembers.length > 4 && (
@@ -1358,6 +1360,7 @@ const Tasks = () => {
                                 className="h-5 w-5 rounded-full border object-cover"
                                 title={task.assignee?.name}
                                 alt="avatar"
+                                onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${task.assignee?.name}`; }}
                               />
                             </div>
                           </div>

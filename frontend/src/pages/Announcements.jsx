@@ -133,6 +133,7 @@ const Announcements = () => {
                     src={announce.creator?.profilePic ? getUploadUrl(announce.creator.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${announce.creator?.name}`}
                     className="h-5 w-5 rounded-full object-cover"
                     alt="profile"
+                    onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${announce.creator?.name}`; }}
                   />
                   <span className="font-semibold">{announce.creator?.name} ({announce.creator?.role?.replace('_', ' ')})</span>
                 </div>

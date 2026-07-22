@@ -33,6 +33,8 @@ const Employees = () => {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [detailsModalUser, setDetailsModalUser] = useState(null);
+  const [editPicFile, setEditPicFile] = useState(null);
+  const [editPicPreview, setEditPicPreview] = useState(null);
 
   // Custom Confirmation Modal state
   const [confirmModal, setConfirmModal] = useState({
@@ -124,9 +126,14 @@ const Employees = () => {
     if (!selectedUser) return;
     try {
       setLoading(true);
-      await api.put(`/users/${selectedUser.id}`, formData);
+      const fd = new FormData();
+      Object.entries({ ...formData, role: 'EMPLOYEE' }).forEach(([k, v]) => fd.append(k, v || ''));
+      if (editPicFile) fd.append('profilePic', editPicFile);
+      await api.put(`/users/${selectedUser.id}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       setEditModalOpen(false);
       setSelectedUser(null);
+      setEditPicFile(null);
+      setEditPicPreview(null);
       setAlertMsg({ type: 'success', text: 'Employee record updated.' });
       fetchUsers();
     } catch (err) {
@@ -252,6 +259,8 @@ const Employees = () => {
       joiningDate: user.joiningDate ? user.joiningDate.split('T')[0] : '',
       role: 'EMPLOYEE'
     });
+    setEditPicFile(null);
+    setEditPicPreview(null);
     setEditModalOpen(true);
   };
 
@@ -370,6 +379,7 @@ const Employees = () => {
                         src={item.profilePic ? getUploadUrl(item.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${item.name}`}
                         className="h-8 w-8 rounded-lg object-cover group-hover:ring-2 group-hover:ring-primary/40 transition-all"
                         alt={item.name}
+                        onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${item.name}`; }}
                       />
                       <span className="font-semibold text-xs group-hover:text-primary group-hover:underline transition-colors">{item.name}</span>
                     </button>
@@ -527,6 +537,35 @@ const Employees = () => {
                 </div>
               </div>
 
+              {/* Profile Picture Upload */}
+              <div className="flex flex-col gap-2 border border-dashed border-border/60 rounded-xl p-3">
+                <label className="text-xs font-semibold text-muted-foreground">Profile Picture (optional)</label>
+                <div className="flex items-center gap-3">
+                  <img
+                    src={editPicPreview || (selectedUser?.profilePic ? getUploadUrl(selectedUser.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${formData.name}`)}
+                    className="h-14 w-14 rounded-xl object-cover ring-2 ring-primary/20"
+                    alt="preview"
+                    onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${formData.name}`; }}
+                  />
+                  <div className="flex-1">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      id="edit-employee-pic"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files[0];
+                        if (f) { setEditPicFile(f); setEditPicPreview(URL.createObjectURL(f)); }
+                      }}
+                    />
+                    <label htmlFor="edit-employee-pic" className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-xs font-semibold hover:bg-muted">
+                      <Upload className="h-3 w-3" /> Choose Photo
+                    </label>
+                    {editPicFile && <p className="text-[10px] text-primary mt-1 font-semibold">{editPicFile.name}</p>}
+                  </div>
+                </div>
+              </div>
+
               <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
                 Save Changes
               </button>
@@ -590,6 +629,7 @@ const Employees = () => {
                 src={detailsModalUser.profilePic ? getUploadUrl(detailsModalUser.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${detailsModalUser.name}`}
                 className="h-20 w-20 rounded-2xl object-cover border-2 border-primary/20 shadow-md mb-3"
                 alt={detailsModalUser.name}
+                onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${detailsModalUser.name}`; }}
               />
               <h3 className="text-lg font-bold text-foreground">{detailsModalUser.name}</h3>
               <span className="text-xs font-mono font-bold bg-primary/10 text-primary px-2.5 py-0.5 rounded-md mt-1">

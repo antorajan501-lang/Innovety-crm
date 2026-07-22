@@ -190,6 +190,11 @@ const editUser = async (req, res) => {
       data.joiningDate = new Date(joiningDate);
     }
 
+    // If admin uploaded a new profile picture for this user
+    if (req.file) {
+      data.profilePic = `/uploads/profile-pics/${req.file.filename}`;
+    }
+
     const updatedUser = await prisma.user.update({
       where: { id },
       data

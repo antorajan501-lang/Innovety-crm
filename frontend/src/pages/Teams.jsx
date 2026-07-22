@@ -461,6 +461,7 @@ const Teams = () => {
                         src={teamDetails.leader?.profilePic ? getUploadUrl(teamDetails.leader.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${teamDetails.leader?.name}`}
                         className="h-8 w-8 rounded-full border object-cover" 
                         alt="avatar"
+                        onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${teamDetails.leader?.name}`; }}
                       />
                       <div>
                         <p className="text-xs font-bold">{teamDetails.leader?.name || 'Unassigned'}</p>
@@ -525,6 +526,7 @@ const Teams = () => {
                             src={member.user?.profilePic ? getUploadUrl(member.user.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${member.user?.name}`}
                             className="h-10 w-10 rounded-xl border object-cover shrink-0" 
                             alt="avatar"
+                            onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${member.user?.name}`; }}
                           />
                           <div className="text-left min-w-0 flex-1">
                             <h4 className="text-xs font-bold text-foreground truncate">{member.user?.name}</h4>
