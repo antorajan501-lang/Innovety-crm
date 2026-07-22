@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import api from '../services/api';
+import api, { getUploadUrl } from '../services/api';
 import {
   Plus,
   Users,
@@ -51,7 +51,7 @@ const Teams = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      if (user.role === 'INTERN' || user.role === 'TEAM_LEADER') {
+      if (user.role === 'INTERN' || user.role === 'EMPLOYEE' || user.role === 'TEAM_LEADER') {
         const teamsRes = await api.get('/teams');
         setTeams(teamsRes.data);
       } else {
@@ -63,7 +63,7 @@ const Teams = () => {
         
         const allUsers = usersRes.data.users || [];
         setAvailableLeaders(allUsers.filter(u => u.role === 'TEAM_LEADER' && u.status === 'ACTIVE'));
-        setAvailableInterns(allUsers.filter(u => u.role === 'INTERN' && u.status === 'ACTIVE'));
+        setAvailableInterns(allUsers.filter(u => (u.role === 'INTERN' || u.role === 'EMPLOYEE') && u.status === 'ACTIVE'));
       }
       setLoading(false);
     } catch (error) {
@@ -184,7 +184,7 @@ const Teams = () => {
     setEditModalOpen(true);
   };
 
-  const displayTeams = user.role === 'INTERN'
+  const displayTeams = (user.role === 'INTERN' || user.role === 'EMPLOYEE')
     ? teams.filter(t => t.members.some(m => m.user?.id === user.id))
     : teams;
 
@@ -229,7 +229,7 @@ const Teams = () => {
           </div>
           <h3 className="text-sm font-bold text-foreground">Not Assigned to a Team</h3>
           <p className="mt-1.5 text-xs text-muted-foreground max-w-sm mx-auto">
-            {user.role === 'INTERN' 
+            {(user.role === 'INTERN' || user.role === 'EMPLOYEE')
               ? "You have not been assigned to any workspace team yet. Please contact your administrator or team leader to get allocated." 
               : "No workspace teams found. Click 'Create Team' to register a new team."}
           </p>
@@ -260,7 +260,7 @@ const Teams = () => {
                 <Users className="h-4 w-4 text-primary" />
                 <div className="text-left">
                   <p className="text-[10px] text-muted-foreground uppercase font-bold">Leader</p>
-                  <p className="text-xs font-semibold">{team.leader ? team.leader.name : 'Unassigned'}</p>
+                  <p className="text-xs font-semibold">{team.leader?.name || 'Unassigned'}</p>
                 </div>
               </div>
 
@@ -458,7 +458,7 @@ const Teams = () => {
                     <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Team Leader</p>
                     <div className="flex items-center gap-2.5 mt-2">
                       <img 
-                        src={teamDetails.leader?.profilePic ? `http://localhost:5000${teamDetails.leader.profilePic}` : `https://api.dicebear.com/7.x/initials/svg?seed=${teamDetails.leader?.name}`}
+                        src={teamDetails.leader?.profilePic ? getUploadUrl(teamDetails.leader.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${teamDetails.leader?.name}`}
                         className="h-8 w-8 rounded-full border object-cover" 
                         alt="avatar"
                       />
@@ -522,7 +522,7 @@ const Teams = () => {
                       teamDetails.members.map((member) => (
                         <div key={member.id} className="flex items-center gap-3 rounded-xl border border-border/30 bg-card p-3 shadow-sm">
                           <img 
-                            src={member.user?.profilePic ? `http://localhost:5000${member.user.profilePic}` : `https://api.dicebear.com/7.x/initials/svg?seed=${member.user?.name}`}
+                            src={member.user?.profilePic ? getUploadUrl(member.user.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${member.user?.name}`}
                             className="h-10 w-10 rounded-xl border object-cover shrink-0" 
                             alt="avatar"
                           />

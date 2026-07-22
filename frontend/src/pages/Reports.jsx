@@ -55,7 +55,8 @@ const Reports = () => {
     if (priorityFilter) params.append('priority', priorityFilter);
 
     const token = localStorage.getItem('token');
-    const downloadUrl = `http://localhost:5000/api/reports/${reportType}?${params.toString()}`;
+    const baseUrl = api.defaults.baseURL || 'http://localhost:5000/api';
+    const downloadUrl = `${baseUrl}/reports/${reportType}?${params.toString()}`;
 
     // Standard download request with token authorization
     fetch(downloadUrl, {

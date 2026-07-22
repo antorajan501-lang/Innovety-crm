@@ -34,8 +34,42 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static upload directories
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+const fs = require('fs');
+
+// Serve static upload directories with headers
+app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
+  setHeaders: (res, filePath) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+  }
+}));
+
+// Dedicated file download endpoint with proper MIME headers & Content-Disposition
+app.get('/api/download-file', (req, res) => {
+  try {
+    const rawFile = req.query.file || req.query.filename;
+    if (!rawFile) {
+      return res.status(400).json({ message: 'File parameter is required.' });
+    }
+
+    const cleanFileName = path.basename(rawFile);
+    const filePath = path.join(__dirname, '../uploads', cleanFileName);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ message: 'File not found on server.' });
+    }
+
+    res.download(filePath, cleanFileName, (err) => {
+      if (err && !res.headersSent) {
+        console.error('File download stream error:', err);
+        res.status(500).json({ message: 'Error downloading file.' });
+      }
+    });
+  } catch (error) {
+    console.error('Download route exception:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
 
 // Mount API routes
 app.use('/api/auth', authRoutes);

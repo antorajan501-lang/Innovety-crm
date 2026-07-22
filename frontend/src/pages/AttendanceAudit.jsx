@@ -84,8 +84,13 @@ const AttendanceAudit = () => {
 
   const fetchUsersList = async () => {
     try {
-      const res = await api.get('/users?role=INTERN');
-      setAllInterns(res.data.users || []);
+      const [internRes, empRes] = await Promise.all([
+        api.get('/users?role=INTERN'),
+        api.get('/users?role=EMPLOYEE')
+      ]);
+      const interns = internRes.data.users || [];
+      const employees = empRes.data.users || [];
+      setAllInterns([...interns, ...employees]);
     } catch (e) {
       console.error(e);
     }
@@ -337,7 +342,7 @@ const AttendanceAudit = () => {
           {/* Analytics widgets row */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-5 text-left">
             <div className="rounded-2xl border border-border/40 bg-card p-4 shadow-premium">
-              <span className="text-[10px] font-bold text-muted-foreground uppercase">Total Active Interns</span>
+              <span className="text-[10px] font-bold text-muted-foreground uppercase">Total Active Members</span>
               <p className="text-lg font-extrabold mt-1">{stats.totalInterns}</p>
             </div>
             <div className="rounded-2xl border border-border/40 bg-card p-4 shadow-premium">
@@ -362,7 +367,7 @@ const AttendanceAudit = () => {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center bg-card p-4 rounded-2xl border border-border/40 shadow-premium">
             <div className="flex flex-wrap gap-3 items-center flex-1">
               <select value={userIdFilter} onChange={(e) => setUserIdFilter(e.target.value)} className="bg-muted/40 text-xs border rounded-xl px-3 py-2">
-                <option value="">All Interns</option>
+                <option value="">All Members</option>
                 {allInterns.map(intern => (
                   <option key={intern.id} value={intern.id}>{intern.name} ({intern.employeeId})</option>
                 ))}
@@ -400,7 +405,7 @@ const AttendanceAudit = () => {
             <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="text-xs font-semibold text-muted-foreground uppercase border-b border-border/30 bg-muted/20">
-                  <th className="px-6 py-4">Employee</th>
+                  <th className="px-6 py-4">Members</th>
                   <th className="px-6 py-4">Date</th>
                   <th className="px-6 py-4">Clock In</th>
                   <th className="px-6 py-4">Clock Out</th>

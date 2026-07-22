@@ -205,7 +205,7 @@ const getAttendanceLogs = async (req, res) => {
       if (endDate) where.date.lte = new Date(endDate);
     }
 
-    if (req.user.role === 'INTERN') {
+    if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       where.userId = req.user.id;
     } else if (req.user.role === 'TEAM_LEADER') {
       if (userId) {

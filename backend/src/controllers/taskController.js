@@ -39,14 +39,23 @@ const createTask = async (req, res) => {
         return res.status(403).json({ message: 'You can only assign tasks to your own team.' });
       }
 
-      const internMembers = team.members.filter(m => m.user && m.user.role === 'INTERN');
-      if (internMembers.length === 0) {
-        return res.status(400).json({ message: 'Cannot assign task: the selected team has no active interns.' });
+      let targetAssignees = team.members.filter(m => m.user && (m.user.role === 'INTERN' || m.user.role === 'EMPLOYEE'));
+      
+      if (targetAssignees.length === 0 && team.members.length > 0) {
+        targetAssignees = team.members.filter(m => m.user);
+      }
+      
+      if (targetAssignees.length === 0 && team.leaderId) {
+        targetAssignees = [{ userId: team.leaderId, user: team.leader }];
+      }
+
+      if (targetAssignees.length === 0) {
+        return res.status(400).json({ message: 'Cannot assign task: the selected team has no active members or interns. Please allocate members to this team in Team Hub.' });
       }
 
       const tasksCreated = [];
 
-      for (let member of internMembers) {
+      for (let member of targetAssignees) {
         const t = await prisma.task.create({
           data: {
             title,
@@ -197,7 +206,7 @@ const getTasks = async (req, res) => {
     }
 
     // Role filters
-    if (req.user.role === 'INTERN') {
+    if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       where.assigneeId = req.user.id;
     } else if (req.user.role === 'TEAM_LEADER') {
       // Find all teams led by this leader
@@ -250,7 +259,7 @@ const getTaskById = async (req, res) => {
     }
 
     // Verify role permissions
-    if (req.user.role === 'INTERN' && task.assigneeId !== req.user.id) {
+    if ((req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') && task.assigneeId !== req.user.id) {
       return res.status(403).json({ message: 'You are not authorized to view this task.' });
     }
 
@@ -272,14 +281,14 @@ const updateTaskStatus = async (req, res) => {
     }
 
     // Validate state transition by role
-    if (req.user.role === 'INTERN') {
+    if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       if (task.assigneeId !== req.user.id) {
         return res.status(403).json({ message: 'Unauthorized status transition.' });
       }
 
-      // Intern can transition: PENDING -> IN_PROGRESS, or re-run
+      // Intern/Employee can transition: PENDING -> IN_PROGRESS, or re-run
       if (status !== 'IN_PROGRESS' && status !== 'WAITING_FOR_REVIEW') {
-        return res.status(400).json({ message: 'Interns can only update task to In Progress or Submit for Review.' });
+        return res.status(400).json({ message: 'Interns/Employees can only update task to In Progress or Submit for Review.' });
       }
     } else if (req.user.role === 'TEAM_LEADER') {
       // Team leader can approve, reject, or mark in progress
@@ -311,7 +320,7 @@ const updateTaskStatus = async (req, res) => {
     });
 
      // Notify respective users
-     if (req.user.role === 'INTERN') {
+     if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
        // Notify creator / team leader
        await createNotification({
          userId: task.creatorId,
@@ -598,7 +607,7 @@ const createSubtask = async (req, res) => {
       return res.status(404).json({ message: 'Task not found.' });
     }
 
-    if (req.user.role === 'INTERN' && task.assigneeId !== req.user.id) {
+    if ((req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') && task.assigneeId !== req.user.id) {
       return res.status(403).json({ message: 'You are not authorized to add subtasks.' });
     }
 
@@ -607,6 +616,15 @@ const createSubtask = async (req, res) => {
         taskId,
         title,
         isDone: false
+      }
+    });
+
+    await prisma.taskHistory.create({
+      data: {
+        taskId,
+        userId: req.user.id,
+        action: 'EDITED',
+        detail: `Added subtask: "${title}"`
       }
     });
 
@@ -631,7 +649,7 @@ const toggleSubtask = async (req, res) => {
       return res.status(404).json({ message: 'Subtask not found.' });
     }
 
-    if (req.user.role === 'INTERN' && subtask.task.assigneeId !== req.user.id) {
+    if ((req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') && subtask.task.assigneeId !== req.user.id) {
       return res.status(403).json({ message: 'You are not authorized to modify this subtask.' });
     }
 
@@ -642,6 +660,15 @@ const toggleSubtask = async (req, res) => {
     const updated = await prisma.subtask.update({
       where: { id: subtaskId },
       data
+    });
+
+    await prisma.taskHistory.create({
+      data: {
+        taskId: subtask.taskId,
+        userId: req.user.id,
+        action: 'EDITED',
+        detail: `Updated subtask "${subtask.title}": ${isDone !== undefined ? (isDone ? 'Marked completed' : 'Marked pending') : 'Renamed'}`
+      }
     });
 
     res.json(updated);
@@ -664,12 +691,21 @@ const deleteSubtask = async (req, res) => {
       return res.status(404).json({ message: 'Subtask not found.' });
     }
 
-    if (req.user.role === 'INTERN' && subtask.task.assigneeId !== req.user.id) {
+    if ((req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') && subtask.task.assigneeId !== req.user.id) {
       return res.status(403).json({ message: 'You are not authorized to delete this subtask.' });
     }
 
     await prisma.subtask.delete({
       where: { id: subtaskId }
+    });
+
+    await prisma.taskHistory.create({
+      data: {
+        taskId: subtask.taskId,
+        userId: req.user.id,
+        action: 'EDITED',
+        detail: `Deleted subtask: "${subtask.title}"`
+      }
     });
 
     res.json({ message: 'Subtask deleted successfully.' });

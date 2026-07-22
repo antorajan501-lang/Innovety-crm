@@ -44,7 +44,7 @@ const getAllTeams = async (req, res) => {
         { leaderId: req.user.id },
         { members: { some: { userId: req.user.id } } }
       ];
-    } else if (req.user.role === 'INTERN') {
+    } else if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       where.members = { some: { userId: req.user.id } };
     }
 
@@ -122,7 +122,7 @@ const getTeamDetails = async (req, res) => {
     }
 
     // RBAC: Team Leaders and Interns can only view their own team details
-    if (req.user.role === 'TEAM_LEADER' || req.user.role === 'INTERN') {
+    if (req.user.role === 'TEAM_LEADER' || req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       const isLeader = team.leaderId === req.user.id;
       const isMember = team.members.some((m) => m.userId === req.user.id);
       if (!isLeader && !isMember) {
@@ -221,25 +221,23 @@ const assignMembers = async (req, res) => {
       return res.status(400).json({ message: 'memberIds must be an array.' });
     }
 
+    const newMemberData = memberIds.map((userId) => ({
+      teamId: id,
+      userId
+    }));
+
     await prisma.$transaction([
       prisma.teamMember.deleteMany({
-        where: {
-          teamId: id,
-          userId: { notIn: memberIds }
-        }
+        where: { teamId: id }
       }),
-      ...memberIds.map((userId) =>
-        prisma.teamMember.upsert({
-          where: {
-            teamId_userId: {
-              teamId: id,
-              userId
-            }
-          },
-          update: {},
-          create: { teamId: id, userId }
-        })
-      )
+      ...(newMemberData.length > 0
+        ? [
+            prisma.teamMember.createMany({
+              data: newMemberData,
+              skipDuplicates: true
+            })
+          ]
+        : [])
     ]);
 
     await logActivity({

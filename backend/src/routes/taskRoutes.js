@@ -11,7 +11,7 @@ router.get('/', getTasks);
 router.get('/:id', getTaskById);
 router.put('/:id', requireRole(['ADMIN', 'TEAM_LEADER']), upload.array('attachments', 5), updateTask);
 router.put('/:id/status', updateTaskStatus);
-router.post('/:id/submit', requireRole(['INTERN']), upload.array('files', 5), submitTask);
+router.post('/:id/submit', requireRole(['INTERN', 'EMPLOYEE']), upload.array('files', 5), submitTask);
 router.post('/:id/comment', addComment);
 
 // Subtasks routes

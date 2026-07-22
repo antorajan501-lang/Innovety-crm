@@ -1,18 +1,18 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { ShieldCheck, Mail, Lock, Loader2, ArrowRight } from 'lucide-react';
+import { ShieldCheck, User, Lock, Loader2, ArrowRight } from 'lucide-react';
 
 const Login = () => {
   const { login, requestPasswordReset } = useAuth();
-  const [email, setEmail] = useState('');
+  const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [forgotMode, setForgotMode] = useState(false);
   
   // Forgot Password state
-  const [resetEmail, setResetEmail] = useState('');
+  const [resetUserId, setResetUserId] = useState('');
   const [resetSuccess, setResetSuccess] = useState('');
   const [tempPassAlert, setTempPassAlert] = useState('');
 
@@ -20,14 +20,14 @@ const Login = () => {
 
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
-    if (!email || !password) {
-      setError('Please enter both email and password.');
+    if (!userId || !password) {
+      setError('Please enter both your User ID and password.');
       return;
     }
     setError('');
     setLoading(true);
 
-    const res = await login(email, password);
+    const res = await login(userId, password);
     setLoading(false);
 
     if (res.success) {
@@ -44,8 +44,8 @@ const Login = () => {
 
   const handleResetSubmit = async (e) => {
     e.preventDefault();
-    if (!resetEmail) {
-      setError('Please enter your email.');
+    if (!resetUserId) {
+      setError('Please enter your User ID.');
       return;
     }
     setError('');
@@ -53,13 +53,13 @@ const Login = () => {
     setResetSuccess('');
     setTempPassAlert('');
 
-    const res = await requestPasswordReset(resetEmail);
+    const res = await requestPasswordReset(resetUserId);
     setLoading(false);
 
     if (res.success) {
       setResetSuccess(res.message);
       if (res.tempPassword) {
-        setTempPassAlert(`Testing Note: Hashed password has been reset to DOB: "${res.tempPassword}".`);
+        setTempPassAlert(`Testing Note: Password reset to DOB: "${res.tempPassword}".`);
       }
     } else {
       setError(res.message);
@@ -67,23 +67,23 @@ const Login = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#050b0a] px-4 py-12">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0a0f1d] px-4 py-12">
       {/* Background Gradients */}
-      <div className="absolute top-[-20%] left-[-10%] h-[600px] w-[600px] rounded-full bg-primary/15 blur-[120px]" />
-      <div className="absolute bottom-[-20%] right-[-10%] h-[600px] w-[600px] rounded-full bg-secondary/15 blur-[120px]" />
+      <div className="absolute top-[-20%] left-[-10%] h-[600px] w-[600px] rounded-full bg-[#0F5A46]/10 blur-[120px]" />
+      <div className="absolute bottom-[-20%] right-[-10%] h-[600px] w-[600px] rounded-full bg-[#17A673]/10 blur-[120px]" />
 
-      <div className="w-full max-w-md rounded-2xl border border-primary/10 bg-[#0d1f1c]/75 p-8 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-300">
+      <div className="w-full max-w-md rounded-2xl border border-white/5 bg-slate-900/60 p-8 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-300">
         <div className="flex flex-col items-center justify-center text-center">
-          <h1 className="text-3xl font-black tracking-widest text-primary mb-2 uppercase">
+          <h1 className="text-3xl font-black tracking-widest text-[#17A673] mb-2 uppercase">
             INNOVEITY
           </h1>
-          <h2 className="text-lg font-semibold tracking-tight text-slate-200">
+          <h2 className="text-lg font-semibold tracking-tight text-slate-300">
             {forgotMode ? 'Reset Password' : 'Sign in to your portal'}
           </h2>
-          <p className="mt-1.5 text-sm text-teal-100/60">
+          <p className="mt-1.5 text-sm text-slate-400">
             {forgotMode 
-              ? 'Enter email to reset password to Date of Birth format.'
-              : 'Enterprise Intern & Operations Management'
+              ? 'Enter your User ID to reset password to Date of Birth format.'
+              : 'Unified Portal for Interns, Team Leaders & Employees'
             }
           </p>
         </div>
@@ -103,21 +103,21 @@ const Login = () => {
 
         {!forgotMode ? (
           <form className="mt-6 space-y-4" onSubmit={handleLoginSubmit}>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-300">Email Address</label>
+            <div className="flex flex-col gap-1.5 text-left">
+              <label className="text-xs font-semibold text-slate-300">User ID / Employee ID / Intern ID</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4.5 w-4.5 text-slate-500" />
+                <User className="absolute left-3 top-3 h-4.5 w-4.5 text-slate-500" />
                 <input
-                  type="email"
-                  placeholder="name@company.com"
-                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-primary/50 focus:ring-primary/20 placeholder:text-slate-600"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  type="text"
+                  placeholder="e.g. IN-1001, EM-1001, TL-1001, or AD-0001"
+                  className="w-full rounded-xl border border-white/10 bg-slate-950/50 py-2.5 pl-10 pr-4 text-sm text-white focus:border-[#17A673]/50 focus:ring-1 focus:ring-[#17A673]/30 placeholder:text-slate-600 transition-all"
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
                 />
               </div>
             </div>
 
-            <div className="flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5 text-left">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-semibold text-slate-300">Password</label>
                 <button
@@ -126,7 +126,7 @@ const Login = () => {
                     setForgotMode(true);
                     setError('');
                   }}
-                  className="text-xs text-primary hover:text-primary-hover hover:underline"
+                  className="text-xs text-[#17A673] hover:text-[#6FD3A6] hover:underline"
                 >
                   Forgot password?
                 </button>
@@ -136,7 +136,7 @@ const Login = () => {
                 <input
                   type="password"
                   placeholder="••••••••"
-                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-primary/50 focus:ring-primary/20 placeholder:text-slate-600"
+                  className="w-full rounded-xl border border-white/10 bg-slate-950/50 py-2.5 pl-10 pr-4 text-sm text-white focus:border-[#17A673]/50 focus:ring-1 focus:ring-[#17A673]/30 placeholder:text-slate-600 transition-all"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
@@ -146,7 +146,7 @@ const Login = () => {
             <button
               type="submit"
               disabled={loading}
-              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-white transition-all hover:bg-primary-hover active:scale-95 disabled:opacity-50"
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-[#0F5A46] py-3 text-sm font-semibold text-white transition-all hover:bg-[#17A673] active:scale-95 disabled:opacity-50"
             >
               {loading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -160,16 +160,16 @@ const Login = () => {
           </form>
         ) : (
           <form className="mt-6 space-y-4" onSubmit={handleResetSubmit}>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-300">Email Address</label>
+            <div className="flex flex-col gap-1.5 text-left">
+              <label className="text-xs font-semibold text-slate-300">User ID / Employee ID / Intern ID</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-3 h-4.5 w-4.5 text-slate-500" />
+                <User className="absolute left-3 top-3 h-4.5 w-4.5 text-slate-500" />
                 <input
-                  type="email"
-                  placeholder="name@company.com"
-                  className="w-full border-white/5 bg-slate-950/40 py-2.5 pl-10 pr-4 text-white focus:border-primary/50 focus:ring-primary/20 placeholder:text-slate-600"
-                  value={resetEmail}
-                  onChange={(e) => setResetEmail(e.target.value)}
+                  type="text"
+                  placeholder="e.g. IN-1001, EM-1001, TL-1001, or AD-0001"
+                  className="w-full rounded-xl border border-white/10 bg-slate-950/50 py-2.5 pl-10 pr-4 text-sm text-white focus:border-[#17A673]/50 focus:ring-1 focus:ring-[#17A673]/30 placeholder:text-slate-600 transition-all"
+                  value={resetUserId}
+                  onChange={(e) => setResetUserId(e.target.value)}
                 />
               </div>
             </div>
@@ -177,7 +177,7 @@ const Login = () => {
             <button
               type="submit"
               disabled={loading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-white transition-all hover:bg-primary-hover active:scale-95 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#0F5A46] py-3 text-sm font-semibold text-white transition-all hover:bg-[#17A673] active:scale-95 disabled:opacity-50"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <span>Send Reset Instructions</span>}
             </button>

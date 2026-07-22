@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import api from '../services/api';
+import api, { getUploadUrl } from '../services/api';
 import {
   User,
   Phone,
@@ -173,7 +173,7 @@ const Profile = () => {
         <div className="rounded-2xl border border-border/40 bg-card p-6 shadow-premium text-center flex flex-col items-center justify-center">
           <div className="relative group">
             <img
-              src={previewUrl || (user?.profilePic ? `http://localhost:5000${user.profilePic}` : `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`)}
+              src={previewUrl || (user?.profilePic ? getUploadUrl(user.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`)}
               alt={user?.name}
               className="h-28 w-28 rounded-2xl object-cover ring-4 ring-primary/10 shadow-lg transition-all group-hover:opacity-90"
             />

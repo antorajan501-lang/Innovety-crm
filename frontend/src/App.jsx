@@ -9,6 +9,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Interns from './pages/Interns';
 import TeamLeaders from './pages/TeamLeaders';
+import Employees from './pages/Employees';
 import Teams from './pages/Teams';
 import Tasks from './pages/Tasks';
 import Attendance from './pages/Attendance';
@@ -56,7 +57,7 @@ const App = () => {
             <Route
               path="/"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN']}>
                   <Dashboard />
                 </ProtectedRoute>
               }
@@ -78,9 +79,17 @@ const App = () => {
               }
             />
             <Route
+              path="/employees"
+              element={
+                <ProtectedRoute allowedRoles={['ADMIN']}>
+                  <Employees />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/teams"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']}>
                   <Teams />
                 </ProtectedRoute>
               }
@@ -88,7 +97,7 @@ const App = () => {
             <Route
               path="/tasks"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']}>
                   <Tasks />
                 </ProtectedRoute>
               }
@@ -96,7 +105,7 @@ const App = () => {
             <Route
               path="/attendance"
               element={
-                <ProtectedRoute allowedRoles={['INTERN', 'TEAM_LEADER']}>
+                <ProtectedRoute allowedRoles={['INTERN', 'TEAM_LEADER', 'EMPLOYEE']}>
                   <Attendance />
                 </ProtectedRoute>
               }
@@ -112,7 +121,7 @@ const App = () => {
             <Route
               path="/tickets"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']}>
                   <Tickets />
                 </ProtectedRoute>
               }
@@ -120,7 +129,7 @@ const App = () => {
             <Route
               path="/announcements"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']}>
                   <Announcements />
                 </ProtectedRoute>
               }
@@ -128,7 +137,7 @@ const App = () => {
             <Route
               path="/profile"
               element={
-                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN']}>
+                <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']}>
                   <Profile />
                 </ProtectedRoute>
               }

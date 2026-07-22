@@ -69,7 +69,7 @@ const getTickets = async (req, res) => {
     if (status) where.status = status;
 
     // RBAC Filter
-    if (req.user.role === 'INTERN') {
+    if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       where.creatorId = req.user.id;
     } else if (req.user.role === 'TEAM_LEADER') {
       // Leader sees their own raised tickets, and tickets from their team members
@@ -111,8 +111,8 @@ const updateTicketStatus = async (req, res) => {
     }
 
     // Only Admin or Team Leader can modify ticket status/assignments
-    if (req.user.role === 'INTERN') {
-      return res.status(403).json({ message: 'Interns cannot change ticket status or assignees.' });
+    if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
+      return res.status(403).json({ message: 'Interns/Employees cannot change ticket status or assignees.' });
     }
 
     if (assigneeId) {

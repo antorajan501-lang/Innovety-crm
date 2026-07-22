@@ -34,10 +34,10 @@ export const AuthProvider = ({ children }) => {
     initializeAuth();
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (userId, password) => {
     setLoading(true);
     try {
-      const res = await api.post('/auth/login', { email, password });
+      const res = await api.post('/auth/login', { userId, employeeId: userId, email: userId, password });
       const { token, user: userData, isTempPassword } = res.data;
 
       localStorage.setItem('token', token);
@@ -86,9 +86,9 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const requestPasswordReset = async (email) => {
+  const requestPasswordReset = async (userId) => {
     try {
-      const res = await api.post('/auth/forgot-password', { email });
+      const res = await api.post('/auth/forgot-password', { userId, employeeId: userId, email: userId });
       return { success: true, message: res.data.message, tempPassword: res.data.tempPassword };
     } catch (error) {
       const msg = error.response?.data?.message || 'Failed to process password reset.';

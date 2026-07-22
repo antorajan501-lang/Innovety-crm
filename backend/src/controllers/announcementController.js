@@ -21,8 +21,8 @@ const createAnnouncement = async (req, res) => {
       if (!team || team.leaderId !== req.user.id) {
         return res.status(403).json({ message: 'You can only post announcements to your own team.' });
       }
-    } else if (req.user.role === 'INTERN') {
-      return res.status(403).json({ message: 'Interns cannot post announcements.' });
+    } else if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
+      return res.status(403).json({ message: 'Interns/Employees cannot post announcements.' });
     }
 
     const announcement = await prisma.announcement.create({
@@ -49,7 +49,7 @@ const createAnnouncement = async (req, res) => {
       // Global announcement - notify all interns & leaders
       const activeUsers = await prisma.user.findMany({
         where: {
-          role: { in: ['INTERN', 'TEAM_LEADER'] },
+          role: { in: ['INTERN', 'TEAM_LEADER', 'EMPLOYEE'] },
           status: 'ACTIVE'
         }
       });
@@ -84,7 +84,7 @@ const getAnnouncements = async (req, res) => {
     const where = {};
 
     // Filter based on user's team membership
-    if (req.user.role === 'INTERN') {
+    if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       const memberRecord = await prisma.teamMember.findFirst({
         where: { userId: req.user.id }
       });

@@ -5,14 +5,21 @@ const { logActivity } = require('../utils/activityLogger');
 
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { password } = req.body;
+    const loginInput = req.body.userId || req.body.employeeId || req.body.email || req.body.login;
 
-    if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password are required.' });
+    if (!loginInput || !password) {
+      return res.status(400).json({ message: 'User ID and password are required.' });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email },
+    // Search user by email OR employeeId (case-insensitive)
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: { equals: loginInput.trim(), mode: 'insensitive' } },
+          { employeeId: { equals: loginInput.trim(), mode: 'insensitive' } }
+        ]
+      },
       include: {
         teamMembers: {
           include: { team: true }
@@ -169,10 +176,22 @@ const changePassword = async (req, res) => {
 const resetPasswordRequest = async (req, res) => {
   // Simple check: for developers or admins to trigger reset, or simulated SMTP request
   try {
-    const { email } = req.body;
-    const user = await prisma.user.findUnique({ where: { email } });
+    const resetInput = req.body.userId || req.body.employeeId || req.body.email || req.body.login;
+    if (!resetInput) {
+      return res.status(400).json({ message: 'User ID is required.' });
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { employeeId: { equals: resetInput.trim(), mode: 'insensitive' } },
+          { email: { equals: resetInput.trim(), mode: 'insensitive' } }
+        ]
+      }
+    });
+
     if (!user) {
-      return res.status(404).json({ message: 'User not found with this email.' });
+      return res.status(404).json({ message: 'User not found with provided User ID.' });
     }
 
     // In a fully fledged setup, generate a reset token.
@@ -198,8 +217,8 @@ const resetPasswordRequest = async (req, res) => {
     });
 
     res.json({
-      message: 'Password reset successful. Check your email or use your Date of Birth (DDMMYYYY) to login.',
-      tempPassword: dobTemp // Returned for testing purposes in UI
+      message: 'Password reset successful. Use your Date of Birth (DDMMYYYY) as password to login.',
+      tempPassword: dobTemp
     });
   } catch (error) {
     console.error('Password reset request error:', error);

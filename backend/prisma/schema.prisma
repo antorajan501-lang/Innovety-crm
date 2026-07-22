@@ -11,6 +11,7 @@ enum Role {
   ADMIN
   TEAM_LEADER
   INTERN
+  EMPLOYEE
 }
 
 enum TicketCategory {

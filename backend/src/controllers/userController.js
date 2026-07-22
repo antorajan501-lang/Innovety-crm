@@ -3,21 +3,20 @@ const prisma = require('../utils/db');
 const { sendWelcomeEmail } = require('../services/email');
 const { logActivity } = require('../utils/activityLogger');
 
-// Helper to auto-generate employee ID
+// Helper to auto-generate employee ID per role
 const generateEmployeeId = async (role) => {
-  const count = await prisma.user.count();
-  const prefix = role === 'ADMIN' ? 'AD' : role === 'TEAM_LEADER' ? 'TL' : 'IN';
-  const number = 1000 + count + 1;
+  const count = await prisma.user.count({ where: { role } });
+  const prefix = role === 'EMPLOYEE' ? 'EM' : role === 'ADMIN' ? 'AD' : role === 'TEAM_LEADER' ? 'TL' : 'IN';
+  const number = 1001 + count;
   return `${prefix}-${number}`;
 };
 
 // Helper to format DOB to temporary password (DDMMYYYY)
 const formatDobToPassword = (dobString) => {
-  // dobString expected as YYYY-MM-DD or standard ISO date
   const date = new Date(dobString);
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const year = date.getFullYear();
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const year = date.getUTCFullYear();
   return `${day}${month}${year}`;
 };
 
@@ -298,6 +297,12 @@ const bulkImport = async (req, res) => {
       const tempPasswordText = formatDobToPassword(dob);
       const hashedPassword = await bcrypt.hash(tempPasswordText, 10);
 
+      const parsedDob = new Date(dob);
+      if (isNaN(parsedDob.getTime())) {
+        console.warn(`Skipping invalid DOB line in bulk import for email: ${email}`);
+        continue;
+      }
+
       const created = await prisma.user.create({
         data: {
           employeeId,
@@ -305,7 +310,7 @@ const bulkImport = async (req, res) => {
           email,
           password: hashedPassword,
           phone,
-          dob: new Date(dob),
+          dob: parsedDob,
           college,
           department,
           role,

@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLocation } from 'react-router-dom';
-import api from '../services/api';
+import api, { getUploadUrl, downloadFile } from '../services/api';
 import confetti from 'canvas-confetti';
 import {
+  Download,
   Plus,
   Calendar,
   Layers,
@@ -225,11 +226,14 @@ const Tasks = () => {
     try {
       if (user?.role === 'ADMIN') {
         const res = await api.get('/users?limit=100&status=ACTIVE');
-        const assignable = (res.data.users || []).filter(u => u.role === 'TEAM_LEADER' || u.role === 'INTERN');
+        const assignable = (res.data.users || []).filter(u => u.role === 'TEAM_LEADER' || u.role === 'INTERN' || u.role === 'EMPLOYEE');
         setTeamMembers(assignable);
       } else {
         const res = await api.get('/users?role=INTERN&status=ACTIVE');
-        setTeamMembers(res.data.users || []);
+        const internMembers = (res.data.users || []);
+        const empRes = await api.get('/users?role=EMPLOYEE&status=ACTIVE');
+        const empMembers = (empRes.data.users || []);
+        setTeamMembers([...internMembers, ...empMembers]);
       }
     } catch (err) {
       console.error(err);
@@ -287,8 +291,8 @@ const Tasks = () => {
     if (targetTitle === 'DONE') targetStatus = 'APPROVED';
 
     // Validate role permissions
-    if (user.role === 'INTERN' && task.assigneeId !== user.id) return;
-    if (user.role === 'INTERN' && !['IN_PROGRESS', 'WAITING_FOR_REVIEW'].includes(targetStatus)) {
+    if ((user.role === 'INTERN' || user.role === 'EMPLOYEE') && task.assigneeId !== user.id) return;
+    if ((user.role === 'INTERN' || user.role === 'EMPLOYEE') && !['IN_PROGRESS', 'WAITING_FOR_REVIEW'].includes(targetStatus)) {
       return; 
     }
 
@@ -697,7 +701,7 @@ const Tasks = () => {
                   </span>
 
                   <img 
-                    src={task.assignee?.profilePic ? `http://localhost:5000${task.assignee.profilePic}` : `https://api.dicebear.com/7.x/initials/svg?seed=${task.assignee?.name}`}
+                    src={task.assignee?.profilePic ? getUploadUrl(task.assignee.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${task.assignee?.name}`}
                     className="h-5 w-5 rounded-full border object-cover"
                     title={task.assignee?.name}
                     alt="avatar"
@@ -1156,7 +1160,7 @@ const Tasks = () => {
               {teamMembers.slice(0, 4).map((member, i) => (
                 <img
                   key={i}
-                  src={member.profilePic ? `http://localhost:5000${member.profilePic}` : `https://api.dicebear.com/7.x/initials/svg?seed=${member.name}`}
+                  src={member.profilePic ? getUploadUrl(member.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${member.name}`}
                   className="h-6 w-6 rounded-full border border-card object-cover"
                   title={member.name}
                   alt="avatar"
@@ -1278,17 +1282,17 @@ const Tasks = () => {
       {/* Switch Render according to Sub Tab selected */}
       {activeSubTab === 'Board' ? (
         viewMode === 'kanban' ? (
-          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 overflow-hidden h-full pb-4 min-h-[500px]">
+          <div className="flex-1 flex overflow-x-auto gap-4 h-full pb-4 min-h-[500px] scrollbar-thin">
             {columns.map((col, idx) => {
               const isHovered = activeDragCol === col.title;
               return (
                 <div
-                  key={idx}
+                  key={col.title}
                   onDragOver={onDragOver}
                   onDragEnter={() => setActiveDragCol(col.title)}
                   onDragLeave={() => setActiveDragCol(null)}
                   onDrop={(e) => onDrop(e, col.title)}
-                  className={`flex flex-col bg-card/65 border ${
+                  className={`flex flex-col flex-1 min-w-[280px] max-w-[340px] bg-card/65 border ${
                     isHovered ? 'border-primary bg-primary/5 shadow-md scale-[1.01]' : 'border-border/30'
                   } rounded-xl p-3 h-full overflow-hidden transition-all duration-200`}
                 >
@@ -1350,7 +1354,7 @@ const Tasks = () => {
                                 </span>
                               )}
                               <img
-                                src={task.assignee?.profilePic ? `http://localhost:5000${task.assignee.profilePic}` : `https://api.dicebear.com/7.x/initials/svg?seed=${task.assignee?.name}`}
+                                src={task.assignee?.profilePic ? getUploadUrl(task.assignee.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${task.assignee?.name}`}
                                 className="h-5 w-5 rounded-full border object-cover"
                                 title={task.assignee?.name}
                                 alt="avatar"
@@ -1454,7 +1458,9 @@ const Tasks = () => {
                       >
                         <option value="">Select Team</option>
                         {teams.map(team => (
-                          <option key={team.id} value={team.id}>{team.name}</option>
+                          <option key={team.id} value={team.id}>
+                            {team.name} ({team.members?.length || 0} members)
+                          </option>
                         ))}
                       </select>
                     </>
@@ -1820,16 +1826,17 @@ const Tasks = () => {
                       <h4 className="text-xs font-semibold text-muted-foreground">Task Reference Attachments</h4>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {selectedTask.attachments.map((file, i) => (
-                          <a 
+                          <button
                             key={i} 
-                            href={`http://localhost:5000${file}`} 
-                            target="_blank" 
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border text-[11px] font-semibold hover:bg-muted transition-all"
+                            type="button"
+                            onClick={() => downloadFile(file)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/40 text-[11px] font-semibold bg-muted/20 hover:bg-primary/10 hover:text-primary transition-all cursor-pointer"
+                            title="Download Attachment"
                           >
                             <Paperclip className="h-3 w-3" />
                             <span>Attachment #{i + 1}</span>
-                          </a>
+                            <Download className="h-3 w-3 ml-1 opacity-70" />
+                          </button>
                         ))}
                       </div>
                     </div>
@@ -1904,7 +1911,7 @@ const Tasks = () => {
                         {selectedTask.submissions[0].files.map((file, i) => (
                           <a 
                             key={i} 
-                            href={`http://localhost:5000${file}`} 
+                            href={getUploadUrl(file)} 
                             target="_blank" 
                             rel="noreferrer"
                             className="flex items-center gap-1 text-[9px] font-bold border rounded px-2 py-1 bg-card hover:bg-muted"
@@ -1918,7 +1925,7 @@ const Tasks = () => {
                   )}
 
                   {/* Role Specific Task Actions */}
-                  {user.role === 'INTERN' && selectedTask.assigneeId === user.id && (
+                  {(user.role === 'INTERN' || user.role === 'EMPLOYEE') && selectedTask.assigneeId === user.id && (
                     <div className="border-t border-border/30 pt-3 space-y-2">
                       {selectedTask.status === 'PENDING' && (
                         <button 

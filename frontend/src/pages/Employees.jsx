@@ -21,7 +21,7 @@ import {
   Briefcase
 } from 'lucide-react';
 
-const TeamLeaders = () => {
+const Employees = () => {
   const [users, setUsers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -33,7 +33,7 @@ const TeamLeaders = () => {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [detailsModalUser, setDetailsModalUser] = useState(null);
-  
+
   // Custom Confirmation Modal state
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
@@ -51,7 +51,7 @@ const TeamLeaders = () => {
     college: '',
     department: '',
     joiningDate: '',
-    role: 'TEAM_LEADER'
+    role: 'EMPLOYEE'
   });
 
   const [importText, setImportText] = useState('');
@@ -66,7 +66,7 @@ const TeamLeaders = () => {
         params: {
           page,
           search,
-          role: 'TEAM_LEADER',
+          role: 'EMPLOYEE',
           status: statusFilter,
           limit: 15
         }
@@ -76,7 +76,7 @@ const TeamLeaders = () => {
       setLoading(false);
     } catch (err) {
       console.error(err);
-      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to fetch team leader registry.' });
+      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to fetch employee registry.' });
       setLoading(false);
     }
   };
@@ -99,7 +99,7 @@ const TeamLeaders = () => {
     e.preventDefault();
     try {
       setLoading(true);
-      await api.post('/users', { ...formData, role: 'TEAM_LEADER' });
+      await api.post('/users', formData);
       setCreateModalOpen(false);
       setFormData({
         name: '',
@@ -109,56 +109,40 @@ const TeamLeaders = () => {
         college: '',
         department: '',
         joiningDate: '',
-        role: 'TEAM_LEADER'
+        role: 'EMPLOYEE'
       });
-      setAlertMsg({ type: 'success', text: 'Team Leader onboarded successfully! Welcome email is being dispatched.' });
+      setAlertMsg({ type: 'success', text: 'Employee account created successfully.' });
       fetchUsers();
     } catch (err) {
-      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to onboard team leader.' });
+      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to create employee.' });
       setLoading(false);
     }
   };
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
+    if (!selectedUser) return;
     try {
       setLoading(true);
-      await api.put(`/users/${selectedUser.id}`, { ...formData, role: 'TEAM_LEADER' });
+      await api.put(`/users/${selectedUser.id}`, formData);
       setEditModalOpen(false);
       setSelectedUser(null);
-      setAlertMsg({ type: 'success', text: 'Team Leader details updated.' });
+      setAlertMsg({ type: 'success', text: 'Employee record updated.' });
       fetchUsers();
     } catch (err) {
-      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to edit team leader details.' });
+      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to update employee.' });
       setLoading(false);
     }
-  };
-
-  const handleDeleteUser = (id) => {
-    setConfirmModal({
-      isOpen: true,
-      title: 'Delete Team Leader',
-      message: 'Are you sure you want to delete this Team Leader? This action is permanent.',
-      onConfirm: async () => {
-        try {
-          await api.delete(`/users/${id}`);
-          setAlertMsg({ type: 'success', text: 'Team Leader account removed.' });
-          fetchUsers();
-        } catch (err) {
-          setAlertMsg({ type: 'error', text: 'Failed to delete Team Leader.' });
-        }
-      }
-    });
   };
 
   const handleToggleStatus = async (id, currentStatus) => {
     const nextStatus = currentStatus === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
     try {
-      await api.put(`/users/${id}/status`, { status: nextStatus });
-      setAlertMsg({ type: 'success', text: `Team Leader status set to ${nextStatus}.` });
+      await api.patch(`/users/${id}/status`, { status: nextStatus });
+      setAlertMsg({ type: 'success', text: `Employee status updated to ${nextStatus}.` });
       fetchUsers();
     } catch (err) {
-      setAlertMsg({ type: 'error', text: 'Failed to toggle status.' });
+      setAlertMsg({ type: 'error', text: 'Failed to update status.' });
     }
   };
 
@@ -174,17 +158,34 @@ const TeamLeaders = () => {
     }
   };
 
+  const handleDeleteUser = (id) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Employee Account',
+      message: 'Are you sure you want to delete this employee account? This action cannot be undone.',
+      onConfirm: async () => {
+        try {
+          await api.delete(`/users/${id}`);
+          setAlertMsg({ type: 'success', text: 'Employee account deleted.' });
+          fetchUsers();
+        } catch (err) {
+          setAlertMsg({ type: 'error', text: 'Failed to delete account.' });
+        }
+      }
+    });
+  };
+
   const handleBulkDelete = () => {
     if (selectedIds.length === 0) return;
     setConfirmModal({
       isOpen: true,
-      title: 'Bulk Delete Team Leaders',
-      message: `Are you sure you want to delete the ${selectedIds.length} selected Team Leaders? This action is permanent.`,
+      title: 'Bulk Delete Selected Employees',
+      message: `Are you sure you want to delete ${selectedIds.length} selected employee accounts?`,
       onConfirm: async () => {
         try {
-          await api.post('/users/bulk-delete', { ids: selectedIds });
+          await api.post('/users/bulk-delete', { userIds: selectedIds });
           setSelectedIds([]);
-          setAlertMsg({ type: 'success', text: 'Selected accounts deleted.' });
+          setAlertMsg({ type: 'success', text: 'Selected employee accounts deleted.' });
           fetchUsers();
         } catch (err) {
           setAlertMsg({ type: 'error', text: 'Bulk delete operations failed.' });
@@ -193,45 +194,12 @@ const TeamLeaders = () => {
     });
   };
 
-  const handleImportSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const lines = importText.split('\n');
-      const headers = lines[0].split(',').map(h => h.trim());
-      const parsedUsers = [];
-
-      for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-        const columns = lines[i].split(',').map(c => c.trim());
-        const userObj = {};
-        headers.forEach((header, idx) => {
-          userObj[header] = columns[idx];
-        });
-        userObj['role'] = 'TEAM_LEADER'; // Enforce role
-        parsedUsers.push(userObj);
-      }
-
-      setLoading(true);
-      const res = await api.post('/users/bulk-import', { usersList: parsedUsers });
-      setImportModalOpen(false);
-      setImportText('');
-      setAlertMsg({
-        type: 'success',
-        text: `Import completed. Created: ${res.data.createdCount}. Skipped: ${res.data.skipped.length}.`
-      });
-      fetchUsers();
-    } catch (err) {
-      setAlertMsg({ type: 'error', text: 'Invalid CSV format or values. Ensure columns match: name,email,dob,phone,college,department' });
-      setLoading(false);
-    }
-  };
-
   const triggerExport = async () => {
     try {
       setLoading(true);
       const res = await api.get('/users', {
         params: {
-          role: 'TEAM_LEADER',
+          role: 'EMPLOYEE',
           status: statusFilter,
           search: search,
           limit: 1000
@@ -282,7 +250,7 @@ const TeamLeaders = () => {
       college: user.college || '',
       department: user.department || '',
       joiningDate: user.joiningDate ? user.joiningDate.split('T')[0] : '',
-      role: 'TEAM_LEADER'
+      role: 'EMPLOYEE'
     });
     setEditModalOpen(true);
   };
@@ -308,7 +276,7 @@ const TeamLeaders = () => {
           <input
             type="text"
             placeholder="Search by ID, name, email..."
-            className="w-full pl-9 bg-muted/40 focus:bg-card"
+            className="w-full pl-9 bg-muted/40 focus:bg-card text-xs py-2 rounded-xl"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -317,29 +285,24 @@ const TeamLeaders = () => {
         {/* Buttons */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Filters */}
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-muted/40">
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-muted/40 text-xs px-3 py-2 rounded-xl">
             <option value="">All Statuses</option>
             <option value="ACTIVE">Active</option>
             <option value="INACTIVE">Inactive</option>
           </select>
 
-          <button onClick={triggerExport} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-muted">
+          <button onClick={triggerExport} className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-muted">
             <Download className="h-3.5 w-3.5" />
             <span>Export CSV</span>
           </button>
 
-          <button onClick={() => setImportModalOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-muted">
-            <Upload className="h-3.5 w-3.5" />
-            <span>Import</span>
-          </button>
-
-          <button onClick={() => setCreateModalOpen(true)} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground shadow-md hover:bg-primary-hover">
+          <button onClick={() => setCreateModalOpen(true)} className="flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground shadow-md hover:bg-primary-hover">
             <Plus className="h-3.5 w-3.5" />
-            <span>Add Team Leader</span>
+            <span>Add Employee</span>
           </button>
 
           {selectedIds.length > 0 && (
-            <button onClick={handleBulkDelete} className="flex items-center gap-1.5 rounded-lg bg-danger px-3 py-2 text-xs font-semibold text-white shadow-md">
+            <button onClick={handleBulkDelete} className="flex items-center gap-1.5 rounded-xl bg-danger px-3.5 py-2 text-xs font-semibold text-white shadow-md hover:bg-danger-hover">
               <Trash2 className="h-3.5 w-3.5" />
               <span>Delete Selected ({selectedIds.length})</span>
             </button>
@@ -347,12 +310,12 @@ const TeamLeaders = () => {
         </div>
       </div>
 
-      {/* Grid Registry Table */}
-      <div className="overflow-x-auto rounded-2xl border border-border/40 bg-card shadow-premium">
-        <table className="w-full border-collapse text-left text-sm">
+      {/* Main Registry Table */}
+      <div className="overflow-hidden rounded-2xl border border-border/40 bg-card shadow-premium">
+        <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="border-b border-border/40 bg-muted/30 text-xs font-semibold text-muted-foreground uppercase">
-              <th className="px-6 py-4">
+            <tr className="border-b border-border/40 bg-muted/30 text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+              <th className="px-6 py-4 w-10">
                 <input 
                   type="checkbox"
                   checked={users.length > 0 && selectedIds.length === users.length}
@@ -369,7 +332,6 @@ const TeamLeaders = () => {
               <th className="px-6 py-4">Name</th>
               <th className="px-6 py-4">Email</th>
               <th className="px-6 py-4">Department</th>
-              <th className="px-6 py-4">College</th>
               <th className="px-6 py-4">Status</th>
               <th className="px-6 py-4 text-right">Actions</th>
             </tr>
@@ -377,8 +339,8 @@ const TeamLeaders = () => {
           <tbody className="divide-y divide-border/30">
             {users.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-10 text-center text-muted-foreground">
-                  No Team Leaders registered matching search filter.
+                <td colSpan={7} className="px-6 py-10 text-center text-muted-foreground text-xs">
+                  No employee records found matching filter criteria.
                 </td>
               </tr>
             ) : (
@@ -409,12 +371,11 @@ const TeamLeaders = () => {
                         className="h-8 w-8 rounded-lg object-cover group-hover:ring-2 group-hover:ring-primary/40 transition-all"
                         alt={item.name}
                       />
-                      <span className="font-semibold group-hover:text-primary group-hover:underline transition-colors">{item.name}</span>
+                      <span className="font-semibold text-xs group-hover:text-primary group-hover:underline transition-colors">{item.name}</span>
                     </button>
                   </td>
                   <td className="px-6 py-4 text-xs text-muted-foreground">{item.email}</td>
-                  <td className="px-6 py-4">{item.department || 'N/A'}</td>
-                  <td className="px-6 py-4 max-w-[150px] truncate">{item.college || 'N/A'}</td>
+                  <td className="px-6 py-4 text-xs">{item.department || 'Management'}</td>
                   <td className="px-6 py-4">
                     <button 
                       onClick={() => handleToggleStatus(item.id, item.status)}
@@ -468,12 +429,12 @@ const TeamLeaders = () => {
         </div>
       </div>
 
-      {/* Onboard Create Team Leader Modal */}
+      {/* Create Modal */}
       {createModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold">Onboard New Team Leader</h3>
+              <h3 className="text-base font-bold">Add Employee Account</h3>
               <button className="rounded-lg p-1 hover:bg-muted" onClick={() => setCreateModalOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
@@ -483,61 +444,51 @@ const TeamLeaders = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Full Name *</label>
-                  <input type="text" name="name" required value={formData.name} onChange={handleInputChange} />
+                  <input type="text" required name="name" value={formData.name} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Email Address *</label>
-                  <input type="email" name="email" required value={formData.email} onChange={handleInputChange} />
+                  <input type="email" required name="email" value={formData.email} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Phone Number</label>
-                  <input type="text" name="phone" value={formData.phone} onChange={handleInputChange} />
+                  <input type="text" name="phone" value={formData.phone} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Date of Birth *</label>
-                  <input type="date" name="dob" required value={formData.dob} onChange={handleInputChange} />
+                  <label className="text-xs font-semibold text-muted-foreground">Date of Birth (DOB) *</label>
+                  <input type="date" required name="dob" value={formData.dob} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">College Name</label>
-                  <input type="text" name="college" value={formData.college} onChange={handleInputChange} />
-                </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Department</label>
-                  <input type="text" name="department" value={formData.department} onChange={handleInputChange} />
+                  <input type="text" name="department" value={formData.department} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5 col-span-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Joining Date</label>
-                  <input type="date" name="joiningDate" value={formData.joiningDate} onChange={handleInputChange} className="w-full" />
+                  <input type="date" name="joiningDate" value={formData.joiningDate} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
               </div>
 
               <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
-                Onboard Team Leader
+                Create Employee
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Edit Team Leader Modal */}
+      {/* Edit Modal */}
       {editModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold">Edit Team Leader Details</h3>
-              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => {
-                setEditModalOpen(false);
-                setSelectedUser(null);
-              }}>
+              <h3 className="text-base font-bold">Edit Employee Details</h3>
+              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => setEditModalOpen(false)}>
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -546,77 +497,38 @@ const TeamLeaders = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Full Name *</label>
-                  <input type="text" name="name" required value={formData.name} onChange={handleInputChange} />
+                  <input type="text" required name="name" value={formData.name} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Email Address *</label>
-                  <input type="email" name="email" required value={formData.email} onChange={handleInputChange} />
+                  <input type="email" required name="email" value={formData.email} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Phone Number</label>
-                  <input type="text" name="phone" value={formData.phone} onChange={handleInputChange} />
+                  <input type="text" name="phone" value={formData.phone} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Date of Birth</label>
-                  <input type="date" name="dob" value={formData.dob} onChange={handleInputChange} />
+                  <label className="text-xs font-semibold text-muted-foreground">Date of Birth (DOB) *</label>
+                  <input type="date" required name="dob" value={formData.dob} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">College Name</label>
-                  <input type="text" name="college" value={formData.college} onChange={handleInputChange} />
-                </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Department</label>
-                  <input type="text" name="department" value={formData.department} onChange={handleInputChange} />
+                  <input type="text" name="department" value={formData.department} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5 col-span-2">
+                <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Joining Date</label>
-                  <input type="date" name="joiningDate" value={formData.joiningDate} onChange={handleInputChange} className="w-full" />
+                  <input type="date" name="joiningDate" value={formData.joiningDate} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
                 </div>
               </div>
 
               <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
-                Save Updates
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* CSV Import Modal */}
-      {importModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold">Bulk Import Team Leaders (CSV)</h3>
-              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => setImportModalOpen(false)}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleImportSubmit} className="mt-4 space-y-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">CSV Text Data</label>
-                <textarea
-                  rows={8}
-                  placeholder="name,email,dob,phone,college,department&#10;Alice Smith,alice@example.com,1992-04-12,,MIT,CS&#10;Bob Jones,bob@example.com,1990-11-23,123456,IIT,EE"
-                  className="w-full border border-border p-3 text-xs bg-muted/40 font-mono rounded-lg outline-none"
-                  value={importText}
-                  onChange={(e) => setImportText(e.target.value)}
-                  required
-                />
-              </div>
-              
-              <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
-                Execute Bulk Import
+                Save Changes
               </button>
             </form>
           </div>
@@ -684,7 +596,7 @@ const TeamLeaders = () => {
                 {detailsModalUser.employeeId}
               </span>
               <p className="text-xs text-muted-foreground mt-2 font-medium">
-                Team Leader / Project Lead Account
+                System Admin / Enterprise Staff
               </p>
             </div>
 
@@ -738,7 +650,7 @@ const TeamLeaders = () => {
                   <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1.5 mb-1">
                     <Building2 className="h-3.5 w-3.5 text-primary" /> Department
                   </span>
-                  <span className="font-semibold text-foreground">{detailsModalUser.department || 'N/A'}</span>
+                  <span className="font-semibold text-foreground">{detailsModalUser.department || 'Management'}</span>
                 </div>
               </div>
             </div>
@@ -775,4 +687,4 @@ const TeamLeaders = () => {
   );
 };
 
-export default TeamLeaders;
+export default Employees;

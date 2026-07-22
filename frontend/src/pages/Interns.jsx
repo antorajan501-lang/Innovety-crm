@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import api from '../services/api';
+import api, { getUploadUrl } from '../services/api';
 import {
   Plus,
   Search,
@@ -12,7 +12,15 @@ import {
   X,
   CheckCircle,
   AlertCircle,
-  Edit2
+  Edit2,
+  Eye,
+  Mail,
+  Phone,
+  Calendar,
+  Clock,
+  GraduationCap,
+  Building2,
+  UserCheck
 } from 'lucide-react';
 
 const Interns = () => {
@@ -26,6 +34,7 @@ const Interns = () => {
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [detailsModalUser, setDetailsModalUser] = useState(null);
   
   // Custom Confirmation Modal state
   const [confirmModal, setConfirmModal] = useState({
@@ -69,7 +78,7 @@ const Interns = () => {
       setLoading(false);
     } catch (err) {
       console.error(err);
-      setAlertMsg({ type: 'error', text: 'Failed to fetch users registry.' });
+      setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to fetch users registry.' });
       setLoading(false);
     }
   };
@@ -220,18 +229,50 @@ const Interns = () => {
     }
   };
 
-  const triggerExport = () => {
-    const headers = 'Employee ID,Name,Email,Phone,College,Department,Role,Status,Joining Date\n';
-    const csvRows = users.map(u => 
-      `"${u.employeeId}","${u.name}","${u.email}","${u.phone || ''}","${u.college || ''}","${u.department || ''}","${u.role}","${u.status}","${new Date(u.joiningDate).toLocaleDateString()}"`
-    ).join('\n');
-    
-    const blob = new Blob([headers + csvRows], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.setAttribute('href', url);
-    a.setAttribute('download', 'interns_registry.csv');
-    a.click();
+  const triggerExport = async () => {
+    try {
+      setLoading(true);
+      const res = await api.get('/users', {
+        params: {
+          role: 'INTERN',
+          status: statusFilter,
+          search: search,
+          limit: 1000
+        }
+      });
+      const exportList = res.data.users || users;
+      
+      const headers = ['Employee ID', 'Full Name', 'Email', 'Phone', 'College', 'Department', 'Role', 'Status', 'Joining Date', 'Created At'];
+      const csvRows = exportList.map(u => [
+        `"${(u.employeeId || '').replace(/"/g, '""')}"`,
+        `"${(u.name || '').replace(/"/g, '""')}"`,
+        `"${(u.email || '').replace(/"/g, '""')}"`,
+        `"${(u.phone || '').replace(/"/g, '""')}"`,
+        `"${(u.college || '').replace(/"/g, '""')}"`,
+        `"${(u.department || '').replace(/"/g, '""')}"`,
+        `"${(u.role || '').replace(/"/g, '""')}"`,
+        `"${(u.status || '').replace(/"/g, '""')}"`,
+        `"${u.joiningDate ? new Date(u.joiningDate).toLocaleDateString() : ''}"`,
+        `"${u.createdAt ? new Date(u.createdAt).toLocaleDateString() : ''}"`
+      ].join(','));
+
+      const csvContent = '\uFEFF' + [headers.join(','), ...csvRows].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `interns_registry_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      setLoading(false);
+      setAlertMsg({ type: 'success', text: `Successfully exported ${exportList.length} intern records to CSV.` });
+    } catch (err) {
+      console.error(err);
+      setAlertMsg({ type: 'error', text: 'Failed to export CSV file.' });
+      setLoading(false);
+    }
   };
 
   const openEditModal = (user) => {
@@ -327,8 +368,8 @@ const Interns = () => {
                   }}
                 />
               </th>
-              <th className="px-6 py-4">Employee ID</th>
-              <th className="px-6 py-4">Intern Name</th>
+              <th className="px-6 py-4">ID</th>
+              <th className="px-6 py-4">Name</th>
               <th className="px-6 py-4">Email</th>
               <th className="px-6 py-4">Department</th>
               <th className="px-6 py-4">College</th>
@@ -359,16 +400,20 @@ const Interns = () => {
                       }}
                     />
                   </td>
-                  <td className="px-6 py-4 font-mono font-bold text-xs">{item.employeeId}</td>
+                  <td className="px-6 py-4 font-mono font-bold text-xs">
+                    <button onClick={() => setDetailsModalUser(item)} className="hover:text-primary hover:underline transition-colors text-left font-mono font-bold">
+                      {item.employeeId}
+                    </button>
+                  </td>
                   <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
+                    <button onClick={() => setDetailsModalUser(item)} className="flex items-center gap-3 text-left group">
                       <img 
-                        src={item.profilePic ? `http://localhost:5000${item.profilePic}` : `https://api.dicebear.com/7.x/initials/svg?seed=${item.name}`}
-                        className="h-8 w-8 rounded-lg object-cover"
+                        src={item.profilePic ? getUploadUrl(item.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${item.name}`}
+                        className="h-8 w-8 rounded-lg object-cover group-hover:ring-2 group-hover:ring-primary/40 transition-all"
                         alt={item.name}
                       />
-                      <span className="font-semibold">{item.name}</span>
-                    </div>
+                      <span className="font-semibold group-hover:text-primary group-hover:underline transition-colors">{item.name}</span>
+                    </button>
                   </td>
                   <td className="px-6 py-4 text-xs text-muted-foreground">{item.email}</td>
                   <td className="px-6 py-4">{item.department || 'N/A'}</td>
@@ -384,6 +429,9 @@ const Interns = () => {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
+                      <button onClick={() => setDetailsModalUser(item)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-primary transition-colors" title="View Details Card">
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
                       <button onClick={() => handleResetPassword(item.id)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Reset password to DOB">
                         <Lock className="h-3.5 w-3.5" />
                       </button>
@@ -601,6 +649,126 @@ const Interns = () => {
                 className="rounded-xl bg-danger px-4 py-2 text-xs font-semibold text-white shadow-md hover:bg-danger-hover active:scale-95 transition-all"
               >
                 Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Details Card Modal / Panel */}
+      {detailsModalUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg rounded-3xl border border-border/40 bg-card p-6 shadow-2xl overflow-y-auto max-h-[90vh] animate-in zoom-in-95 duration-200 text-left">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border/40 pb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Intern Details Profile Card</span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${detailsModalUser.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-red-500/10 text-red-500'}`}>
+                  {detailsModalUser.status}
+                </span>
+              </div>
+              <button 
+                className="rounded-lg p-1.5 hover:bg-muted text-muted-foreground hover:text-foreground" 
+                onClick={() => setDetailsModalUser(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Profile Avatar & Main Info */}
+            <div className="mt-6 flex flex-col items-center text-center pb-6 border-b border-border/40">
+              <img 
+                src={detailsModalUser.profilePic ? getUploadUrl(detailsModalUser.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${detailsModalUser.name}`}
+                className="h-20 w-20 rounded-2xl object-cover border-2 border-primary/20 shadow-md mb-3"
+                alt={detailsModalUser.name}
+              />
+              <h3 className="text-lg font-bold text-foreground">{detailsModalUser.name}</h3>
+              <span className="text-xs font-mono font-bold bg-primary/10 text-primary px-2.5 py-0.5 rounded-md mt-1">
+                {detailsModalUser.employeeId}
+              </span>
+              <p className="text-xs text-muted-foreground mt-2 font-medium">
+                Intern Registry Account
+              </p>
+            </div>
+
+            {/* Complete Profile Details Grid */}
+            <div className="py-6 space-y-4">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Contact & Personal Details</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="bg-muted/20 border border-border/20 p-3 rounded-xl">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1.5 mb-1">
+                    <Mail className="h-3.5 w-3.5 text-primary" /> Email Address
+                  </span>
+                  <span className="font-semibold text-foreground truncate block">{detailsModalUser.email}</span>
+                </div>
+
+                <div className="bg-muted/20 border border-border/20 p-3 rounded-xl">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1.5 mb-1">
+                    <Phone className="h-3.5 w-3.5 text-primary" /> Phone Number
+                  </span>
+                  <span className="font-semibold text-foreground">{detailsModalUser.phone || 'Not provided'}</span>
+                </div>
+
+                <div className="bg-muted/20 border border-border/20 p-3 rounded-xl">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1.5 mb-1">
+                    <Calendar className="h-3.5 w-3.5 text-primary" /> Date of Birth (DOB)
+                  </span>
+                  <span className="font-semibold text-foreground">
+                    {detailsModalUser.dob ? new Date(detailsModalUser.dob).toLocaleDateString() : 'N/A'}
+                  </span>
+                </div>
+
+                <div className="bg-muted/20 border border-border/20 p-3 rounded-xl">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1.5 mb-1">
+                    <Clock className="h-3.5 w-3.5 text-primary" /> Joining Date
+                  </span>
+                  <span className="font-semibold text-foreground">
+                    {detailsModalUser.joiningDate ? new Date(detailsModalUser.joiningDate).toLocaleDateString() : 'N/A'}
+                  </span>
+                </div>
+              </div>
+
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground pt-2">Academic & Department Info</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="bg-muted/20 border border-border/20 p-3 rounded-xl">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1.5 mb-1">
+                    <GraduationCap className="h-3.5 w-3.5 text-primary" /> College / Institution
+                  </span>
+                  <span className="font-semibold text-foreground">{detailsModalUser.college || 'N/A'}</span>
+                </div>
+
+                <div className="bg-muted/20 border border-border/20 p-3 rounded-xl">
+                  <span className="text-[10px] font-bold text-muted-foreground uppercase flex items-center gap-1.5 mb-1">
+                    <Building2 className="h-3.5 w-3.5 text-primary" /> Department
+                  </span>
+                  <span className="font-semibold text-foreground">{detailsModalUser.department || 'N/A'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Actions */}
+            <div className="pt-4 border-t border-border/40 flex items-center justify-end gap-3">
+              <button 
+                onClick={() => {
+                  const u = detailsModalUser;
+                  setDetailsModalUser(null);
+                  openEditModal(u);
+                }} 
+                className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold hover:bg-muted"
+              >
+                <Edit2 className="h-3.5 w-3.5" />
+                <span>Edit Profile</span>
+              </button>
+              <button 
+                onClick={() => {
+                  const u = detailsModalUser;
+                  setDetailsModalUser(null);
+                  handleResetPassword(u.id);
+                }} 
+                className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-md hover:bg-primary-hover"
+              >
+                <Lock className="h-3.5 w-3.5" />
+                <span>Reset Password</span>
               </button>
             </div>
           </div>
