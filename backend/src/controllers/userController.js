@@ -140,6 +140,34 @@ const getAllUsers = async (req, res) => {
   }
 };
 
+const getUserById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await prisma.user.findUnique({
+      where: { id },
+      include: {
+        teamMembers: {
+          include: { team: { include: { leader: true } } }
+        },
+        attendances: {
+          take: 30,
+          orderBy: { date: 'desc' }
+        }
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const { password, ...details } = user;
+    res.json(details);
+  } catch (error) {
+    console.error('Get user by ID error:', error);
+    res.status(500).json({ message: 'Failed to fetch user details.' });
+  }
+};
+
 const editUser = async (req, res) => {
   try {
     const { id } = req.params;
@@ -373,6 +401,7 @@ const bulkDelete = async (req, res) => {
 module.exports = {
   createUser,
   getAllUsers,
+  getUserById,
   editUser,
   deleteUser,
   toggleUserStatus,

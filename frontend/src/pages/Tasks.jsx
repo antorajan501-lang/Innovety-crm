@@ -225,13 +225,13 @@ const Tasks = () => {
   const fetchTeamMembers = async () => {
     try {
       if (user?.role === 'ADMIN') {
-        const res = await api.get('/users?limit=100&status=ACTIVE');
+        const res = await api.get('/users?limit=1000&status=ACTIVE');
         const assignable = (res.data.users || []).filter(u => u.role === 'TEAM_LEADER' || u.role === 'INTERN' || u.role === 'EMPLOYEE');
         setTeamMembers(assignable);
       } else {
-        const res = await api.get('/users?role=INTERN&status=ACTIVE');
+        const res = await api.get('/users?role=INTERN&limit=1000&status=ACTIVE');
         const internMembers = (res.data.users || []);
-        const empRes = await api.get('/users?role=EMPLOYEE&status=ACTIVE');
+        const empRes = await api.get('/users?role=EMPLOYEE&limit=1000&status=ACTIVE');
         const empMembers = (empRes.data.users || []);
         setTeamMembers([...internMembers, ...empMembers]);
       }

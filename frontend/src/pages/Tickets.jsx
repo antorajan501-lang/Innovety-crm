@@ -50,7 +50,7 @@ const Tickets = () => {
   const fetchStaffMembers = async () => {
     try {
       // Only team leaders are assignable (System Admin cannot be assigned ticket work)
-      const res = await api.get('/users?limit=100');
+      const res = await api.get('/users?limit=1000');
       const staff = (res.data.users || []).filter(u => u.role === 'TEAM_LEADER');
       setAvailableAssignees(staff);
     } catch (e) {

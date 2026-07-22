@@ -85,7 +85,7 @@ const Dashboard = () => {
         if (user.role === 'ADMIN') {
           promises.push(api.get('/attendance/analytics'));
           promises.push(api.get('/teams'));
-          promises.push(api.get('/users?limit=50'));
+          promises.push(api.get('/users?limit=1000'));
           promises.push(api.get('/logs?limit=8'));
         }
 

@@ -290,22 +290,31 @@ const updateAttendance = async (req, res) => {
 
 const getAttendanceAnalytics = async (req, res) => {
   try {
-    const today = new Date();
-    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const now = new Date();
+    const startOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
+    const endOfToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
 
-    const totalInternsCount = await prisma.user.count({ where: { role: 'INTERN', status: 'ACTIVE' } });
+    const totalMembersCount = await prisma.user.count({
+      where: { role: { in: ['INTERN', 'EMPLOYEE'] }, status: 'ACTIVE' }
+    });
     
     const todayAttendances = await prisma.attendance.findMany({
-      where: { date: todayDate }
+      where: {
+        date: {
+          gte: startOfToday,
+          lte: endOfToday
+        }
+      }
     });
 
     const presentCount = todayAttendances.filter((a) => a.status === 'PRESENT' || a.status === 'WORK_FROM_HOME').length;
     const lateCount = todayAttendances.filter((a) => a.status === 'LATE').length;
     const halfDayCount = todayAttendances.filter((a) => a.status === 'HALF_DAY').length;
-    const absentCount = totalInternsCount - todayAttendances.length;
+    const absentCount = totalMembersCount - todayAttendances.length;
 
     res.json({
-      totalInterns: totalInternsCount,
+      totalInterns: totalMembersCount,
+      totalMembers: totalMembersCount,
       presentToday: presentCount,
       lateToday: lateCount,
       halfDayToday: halfDayCount,

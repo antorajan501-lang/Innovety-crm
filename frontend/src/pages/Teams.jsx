@@ -57,7 +57,7 @@ const Teams = () => {
       } else {
         const [teamsRes, usersRes] = await Promise.all([
           api.get('/teams'),
-          api.get('/users?limit=200')
+          api.get('/users?limit=1000')
         ]);
         setTeams(teamsRes.data);
         

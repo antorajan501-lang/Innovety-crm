@@ -84,13 +84,8 @@ const AttendanceAudit = () => {
 
   const fetchUsersList = async () => {
     try {
-      const [internRes, empRes] = await Promise.all([
-        api.get('/users?role=INTERN'),
-        api.get('/users?role=EMPLOYEE')
-      ]);
-      const interns = internRes.data.users || [];
-      const employees = empRes.data.users || [];
-      setAllInterns([...interns, ...employees]);
+      const res = await api.get('/users?limit=1000&status=ACTIVE');
+      setAllInterns(res.data.users || []);
     } catch (e) {
       console.error(e);
     }

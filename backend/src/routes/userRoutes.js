@@ -1,10 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { createUser, getAllUsers, editUser, deleteUser, toggleUserStatus, resetUserPassword, bulkImport, bulkDelete } = require('../controllers/userController');
+const { createUser, getAllUsers, getUserById, editUser, deleteUser, toggleUserStatus, resetUserPassword, bulkImport, bulkDelete } = require('../controllers/userController');
 const { authenticate, requireRole } = require('../middleware/auth');
 
-// GET /api/users is allowed for authenticated users so dropdowns, registries, and team lists load smoothly
+// GET /api/users and GET /api/users/:id allowed for authenticated users
 router.get('/', authenticate, requireRole(['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getAllUsers);
+router.get('/:id', authenticate, requireRole(['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getUserById);
 
 // All user creation, modification, and deletion routes strictly require ADMIN privilege
 router.use(authenticate, requireRole(['ADMIN']));

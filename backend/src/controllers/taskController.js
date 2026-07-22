@@ -193,21 +193,23 @@ const createTask = async (req, res) => {
 const getTasks = async (req, res) => {
   try {
     const { status, priority, search } = req.query;
-    const where = {};
+    const andConditions = [];
 
-    if (status) where.status = status;
-    if (priority) where.priority = priority;
+    if (status) andConditions.push({ status });
+    if (priority) andConditions.push({ priority });
 
     if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { description: { contains: search, mode: 'insensitive' } }
-      ];
+      andConditions.push({
+        OR: [
+          { title: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } }
+        ]
+      });
     }
 
     // Role filters
     if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
-      where.assigneeId = req.user.id;
+      andConditions.push({ assigneeId: req.user.id });
     } else if (req.user.role === 'TEAM_LEADER') {
       // Find all teams led by this leader
       const teams = await prisma.team.findMany({
@@ -215,11 +217,16 @@ const getTasks = async (req, res) => {
       });
       const teamIds = teams.map((t) => t.id);
       
-      where.OR = [
-        { teamId: { in: teamIds } },
-        { creatorId: req.user.id }
-      ];
+      andConditions.push({
+        OR: [
+          { teamId: { in: teamIds } },
+          { creatorId: req.user.id },
+          { assigneeId: req.user.id }
+        ]
+      });
     }
+
+    const where = andConditions.length > 0 ? { AND: andConditions } : {};
 
     const tasks = await prisma.task.findMany({
       where,
