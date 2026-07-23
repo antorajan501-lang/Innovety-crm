@@ -81,7 +81,7 @@ const Profile = () => {
   const handleProfileSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    
+
     const formData = new FormData();
     formData.append('name', profileForm.name);
     formData.append('phone', profileForm.phone);
@@ -176,16 +176,15 @@ const Profile = () => {
               src={previewUrl || (user?.profilePic ? getUploadUrl(user.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`)}
               alt={user?.name}
               className="h-28 w-28 rounded-2xl object-cover ring-4 ring-primary/10 shadow-lg transition-all group-hover:opacity-90"
-              onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`; }}
             />
-            <input 
-              type="file" 
-              className="hidden" 
-              id="avatar-upload" 
+            <input
+              type="file"
+              className="hidden"
+              id="avatar-upload"
               accept="image/*"
               onChange={handleAvatarChange}
             />
-            <label 
+            <label
               htmlFor="avatar-upload"
               className="absolute -bottom-2 -right-2 p-2 bg-primary hover:bg-primary-hover text-primary-foreground rounded-xl cursor-pointer shadow-md hover:scale-105 transition-all flex items-center gap-1"
               title="Click to upload new profile photo"
@@ -214,18 +213,18 @@ const Profile = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">Full Name</label>
-                <input 
-                  type="text" 
-                  value={profileForm.name} 
-                  onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })} 
+                <input
+                  type="text"
+                  value={profileForm.name}
+                  onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">Phone Number</label>
-                <input 
-                  type="text" 
-                  value={profileForm.phone} 
-                  onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })} 
+                <input
+                  type="text"
+                  value={profileForm.phone}
+                  onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
                 />
               </div>
             </div>
@@ -233,18 +232,18 @@ const Profile = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">College</label>
-                <input 
-                  type="text" 
-                  value={profileForm.college} 
-                  onChange={(e) => setProfileForm({ ...profileForm, college: e.target.value })} 
+                <input
+                  type="text"
+                  value={profileForm.college}
+                  onChange={(e) => setProfileForm({ ...profileForm, college: e.target.value })}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">Department</label>
-                <input 
-                  type="text" 
-                  value={profileForm.department} 
-                  onChange={(e) => setProfileForm({ ...profileForm, department: e.target.value })} 
+                <input
+                  type="text"
+                  value={profileForm.department}
+                  onChange={(e) => setProfileForm({ ...profileForm, department: e.target.value })}
                 />
               </div>
             </div>
@@ -270,33 +269,33 @@ const Profile = () => {
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-muted-foreground">Current Password</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 placeholder="Current password"
-                value={passwordForm.currentPassword} 
-                onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })} 
+                value={passwordForm.currentPassword}
+                onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
                 required
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-muted-foreground">New Secure Password</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 placeholder="New password"
-                value={passwordForm.newPassword} 
-                onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })} 
+                value={passwordForm.newPassword}
+                onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
                 required
               />
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-muted-foreground">Confirm New Password</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 placeholder="Confirm password"
-                value={passwordForm.confirmPassword} 
-                onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })} 
+                value={passwordForm.confirmPassword}
+                onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
                 required
               />
             </div>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api, { getUploadUrl } from '../services/api';
+import UserAvatar from '../components/common/UserAvatar';
 import {
   Plus,
   Search,
@@ -35,9 +36,7 @@ const Interns = () => {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [detailsModalUser, setDetailsModalUser] = useState(null);
-  const [editPicFile, setEditPicFile] = useState(null);
-  const [editPicPreview, setEditPicPreview] = useState(null);
-  
+
   // Custom Confirmation Modal state
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
@@ -127,14 +126,9 @@ const Interns = () => {
     e.preventDefault();
     try {
       setLoading(true);
-      const fd = new FormData();
-      Object.entries({ ...formData, role: 'INTERN' }).forEach(([k, v]) => fd.append(k, v || ''));
-      if (editPicFile) fd.append('profilePic', editPicFile);
-      await api.put(`/users/${selectedUser.id}`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      await api.put(`/users/${selectedUser.id}`, { ...formData, role: 'INTERN' });
       setEditModalOpen(false);
       setSelectedUser(null);
-      setEditPicFile(null);
-      setEditPicPreview(null);
       setAlertMsg({ type: 'success', text: 'User details updated.' });
       fetchUsers();
     } catch (err) {
@@ -248,7 +242,7 @@ const Interns = () => {
         }
       });
       const exportList = res.data.users || users;
-      
+
       const headers = ['Employee ID', 'Full Name', 'Email', 'Phone', 'College', 'Department', 'Role', 'Status', 'Joining Date', 'Created At'];
       const csvRows = exportList.map(u => [
         `"${(u.employeeId || '').replace(/"/g, '""')}"`,
@@ -294,8 +288,6 @@ const Interns = () => {
       joiningDate: user.joiningDate ? user.joiningDate.split('T')[0] : '',
       role: 'INTERN'
     });
-    setEditPicFile(null);
-    setEditPicPreview(null);
     setEditModalOpen(true);
   };
 
@@ -363,9 +355,9 @@ const Interns = () => {
       <div className="overflow-x-auto rounded-2xl border border-border/40 bg-card shadow-premium">
         <table className="w-full border-collapse text-left text-sm">
           <thead>
-            <tr className="border-b border-border/40 bg-muted/30 text-xs font-semibold text-muted-foreground uppercase">
+            <tr className="border-b border-border/40 bg-muted/40 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
               <th className="px-6 py-4">
-                <input 
+                <input
                   type="checkbox"
                   checked={users.length > 0 && selectedIds.length === users.length}
                   onChange={(e) => {
@@ -375,10 +367,11 @@ const Interns = () => {
                       setSelectedIds([]);
                     }
                   }}
+                  className="rounded border-border text-primary focus:ring-primary"
                 />
               </th>
               <th className="px-6 py-4">ID</th>
-              <th className="px-6 py-4">Name</th>
+              <th className="px-6 py-4">Intern Name</th>
               <th className="px-6 py-4">Email</th>
               <th className="px-6 py-4">Department</th>
               <th className="px-6 py-4">College</th>
@@ -389,15 +382,34 @@ const Interns = () => {
           <tbody className="divide-y divide-border/30">
             {users.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-6 py-10 text-center text-muted-foreground">
-                  No interns or users registered matching search filter.
+                <td colSpan={8} className="px-6 py-16 text-center">
+                  <div className="mx-auto flex max-w-sm flex-col items-center justify-center text-center">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary mb-4 shadow-sm">
+                      <GraduationCap className="h-8 w-8" />
+                    </div>
+                    <h3 className="text-base font-bold text-foreground">No Interns Registered</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      The Intern Registry is currently empty. Click below to add a new intern record.
+                    </p>
+                    <button
+                      onClick={() => setCreateModalOpen(true)}
+                      className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-md hover:bg-primary/90 transition-all"
+                    >
+                      <Plus className="h-4 w-4" />
+                      <span>Add New Intern</span>
+                    </button>
+                  </div>
                 </td>
               </tr>
             ) : (
               users.map((item) => (
-                <tr key={item.id} className="hover:bg-muted/15 transition-all">
-                  <td className="px-6 py-4">
-                    <input 
+                <tr
+                  key={item.id}
+                  className="hover:bg-muted/30 cursor-pointer transition-all h-16"
+                  onClick={() => setDetailsModalUser(item)}
+                >
+                  <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                    <input
                       type="checkbox"
                       checked={selectedIds.includes(item.id)}
                       onChange={(e) => {
@@ -407,49 +419,47 @@ const Interns = () => {
                           setSelectedIds(selectedIds.filter(id => id !== item.id));
                         }
                       }}
+                      className="rounded border-border text-primary focus:ring-primary"
                     />
                   </td>
-                  <td className="px-6 py-4 font-mono font-bold text-xs">
-                    <button onClick={() => setDetailsModalUser(item)} className="hover:text-primary hover:underline transition-colors text-left font-mono font-bold">
-                      {item.employeeId}
-                    </button>
+                  <td className="px-6 py-4 font-mono font-bold text-xs text-primary">
+                    {item.employeeId}
                   </td>
                   <td className="px-6 py-4">
-                    <button onClick={() => setDetailsModalUser(item)} className="flex items-center gap-3 text-left group">
-                      <img 
-                        src={item.profilePic ? getUploadUrl(item.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${item.name}`}
-                        className="h-8 w-8 rounded-lg object-cover group-hover:ring-2 group-hover:ring-primary/40 transition-all"
-                        alt={item.name}
-                        onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${item.name}`; }}
+                    <div className="flex items-center gap-3">
+                      <UserAvatar
+                        src={item.profilePic}
+                        name={item.name}
+                        className="h-9 w-9 rounded-xl object-cover ring-1 ring-border/40 shadow-sm"
                       />
-                      <span className="font-semibold group-hover:text-primary group-hover:underline transition-colors">{item.name}</span>
-                    </button>
+                      <span className="font-semibold text-foreground hover:text-primary transition-colors">{item.name}</span>
+                    </div>
                   </td>
-                  <td className="px-6 py-4 text-xs text-muted-foreground">{item.email}</td>
-                  <td className="px-6 py-4">{item.department || 'N/A'}</td>
-                  <td className="px-6 py-4 max-w-[150px] truncate">{item.college || 'N/A'}</td>
-                  <td className="px-6 py-4">
-                    <button 
+                  <td className="px-6 py-4 text-xs text-muted-foreground max-w-[180px] truncate">{item.email}</td>
+                  <td className="px-6 py-4 text-xs font-medium text-foreground">{item.department || 'N/A'}</td>
+                  <td className="px-6 py-4 text-xs text-muted-foreground max-w-[160px] truncate">{item.college || 'N/A'}</td>
+                  <td className="px-6 py-4" onClick={(e) => e.stopPropagation()}>
+                    <button
                       onClick={() => handleToggleStatus(item.id, item.status)}
-                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase transition-all ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-500'}`}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase transition-all ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-500'}`}
                     >
                       <span className={`h-1.5 w-1.5 rounded-full ${item.status === 'ACTIVE' ? 'bg-emerald-500' : 'bg-red-500'}`} />
                       <span>{item.status}</span>
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
+                  <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
                       <button onClick={() => setDetailsModalUser(item)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-primary transition-colors" title="View Details Card">
-                        <Eye className="h-3.5 w-3.5" />
+                        <Eye className="h-4 w-4" />
                       </button>
-                      <button onClick={() => handleResetPassword(item.id)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Reset password to DOB">
-                        <Lock className="h-3.5 w-3.5" />
+                      <button onClick={() => handleResetPassword(item.id)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Reset password">
+                        <Lock className="h-4 w-4" />
                       </button>
-                      <button onClick={() => openEditModal(item)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
-                        <Edit2 className="h-3.5 w-3.5" />
+                      <button onClick={() => openEditModal(item)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" title="Edit Record">
+                        <Edit2 className="h-4 w-4" />
                       </button>
-                      <button onClick={() => handleDeleteUser(item.id)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-danger">
-                        <Trash2 className="h-3.5 w-3.5" />
+                      <button onClick={() => handleDeleteUser(item.id)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-danger" title="Delete Record">
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </td>
@@ -464,14 +474,14 @@ const Interns = () => {
       <div className="flex justify-between items-center px-2">
         <span className="text-xs text-muted-foreground">Total records: {totalCount}</span>
         <div className="flex gap-2">
-          <button 
+          <button
             disabled={page === 1}
             onClick={() => setPage(page - 1)}
             className="px-3 py-1 bg-card border rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-muted"
           >
             Prev
           </button>
-          <button 
+          <button
             disabled={users.length < 15}
             onClick={() => setPage(page + 1)}
             className="px-3 py-1 bg-card border rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-muted"
@@ -596,35 +606,6 @@ const Interns = () => {
                 </div>
               </div>
 
-              {/* Profile Picture Upload */}
-              <div className="flex flex-col gap-2 border border-dashed border-border/60 rounded-xl p-3">
-                <label className="text-xs font-semibold text-muted-foreground">Profile Picture (optional)</label>
-                <div className="flex items-center gap-3">
-                  <img
-                    src={editPicPreview || (selectedUser?.profilePic ? getUploadUrl(selectedUser.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${formData.name}`)}
-                    className="h-14 w-14 rounded-xl object-cover ring-2 ring-primary/20"
-                    alt="preview"
-                    onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${formData.name}`; }}
-                  />
-                  <div className="flex-1">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      id="edit-intern-pic"
-                      className="hidden"
-                      onChange={(e) => {
-                        const f = e.target.files[0];
-                        if (f) { setEditPicFile(f); setEditPicPreview(URL.createObjectURL(f)); }
-                      }}
-                    />
-                    <label htmlFor="edit-intern-pic" className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-xs font-semibold hover:bg-muted">
-                      <Upload className="h-3 w-3" /> Choose Photo
-                    </label>
-                    {editPicFile && <p className="text-[10px] text-primary mt-1 font-semibold">{editPicFile.name}</p>}
-                  </div>
-                </div>
-              </div>
-
               <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
                 Save Updates
               </button>
@@ -656,7 +637,7 @@ const Interns = () => {
                   required
                 />
               </div>
-              
+
               <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
                 Execute Bulk Import
               </button>
@@ -672,13 +653,13 @@ const Interns = () => {
             <h3 className="text-base font-bold text-foreground">{confirmModal.title}</h3>
             <p className="mt-2.5 text-xs text-muted-foreground leading-relaxed">{confirmModal.message}</p>
             <div className="mt-6 flex justify-end gap-3">
-              <button 
+              <button
                 onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
                 className="rounded-xl px-4 py-2 text-xs font-semibold hover:bg-muted border border-border/30 transition-colors"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={async () => {
                   if (confirmModal.onConfirm) {
                     await confirmModal.onConfirm();
@@ -706,8 +687,8 @@ const Interns = () => {
                   {detailsModalUser.status}
                 </span>
               </div>
-              <button 
-                className="rounded-lg p-1.5 hover:bg-muted text-muted-foreground hover:text-foreground" 
+              <button
+                className="rounded-lg p-1.5 hover:bg-muted text-muted-foreground hover:text-foreground"
                 onClick={() => setDetailsModalUser(null)}
               >
                 <X className="h-5 w-5" />
@@ -716,11 +697,10 @@ const Interns = () => {
 
             {/* Profile Avatar & Main Info */}
             <div className="mt-6 flex flex-col items-center text-center pb-6 border-b border-border/40">
-              <img 
+              <img
                 src={detailsModalUser.profilePic ? getUploadUrl(detailsModalUser.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${detailsModalUser.name}`}
                 className="h-20 w-20 rounded-2xl object-cover border-2 border-primary/20 shadow-md mb-3"
                 alt={detailsModalUser.name}
-                onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${detailsModalUser.name}`; }}
               />
               <h3 className="text-lg font-bold text-foreground">{detailsModalUser.name}</h3>
               <span className="text-xs font-mono font-bold bg-primary/10 text-primary px-2.5 py-0.5 rounded-md mt-1">
@@ -788,23 +768,23 @@ const Interns = () => {
 
             {/* Footer Actions */}
             <div className="pt-4 border-t border-border/40 flex items-center justify-end gap-3">
-              <button 
+              <button
                 onClick={() => {
                   const u = detailsModalUser;
                   setDetailsModalUser(null);
                   openEditModal(u);
-                }} 
+                }}
                 className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold hover:bg-muted"
               >
                 <Edit2 className="h-3.5 w-3.5" />
                 <span>Edit Profile</span>
               </button>
-              <button 
+              <button
                 onClick={() => {
                   const u = detailsModalUser;
                   setDetailsModalUser(null);
                   handleResetPassword(u.id);
-                }} 
+                }}
                 className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow-md hover:bg-primary-hover"
               >
                 <Lock className="h-3.5 w-3.5" />

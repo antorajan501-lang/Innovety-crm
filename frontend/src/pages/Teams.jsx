@@ -18,7 +18,7 @@ const Teams = () => {
   const [teams, setTeams] = useState([]);
   const [availableLeaders, setAvailableLeaders] = useState([]);
   const [availableInterns, setAvailableInterns] = useState([]);
-  
+
   // Modals state
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
@@ -26,7 +26,7 @@ const Teams = () => {
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [teamDetails, setTeamDetails] = useState(null);
-  
+
   // Custom Confirmation Modal state
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
@@ -43,7 +43,7 @@ const Teams = () => {
     description: '',
     leaderId: ''
   });
-  
+
   const [selectedMemberIds, setSelectedMemberIds] = useState([]);
   const [alert, setAlert] = useState('');
   const [loading, setLoading] = useState(false);
@@ -60,7 +60,7 @@ const Teams = () => {
           api.get('/users?limit=1000')
         ]);
         setTeams(teamsRes.data);
-        
+
         const allUsers = usersRes.data.users || [];
         setAvailableLeaders(allUsers.filter(u => u.role === 'TEAM_LEADER' && u.status === 'ACTIVE'));
         setAvailableInterns(allUsers.filter(u => (u.role === 'INTERN' || u.role === 'EMPLOYEE') && u.status === 'ACTIVE'));
@@ -230,7 +230,7 @@ const Teams = () => {
           <h3 className="text-sm font-bold text-foreground">Not Assigned to a Team</h3>
           <p className="mt-1.5 text-xs text-muted-foreground max-w-sm mx-auto">
             {(user.role === 'INTERN' || user.role === 'EMPLOYEE')
-              ? "You have not been assigned to any workspace team yet. Please contact your administrator or team leader to get allocated." 
+              ? "You have not been assigned to any workspace team yet. Please contact your administrator or team leader to get allocated."
               : "No workspace teams found. Click 'Create Team' to register a new team."}
           </p>
         </div>
@@ -281,7 +281,7 @@ const Teams = () => {
               </div>
 
               {/* View Workspace details button */}
-              <button 
+              <button
                 onClick={() => handleViewTeamDetails(team)}
                 className="mt-4 w-full rounded-xl bg-primary/10 py-2.5 text-xs font-semibold text-primary transition-all hover:bg-primary/20"
               >
@@ -290,8 +290,8 @@ const Teams = () => {
 
               {/* Members selection assignment buttons */}
               {user.role === 'ADMIN' && (
-                <button 
-                  onClick={() => openAssignModal(team)} 
+                <button
+                  onClick={() => openAssignModal(team)}
                   className="mt-2 w-full rounded-xl border border-primary/20 bg-primary/5 py-2 text-xs font-semibold text-primary transition-all hover:bg-primary/10"
                 >
                   Manage Members
@@ -406,7 +406,7 @@ const Teams = () => {
                 ) : (
                   availableInterns.map(intern => (
                     <label key={intern.id} className="flex items-center gap-3 p-2 rounded-xl hover:bg-muted cursor-pointer transition-all">
-                      <input 
+                      <input
                         type="checkbox"
                         checked={selectedMemberIds.includes(intern.id)}
                         onChange={() => handleMemberToggle(intern.id)}
@@ -457,11 +457,10 @@ const Teams = () => {
                   <div className="rounded-xl border border-border/30 bg-muted/20 p-3.5">
                     <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Team Leader</p>
                     <div className="flex items-center gap-2.5 mt-2">
-                      <img 
+                      <img
                         src={teamDetails.leader?.profilePic ? getUploadUrl(teamDetails.leader.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${teamDetails.leader?.name}`}
-                        className="h-8 w-8 rounded-full border object-cover" 
+                        className="h-8 w-8 rounded-full border object-cover"
                         alt="avatar"
-                        onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${teamDetails.leader?.name}`; }}
                       />
                       <div>
                         <p className="text-xs font-bold">{teamDetails.leader?.name || 'Unassigned'}</p>
@@ -477,8 +476,8 @@ const Teams = () => {
                     </div>
                     <div className="flex items-center gap-3 mt-1">
                       <div className="flex-1 bg-muted rounded-full h-2 overflow-hidden border">
-                        <div 
-                          className="bg-success h-full transition-all duration-500" 
+                        <div
+                          className="bg-success h-full transition-all duration-500"
                           style={{ width: `${teamDetails.performance || 0}%` }}
                         />
                       </div>
@@ -500,13 +499,13 @@ const Teams = () => {
 
                 {/* Navigation tabs inside details */}
                 <div className="flex border-b border-border/40 gap-4">
-                  <button 
+                  <button
                     onClick={() => setActiveTab('members')}
                     className={`pb-2.5 text-xs font-bold border-b-2 transition-all ${activeTab === 'members' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
                   >
                     Teammates Registry
                   </button>
-                  <button 
+                  <button
                     onClick={() => setActiveTab('tasks')}
                     className={`pb-2.5 text-xs font-bold border-b-2 transition-all ${activeTab === 'tasks' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
                   >
@@ -522,11 +521,10 @@ const Teams = () => {
                     ) : (
                       teamDetails.members.map((member) => (
                         <div key={member.id} className="flex items-center gap-3 rounded-xl border border-border/30 bg-card p-3 shadow-sm">
-                          <img 
+                          <img
                             src={member.user?.profilePic ? getUploadUrl(member.user.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${member.user?.name}`}
-                            className="h-10 w-10 rounded-xl border object-cover shrink-0" 
+                            className="h-10 w-10 rounded-xl border object-cover shrink-0"
                             alt="avatar"
-                            onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${member.user?.name}`; }}
                           />
                           <div className="text-left min-w-0 flex-1">
                             <h4 className="text-xs font-bold text-foreground truncate">{member.user?.name}</h4>
@@ -574,12 +572,11 @@ const Teams = () => {
                                   </div>
                                 </td>
                                 <td className="px-4 py-3">
-                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[8px] font-bold uppercase ${
-                                    task.priority === 'URGENT' ? 'bg-red-500/15 text-red-600' :
-                                    task.priority === 'HIGH' ? 'bg-orange-500/15 text-orange-600' :
-                                    task.priority === 'MEDIUM' ? 'bg-sky-500/15 text-sky-600' :
-                                    'bg-slate-500/15 text-slate-600'
-                                  }`}>
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[8px] font-bold uppercase ${task.priority === 'URGENT' ? 'bg-red-500/15 text-red-600' :
+                                      task.priority === 'HIGH' ? 'bg-orange-500/15 text-orange-600' :
+                                        task.priority === 'MEDIUM' ? 'bg-sky-500/15 text-sky-600' :
+                                          'bg-slate-500/15 text-slate-600'
+                                    }`}>
                                     {task.priority}
                                   </span>
                                 </td>
@@ -590,13 +587,12 @@ const Teams = () => {
                                   {new Date(task.deadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
                                 </td>
                                 <td className="px-4 py-3 text-right">
-                                  <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-extrabold uppercase ${
-                                    task.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-600' :
-                                    task.status === 'WAITING_FOR_REVIEW' ? 'bg-purple-500/10 text-purple-600' :
-                                    task.status === 'IN_PROGRESS' ? 'bg-yellow-500/10 text-yellow-600' :
-                                    task.status === 'REJECTED' ? 'bg-red-500/10 text-red-600' :
-                                    'bg-slate-500/10 text-slate-600'
-                                  }`}>
+                                  <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-extrabold uppercase ${task.status === 'APPROVED' ? 'bg-emerald-500/10 text-emerald-600' :
+                                      task.status === 'WAITING_FOR_REVIEW' ? 'bg-purple-500/10 text-purple-600' :
+                                        task.status === 'IN_PROGRESS' ? 'bg-yellow-500/10 text-yellow-600' :
+                                          task.status === 'REJECTED' ? 'bg-red-500/10 text-red-600' :
+                                            'bg-slate-500/10 text-slate-600'
+                                    }`}>
                                     {task.status.replace(/_/g, ' ')}
                                   </span>
                                 </td>
@@ -623,13 +619,13 @@ const Teams = () => {
             <h3 className="text-base font-bold text-foreground">{confirmModal.title}</h3>
             <p className="mt-2.5 text-xs text-muted-foreground leading-relaxed">{confirmModal.message}</p>
             <div className="mt-6 flex justify-end gap-3">
-              <button 
+              <button
                 onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
                 className="rounded-xl px-4 py-2 text-xs font-semibold hover:bg-muted border border-border/30 transition-colors"
               >
                 Cancel
               </button>
-              <button 
+              <button
                 onClick={async () => {
                   if (confirmModal.onConfirm) {
                     await confirmModal.onConfirm();

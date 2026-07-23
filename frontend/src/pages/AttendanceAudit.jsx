@@ -28,13 +28,13 @@ const AttendanceAudit = () => {
   });
 
   const [loading, setLoading] = useState(false);
-  
+
   // Filters
   const [userIdFilter, setUserIdFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
-  
+
   // Dropdown options
   const [allInterns, setAllInterns] = useState([]);
 
@@ -123,7 +123,7 @@ const AttendanceAudit = () => {
     if (!startDate) return 'N/A';
     const startObj = new Date(startDate);
     const endObj = endDate ? new Date(endDate) : startObj;
-    
+
     const startStr = startObj.toLocaleDateString();
     const endStr = endObj.toLocaleDateString();
 
@@ -378,18 +378,18 @@ const AttendanceAudit = () => {
               </select>
 
               <div className="flex items-center gap-2">
-                <input 
-                  type="date" 
-                  className="bg-muted/40 text-xs border rounded-xl px-3 py-1.5" 
-                  value={startDate} 
-                  onChange={(e) => setStartDate(e.target.value)} 
+                <input
+                  type="date"
+                  className="bg-muted/40 text-xs border rounded-xl px-3 py-1.5"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
                 />
                 <span className="text-muted-foreground text-xs">to</span>
-                <input 
-                  type="date" 
-                  className="bg-muted/40 text-xs border rounded-xl px-3 py-1.5" 
-                  value={endDate} 
-                  onChange={(e) => setEndDate(e.target.value)} 
+                <input
+                  type="date"
+                  className="bg-muted/40 text-xs border rounded-xl px-3 py-1.5"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
                 />
               </div>
             </div>
@@ -584,20 +584,20 @@ const AttendanceAudit = () => {
             <form onSubmit={handleEditSubmit} className="mt-4 space-y-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">Clock In Time</label>
-                <input 
-                  type="datetime-local" 
-                  value={editForm.clockIn} 
-                  onChange={(e) => setEditForm({ ...editForm, clockIn: e.target.value })} 
+                <input
+                  type="datetime-local"
+                  value={editForm.clockIn}
+                  onChange={(e) => setEditForm({ ...editForm, clockIn: e.target.value })}
                   className="bg-background border px-3 py-2 rounded-xl text-xs"
                 />
               </div>
 
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-muted-foreground">Clock Out Time</label>
-                <input 
-                  type="datetime-local" 
-                  value={editForm.clockOut} 
-                  onChange={(e) => setEditForm({ ...editForm, clockOut: e.target.value })} 
+                <input
+                  type="datetime-local"
+                  value={editForm.clockOut}
+                  onChange={(e) => setEditForm({ ...editForm, clockOut: e.target.value })}
                   className="bg-background border px-3 py-2 rounded-xl text-xs"
                 />
               </div>
@@ -605,19 +605,19 @@ const AttendanceAudit = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Hours Worked Override</label>
-                  <input 
-                    type="number" 
+                  <input
+                    type="number"
                     step="0.01"
                     placeholder="e.g. 8.5"
-                    value={editForm.workingHours} 
-                    onChange={(e) => setEditForm({ ...editForm, workingHours: e.target.value })} 
+                    value={editForm.workingHours}
+                    onChange={(e) => setEditForm({ ...editForm, workingHours: e.target.value })}
                     className="bg-background border px-3 py-2 rounded-xl text-xs"
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-muted-foreground">Attendance Status</label>
-                  <select 
-                    value={editForm.status} 
+                  <select
+                    value={editForm.status}
                     onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
                     className="bg-background border px-3 py-2 rounded-xl text-xs"
                   >

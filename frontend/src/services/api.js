@@ -39,9 +39,10 @@ api.interceptors.response.use(
 
 export const getUploadUrl = (path) => {
   if (!path) return '';
-  if (path.startsWith('http://') || path.startsWith('https://')) return path;
+  if (path.startsWith('http://') || path.startsWith('https://')) return encodeURI(path);
   const backendServer = API_URL.replace(/\/api\/?$/, '');
-  return `${backendServer}${path.startsWith('/') ? '' : '/'}${path}`;
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return encodeURI(`${backendServer}${cleanPath}`);
 };
 
 export const downloadFile = async (filePath, customFileName) => {

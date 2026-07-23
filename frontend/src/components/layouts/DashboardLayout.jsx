@@ -39,7 +39,7 @@ import { getUploadUrl } from '../../services/api';
 const DashboardLayout = ({ children }) => {
   const { user, logout } = useAuth();
   const { notifications, unreadCount, markRead, markAllAsRead, deleteNotification } = useSocket();
-  
+
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(localStorage.getItem('sidebar_collapsed') === 'true');
@@ -127,8 +127,8 @@ const DashboardLayout = ({ children }) => {
       title: 'System Control',
       items: [
         { label: 'Intern Registry', path: '/interns', icon: Users, roles: ['ADMIN'] },
-        { label: 'Team Leader Registry', path: '/team-leaders', icon: Users, roles: ['ADMIN'] },
         { label: 'Employee Registry', path: '/employees', icon: Users, roles: ['ADMIN'] },
+        { label: 'Team Leader Registry', path: '/team-leaders', icon: Users, roles: ['ADMIN'] },
         { label: 'Team Hub', path: '/teams', icon: Briefcase, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
         { label: 'Report Center', path: '/reports', icon: BarChart3, roles: ['ADMIN', 'TEAM_LEADER'] },
         { label: 'Audit Logs', path: '/audit-logs', icon: History, roles: ['ADMIN'] },
@@ -145,7 +145,7 @@ const DashboardLayout = ({ children }) => {
   const handleNotificationClick = (notif) => {
     markRead(notif.id);
     setNotifOpen(false);
-    
+
     if (notif.type.startsWith('TASK')) {
       navigate('/tasks');
     } else if (notif.type.startsWith('TICKET')) {
@@ -161,7 +161,7 @@ const DashboardLayout = ({ children }) => {
     const pathname = location.pathname;
     const query = new URLSearchParams(location.search);
     const tab = query.get('tab');
-    
+
     if (pathname === '/profile') {
       parts.push({ label: 'My Profile', path: '/profile' });
     } else if (pathname === '/attendance') {
@@ -216,11 +216,11 @@ const DashboardLayout = ({ children }) => {
             <Link to="/" className="flex items-center gap-3">
               {isCollapsed ? (
                 <div className="w-9 h-9 overflow-hidden relative rounded-xl border border-border/40 flex items-center justify-center bg-white shadow-sm">
-                  <img 
-                    src="/logo.png" 
-                    alt="INNOVEITY Icon" 
-                    className="absolute left-1 max-w-none h-6" 
-                    style={{ width: '120.9px' }} 
+                  <img
+                    src="/logo.png"
+                    alt="INNOVEITY Icon"
+                    className="absolute left-1 max-w-none h-6"
+                    style={{ width: '120.9px' }}
                   />
                 </div>
               ) : (
@@ -253,7 +253,7 @@ const DashboardLayout = ({ children }) => {
                   ) : (
                     <div className="border-t border-border/40 my-2" />
                   )}
-                  
+
                   {(isCollapsed || isCategoryOpen) && (
                     <div className="space-y-1 pt-0.5">
                       {filteredItems.map((item) => {
@@ -266,11 +266,10 @@ const DashboardLayout = ({ children }) => {
                             key={item.label}
                             to={item.path}
                             title={isCollapsed ? item.label : undefined}
-                            className={`flex items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold transition-all relative group ${
-                              isActive 
-                                ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20 font-bold' 
+                            className={`flex items-center gap-3 rounded-xl px-3 py-2 text-xs font-semibold transition-all relative group ${isActive
+                                ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20 font-bold'
                                 : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
-                            }`}
+                              }`}
                             onClick={() => setSidebarOpen(false)}
                           >
                             <Icon className="h-4.5 w-4.5 shrink-0" />
@@ -294,8 +293,8 @@ const DashboardLayout = ({ children }) => {
 
         {/* Sidebar Footer collapse toggle button */}
         <div className="p-4 border-t border-border/40 flex justify-center">
-          <button 
-            onClick={toggleCollapse} 
+          <button
+            onClick={toggleCollapse}
             className="hidden md:flex h-9 w-9 items-center justify-center rounded-xl border border-border hover:bg-muted text-muted-foreground transition-all"
           >
             {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
@@ -316,8 +315,8 @@ const DashboardLayout = ({ children }) => {
               {breadcrumbs.map((crumb, idx) => (
                 <React.Fragment key={idx}>
                   {idx > 0 && <span className="text-muted-foreground/40 font-bold">/</span>}
-                  <Link 
-                    to={crumb.path} 
+                  <Link
+                    to={crumb.path}
                     className={`hover:text-foreground capitalize ${idx === breadcrumbs.length - 1 ? 'text-foreground font-bold' : ''}`}
                   >
                     {crumb.label.toLowerCase()}
@@ -330,7 +329,7 @@ const DashboardLayout = ({ children }) => {
           {/* Search bar, tools & user profile */}
           <div className="flex items-center gap-4">
             {/* Global Search Bar */}
-            <form 
+            <form
               onSubmit={(e) => {
                 e.preventDefault();
                 if (searchQuery.trim()) {
@@ -425,7 +424,6 @@ const DashboardLayout = ({ children }) => {
                   src={user?.profilePic ? getUploadUrl(user.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`}
                   alt={user?.name}
                   className="h-8 w-8 rounded-lg object-cover ring-2 ring-primary/20"
-                  onError={(e) => { e.target.onerror = null; e.target.src = `https://api.dicebear.com/7.x/initials/svg?seed=${user?.name}`; }}
                 />
                 <div className="hidden text-left md:block pr-1">
                   <p className="text-xs font-extrabold leading-none">{user?.name}</p>
