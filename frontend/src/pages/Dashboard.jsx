@@ -274,7 +274,7 @@ const Dashboard = () => {
 
   const adminStatsWidgets = [
     { label: 'Total Members', value: stats.totalMembers || stats.totalInterns, icon: Users, color: 'text-[#0F5A46] bg-[#0F5A46]/10' },
-    { label: 'Team Leaders', value: stats.totalLeaders, icon: Briefcase, color: 'text-[#17A673] bg-[#17A673]/10' },
+    { label: 'Admins', value: stats.totalLeaders, icon: Briefcase, color: 'text-[#17A673] bg-[#17A673]/10' },
     { label: 'Active Teams', value: stats.totalTeams, icon: Briefcase, color: 'text-[#1F3A36] bg-[#1F3A36]/10' },
     { label: 'Present Today', value: stats.presentToday, icon: UserCheck, color: 'text-emerald-600 bg-emerald-600/10' },
     { label: 'Late Clock-Ins', value: stats.lateToday, icon: Clock, color: 'text-amber-600 bg-amber-600/10' },
@@ -513,9 +513,9 @@ const Dashboard = () => {
           <div className="rounded-2xl border border-border/40 bg-card p-5 shadow-premium space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Quick CRM Actions</h3>
             <div className="grid grid-cols-1 gap-2.5">
-              {(user.role === 'INTERN' || user.role === 'EMPLOYEE') && (
+              {(user.role === 'INTERN' || user.role === 'EMPLOYEE' || user.role === 'TEAM_LEADER') && (
                 <>
-                  <Link to="/attendance" className="flex items-center gap-3 bg-muted/50 hover:bg-muted border border-border/40 p-3 rounded-xl transition-all">
+                  <Link to="/attendance?tab=Leaves" className="flex items-center gap-3 bg-muted/50 hover:bg-muted border border-border/40 p-3 rounded-xl transition-all">
                     <Clock className="h-4.5 w-4.5 text-[#0F5A46]" />
                     <div>
                       <h4 className="text-xs font-bold text-foreground">Apply Leave / WFH</h4>

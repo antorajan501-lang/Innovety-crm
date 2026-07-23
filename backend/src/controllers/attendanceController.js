@@ -34,6 +34,97 @@ const parseUserAgent = (userAgentString) => {
   return { browser, device };
 };
 
+// Helper to format time into 12-hour AM/PM string
+const format12Hour = (dateObj) => {
+  return dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+};
+
+// Helper to compute clock-in window times based on user role and system settings
+const calculateClockInWindow = (role, settings, now = new Date()) => {
+  const shiftStartStr = (role === 'TEAM_LEADER' || role === 'ADMIN')
+    ? (settings?.tlShiftStart || '09:30')
+    : (settings?.internShiftStart || '09:30');
+
+  const earlyWindowMins = settings?.earlyWindowMinutes !== undefined ? settings.earlyWindowMinutes : 30;
+  const gracePeriodMins = settings?.gracePeriodMinutes !== undefined ? settings.gracePeriodMinutes : 15;
+
+  const [startHour, startMin] = shiftStartStr.split(':').map(Number);
+
+  const shiftStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), startHour, startMin, 0, 0);
+  const windowOpen = new Date(shiftStart.getTime() - earlyWindowMins * 60 * 1000);
+  const windowClose = new Date(shiftStart.getTime() + gracePeriodMins * 60 * 1000);
+
+  return {
+    shiftStartStr,
+    earlyWindowMins,
+    gracePeriodMins,
+    shiftStart,
+    windowOpen,
+    windowClose,
+    windowOpenFormatted: format12Hour(windowOpen),
+    shiftStartFormatted: format12Hour(shiftStart),
+    windowCloseFormatted: format12Hour(windowClose)
+  };
+};
+
+const getClockInStatus = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const now = new Date();
+    const localDateStr = now.toLocaleDateString('en-CA');
+    const todayDate = new Date(localDateStr + 'T00:00:00.000Z');
+
+    let settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
+    const windowInfo = calculateClockInWindow(req.user.role, settings, now);
+
+    // Check existing attendance for today
+    const existing = await prisma.attendance.findUnique({
+      where: { userId_date: { userId, date: todayDate } }
+    });
+
+    // Check if user has an APPROVED WFH/Leave
+    const approvedLeave = await prisma.leaveRequest.findFirst({
+      where: {
+        userId,
+        status: 'APPROVED',
+        startDate: { lte: todayDate },
+        endDate: { gte: todayDate }
+      }
+    });
+
+    let state = 'BEFORE_WINDOW';
+    if (existing) {
+      state = 'ALREADY_CLOCKED_IN';
+    } else if (approvedLeave && approvedLeave.type === 'WFH') {
+      state = 'APPROVED_WFH';
+    } else if (now < windowInfo.windowOpen) {
+      state = 'BEFORE_WINDOW';
+    } else if (now >= windowInfo.windowOpen && now <= windowInfo.windowClose) {
+      state = 'OPEN_ON_TIME';
+    } else {
+      state = 'OPEN_LATE';
+    }
+
+    res.json({
+      serverTime: now.toISOString(),
+      state,
+      existingRecord: existing || null,
+      approvedLeave: approvedLeave || null,
+      windowOpenTime: windowInfo.windowOpen.toISOString(),
+      shiftStartTime: windowInfo.shiftStart.toISOString(),
+      windowCloseTime: windowInfo.windowClose.toISOString(),
+      windowOpenFormatted: windowInfo.windowOpenFormatted,
+      shiftStartFormatted: windowInfo.shiftStartFormatted,
+      windowCloseFormatted: windowInfo.windowCloseFormatted,
+      earlyWindowMins: windowInfo.earlyWindowMins,
+      gracePeriodMins: windowInfo.gracePeriodMins
+    });
+  } catch (error) {
+    console.error('Get clock-in status error:', error);
+    res.status(500).json({ message: 'Failed to retrieve clock-in status.' });
+  }
+};
+
 const clockIn = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -64,7 +155,6 @@ const clockIn = async (req, res) => {
     const userAgent = req.headers['user-agent'] || '';
     const { browser, device } = parseUserAgent(userAgent);
 
-    // Determine dynamic shift start time by role
     let settings = await prisma.systemSettings.findUnique({
       where: { id: 'GLOBAL' }
     });
@@ -79,18 +169,30 @@ const clockIn = async (req, res) => {
       }
     });
 
+    const windowInfo = calculateClockInWindow(req.user.role, settings, now);
+
     let status = 'PRESENT';
-    if (approvedLeave) {
+    let lateMinutes = null;
+
+    if (approvedLeave && approvedLeave.type === 'WFH') {
       status = 'WORK_FROM_HOME';
     } else {
-      const internStart = settings?.internShiftStart || '09:30';
-      const tlStart = settings?.tlShiftStart || '09:30';
-      const shiftStartStr = req.user.role === 'TEAM_LEADER' ? tlStart : internStart;
-      const [startHour, startMin] = shiftStartStr.split(':').map(Number);
+      // 1. Before early window -> Blocked
+      if (now < windowInfo.windowOpen) {
+        return res.status(400).json({
+          message: `Clock-in is available from ${windowInfo.windowOpenFormatted}.`
+        });
+      }
 
-      const limitTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), startHour, startMin, 0);
-      if (now > limitTime) {
+      // 2. Early window + Shift Start + Grace Period -> PRESENT (On Time)
+      if (now <= windowInfo.windowClose) {
+        status = 'PRESENT';
+        lateMinutes = null;
+      } else {
+        // 3. After Grace Period -> LATE (lateMinutes = Now - Grace End Time)
         status = 'LATE';
+        const diffMs = now.getTime() - windowInfo.windowClose.getTime();
+        lateMinutes = Math.floor(diffMs / (1000 * 60));
       }
     }
 
@@ -105,23 +207,26 @@ const clockIn = async (req, res) => {
         browser,
         device,
         status,
-        clockInLocation: location || null
+        clockInLocation: location || null,
+        lateMinutes,
+        earlyWindowUsed: windowInfo.earlyWindowMins,
+        gracePeriodUsed: windowInfo.gracePeriodMins,
+        shiftStartUsed: windowInfo.shiftStartStr
       }
     });
 
     await logActivity({
       userId,
       action: 'CLOCK_IN',
-      details: `Clocked in today at ${now.toLocaleTimeString()}. Status: ${status}`,
+      details: `Clocked in today at ${now.toLocaleTimeString()}. Status: ${status}${lateMinutes ? ` (${lateMinutes} mins late)` : ''}`,
       ipAddress
     });
 
     if (status === 'LATE') {
-      const shiftStartStr = req.user.role === 'TEAM_LEADER' ? (settings?.tlShiftStart || '09:30') : (settings?.internShiftStart || '09:30');
       await createNotification({
         userId,
         title: 'Late Attendance Alert ⚠️',
-        message: `You clocked in at ${now.toLocaleTimeString()}, which is past your shift start time (${shiftStartStr}). Your attendance for today is marked as LATE.`,
+        message: `You clocked in at ${now.toLocaleTimeString()}, which is ${lateMinutes} minute(s) past the grace period end time (${windowInfo.windowCloseFormatted}). Your attendance for today is marked as LATE.`,
         type: 'ATTENDANCE_LATE'
       });
     }
@@ -327,6 +432,7 @@ const getAttendanceAnalytics = async (req, res) => {
 };
 
 module.exports = {
+  getClockInStatus,
   clockIn,
   clockOut,
   getAttendanceLogs,

@@ -125,7 +125,7 @@ const Tasks = () => {
     onConfirm: null
   });
 
-  const subTabs = ['Summary', 'Backlog', 'Board', 'Code', 'Timeline', 'Docs', 'Forms', 'Development'];
+  const subTabs = ['Summary', 'Board', 'Docs', 'Forms'];
 
   const fetchTasks = async () => {
     try {
@@ -263,7 +263,8 @@ const Tasks = () => {
     const params = new URLSearchParams(location.search);
     const tabParam = params.get('tab');
     if (tabParam) {
-      const match = subTabs.find(t => t.toLowerCase() === tabParam.toLowerCase());
+      const validTabs = ['Summary', 'Backlog', 'Board', 'Code', 'Timeline', 'Docs', 'Forms', 'Development'];
+      const match = validTabs.find(t => t.toLowerCase() === tabParam.toLowerCase());
       if (match) {
         setActiveSubTab(match);
       }
@@ -1038,7 +1039,7 @@ const Tasks = () => {
 
   const renderDocsTab = () => {
     const documents = [
-      { title: 'MRF Enterprise Intern Onboarding Guide', desc: 'Step-by-step checklist for system configurations and access setup.', author: 'Admin', date: 'Jul 15, 2026' },
+      { title: 'MRF Enterprise Intern Onboarding Guide', desc: 'Step-by-step checklist for system configurations and access setup.', author: 'Super Admin', date: 'Jul 15, 2026' },
       { title: 'Frontend Coding Style & UI Standards', desc: 'Rules for tailwind configs, custom CSS classes, and Lucide icons.', author: 'Suraj Somu', date: 'Jul 12, 2026' },
       { title: 'API Endpoints & Database Schemas Guide', desc: 'Documentation of attendance and team route endpoints parameters.', author: 'Suraj Somu', date: 'Jul 10, 2026' }
     ];
@@ -1252,24 +1253,7 @@ const Tasks = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 border border-border/30 rounded-lg p-1 bg-muted/40">
-            <button 
-              onClick={() => setViewMode('kanban')} 
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold ${viewMode === 'kanban' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`}
-            >
-              <Layers className="h-3 w-3" />
-              <span>Board</span>
-            </button>
-            <button 
-              onClick={() => setViewMode('calendar')} 
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold ${viewMode === 'calendar' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'}`}
-            >
-              <Calendar className="h-3 w-3" />
-              <span>Calendar</span>
-            </button>
-          </div>
-
+        <div>
           {['ADMIN', 'TEAM_LEADER'].includes(user.role) && (
             <button onClick={() => setCreateModalOpen(true)} className="flex items-center gap-1 bg-primary text-primary-foreground px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-primary-hover transition-all">
               <Plus className="h-3.5 w-3.5" />
@@ -1281,8 +1265,7 @@ const Tasks = () => {
 
       {/* Switch Render according to Sub Tab selected */}
       {activeSubTab === 'Board' ? (
-        viewMode === 'kanban' ? (
-          <div className="flex-1 flex overflow-x-auto gap-4 h-full pb-4 min-h-[500px] scrollbar-thin">
+        <div className="flex-1 flex overflow-x-auto gap-4 h-full pb-4 min-h-[500px] scrollbar-thin">
             {columns.map((col, idx) => {
               const isHovered = activeDragCol === col.title;
               return (
@@ -1380,33 +1363,6 @@ const Tasks = () => {
               );
             })}
           </div>
-        ) : (
-          /* Calendar view list */
-          <div className="flex-1 bg-card border border-border/40 p-5 rounded-xl shadow-sm overflow-y-auto text-left min-h-[500px]">
-            <h3 className="text-sm font-extrabold mb-4">Task Deadlines Calendar</h3>
-            <div className="space-y-3">
-              {filteredTasks.map(task => (
-                <div
-                  key={task.id}
-                  onClick={() => openDetailModal(task)}
-                  className="flex items-center justify-between border-b border-border/30 pb-3 hover:bg-muted/10 px-2 cursor-pointer rounded-lg transition-all"
-                >
-                  <div className="flex items-center gap-3">
-                    {getTypeIcon(task.type)}
-                    <div>
-                      <h4 className="text-xs font-bold">{task.title}</h4>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Assigned to: {task.assignee?.name}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[9px] bg-muted px-2 py-0.5 rounded font-mono font-bold">MRF-{task.id.slice(0, 4).toUpperCase()}</span>
-                    <span className="text-[10px] text-muted-foreground font-semibold">{new Date(task.deadline).toLocaleDateString()}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )
       ) : activeSubTab === 'Summary' ? (
         renderSummaryTab()
       ) : activeSubTab === 'Backlog' ? (

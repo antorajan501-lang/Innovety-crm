@@ -211,7 +211,7 @@ const AttendanceAudit = () => {
                 <th className="px-6 py-4">Date Duration</th>
                 <th className="px-6 py-4">Sanction Status</th>
                 <th className="px-6 py-4 text-center">Letter Body</th>
-                <th className="px-6 py-4 text-right">Admin Actions</th>
+                <th className="px-6 py-4 text-right">Super Admin Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/25">
@@ -435,7 +435,7 @@ const AttendanceAudit = () => {
                       <td className="px-6 py-4">{log.workingHours ? `${log.workingHours} hrs` : '—'}</td>
                       <td className="px-6 py-4">
                         <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-emerald-500/10 text-emerald-600' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : 'bg-red-500/10 text-red-500'}`}>
-                          {log.status}
+                          {log.status} {log.lateMinutes ? `(${log.lateMinutes}m late)` : ''}
                         </span>
                       </td>
                       <td className="px-6 py-4">
@@ -465,7 +465,7 @@ const AttendanceAudit = () => {
         renderLeavesApprovalTab()
       )}
 
-      {/* View Full Formal Letter Modal for Admin */}
+      {/* View Full Formal Letter Modal for Super Admin */}
       {viewingLetter && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 text-left">
           <div className="w-full max-w-xl rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">

@@ -18,7 +18,9 @@ const getSettings = async (req, res) => {
           internShiftEnd: '18:30',
           tlShiftStart: '09:30',
           tlShiftEnd: '18:30',
-          officeLocationName: 'MRF Headquarters'
+          officeLocationName: 'MRF Headquarters',
+          earlyWindowMinutes: 30,
+          gracePeriodMinutes: 15
         }
       });
     }
@@ -46,6 +48,17 @@ const updateSettings = async (req, res) => {
     const officeLongitude = req.body.officeLongitude !== undefined ? parseFloat(req.body.officeLongitude) : undefined;
     const allowedRadiusMeters = req.body.allowedRadiusMeters !== undefined ? parseFloat(req.body.allowedRadiusMeters) : undefined;
 
+    const earlyWindowMinutes = req.body.earlyWindowMinutes !== undefined ? parseInt(req.body.earlyWindowMinutes, 10) : undefined;
+    const gracePeriodMinutes = req.body.gracePeriodMinutes !== undefined ? parseInt(req.body.gracePeriodMinutes, 10) : undefined;
+
+    // Validate 0-120 minutes range for time window settings
+    if (earlyWindowMinutes !== undefined && (isNaN(earlyWindowMinutes) || earlyWindowMinutes < 0 || earlyWindowMinutes > 120)) {
+      return res.status(400).json({ message: 'Early Clock-In Window must be between 0 and 120 minutes.' });
+    }
+    if (gracePeriodMinutes !== undefined && (isNaN(gracePeriodMinutes) || gracePeriodMinutes < 0 || gracePeriodMinutes > 120)) {
+      return res.status(400).json({ message: 'Grace Period must be between 0 and 120 minutes.' });
+    }
+
     const updated = await prisma.systemSettings.upsert({
       where: { id: 'GLOBAL' },
       update: {
@@ -58,7 +71,9 @@ const updateSettings = async (req, res) => {
         officeLatitude,
         officeLongitude,
         allowedRadiusMeters,
-        officeLocationName
+        officeLocationName,
+        earlyWindowMinutes,
+        gracePeriodMinutes
       },
       create: {
         id: 'GLOBAL',
@@ -71,14 +86,16 @@ const updateSettings = async (req, res) => {
         officeLatitude: officeLatitude || 12.971598,
         officeLongitude: officeLongitude || 77.594562,
         allowedRadiusMeters: allowedRadiusMeters || 200.0,
-        officeLocationName: officeLocationName || 'MRF Headquarters'
+        officeLocationName: officeLocationName || 'MRF Headquarters',
+        earlyWindowMinutes: earlyWindowMinutes !== undefined ? earlyWindowMinutes : 30,
+        gracePeriodMinutes: gracePeriodMinutes !== undefined ? gracePeriodMinutes : 15
       }
     });
 
     await logActivity({
       userId: req.user.id,
       action: 'SYSTEM_SETTINGS_UPDATE',
-      details: `Updated settings. Shift timings: Intern (${internShiftStart}-${internShiftEnd}), TL (${tlShiftStart}-${tlShiftEnd}), Allowed Location Range: ${officeLocationName || 'Office'} (Lat ${officeLatitude}, Lon ${officeLongitude}, Rad ${allowedRadiusMeters}m)`
+      details: `Updated settings. Shift timings: Intern (${internShiftStart}-${internShiftEnd}), Admin (${tlShiftStart}-${tlShiftEnd}), Early Window: ${updated.earlyWindowMinutes}m, Grace Period: ${updated.gracePeriodMinutes}m`
     });
 
     res.json(updated);

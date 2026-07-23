@@ -178,7 +178,7 @@ const Tickets = () => {
             <form onSubmit={handleCreateSubmit} className="mt-4 space-y-4">
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs font-semibold text-left flex items-start gap-2">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500 mt-0.5" />
-                <span>Note: Leave/WFH requests must NOT be raised as tickets. Please submit a formal Leave Application Letter in the <strong>Attendance Portal</strong>. Work cannot be assigned to System Administrators.</span>
+                <span>Note: Leave/WFH requests must NOT be raised as tickets. Please submit a formal Leave Application Letter in the <strong>Attendance Portal</strong>. Work cannot be assigned to Super Administrators.</span>
               </div>
 
               <div className="flex flex-col gap-1.5 text-left">

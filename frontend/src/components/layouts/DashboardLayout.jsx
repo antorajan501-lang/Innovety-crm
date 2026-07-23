@@ -128,7 +128,7 @@ const DashboardLayout = ({ children }) => {
       items: [
         { label: 'Intern Registry', path: '/interns', icon: Users, roles: ['ADMIN'] },
         { label: 'Employee Registry', path: '/employees', icon: Users, roles: ['ADMIN'] },
-        { label: 'Team Leader Registry', path: '/team-leaders', icon: Users, roles: ['ADMIN'] },
+        { label: 'Admin Registry', path: '/team-leaders', icon: Users, roles: ['ADMIN'] },
         { label: 'Team Hub', path: '/teams', icon: Briefcase, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
         { label: 'Report Center', path: '/reports', icon: BarChart3, roles: ['ADMIN', 'TEAM_LEADER'] },
         { label: 'Audit Logs', path: '/audit-logs', icon: History, roles: ['ADMIN'] },
@@ -175,7 +175,7 @@ const DashboardLayout = ({ children }) => {
       parts.push({ label: 'Intern Registry', path: '/interns' });
     } else if (pathname === '/team-leaders') {
       parts.push({ label: 'System Control', path: '/team-leaders' });
-      parts.push({ label: 'Team Leader Registry', path: '/team-leaders' });
+      parts.push({ label: 'Admin Registry', path: '/team-leaders' });
     } else if (pathname === '/employees') {
       parts.push({ label: 'System Control', path: '/employees' });
       parts.push({ label: 'Employee Registry', path: '/employees' });
@@ -427,7 +427,9 @@ const DashboardLayout = ({ children }) => {
                 />
                 <div className="hidden text-left md:block pr-1">
                   <p className="text-xs font-extrabold leading-none">{user?.name}</p>
-                  <p className="text-[10px] text-muted-foreground font-semibold mt-0.5 capitalize leading-none">{user?.role?.replace('_', ' ').toLowerCase()}</p>
+                  <p className="text-[10px] text-muted-foreground font-semibold mt-0.5 capitalize leading-none">
+                    {user?.role === 'ADMIN' ? 'Super Admin' : user?.role === 'TEAM_LEADER' ? 'Admin' : user?.role?.replace('_', ' ').toLowerCase()}
+                  </p>
                 </div>
               </button>
 
@@ -438,7 +440,9 @@ const DashboardLayout = ({ children }) => {
                     <div className="px-3 py-2.5 border-b border-border/30 mb-1.5 text-left">
                       <p className="text-xs font-bold text-foreground">{user?.name}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{user?.email}</p>
-                      <span className="mt-1.5 inline-block text-[9px] bg-primary/10 text-primary px-2 py-0.5 rounded font-extrabold uppercase">{user?.role}</span>
+                      <span className="mt-1.5 inline-block text-[9px] bg-primary/10 text-primary px-2 py-0.5 rounded font-extrabold uppercase">
+                        {user?.role === 'ADMIN' ? 'SUPER ADMIN' : user?.role === 'TEAM_LEADER' ? 'ADMIN' : user?.role}
+                      </span>
                     </div>
 
                     <Link to="/profile" className="flex items-center gap-2 rounded-xl px-3 py-2 text-xs text-muted-foreground hover:bg-muted hover:text-foreground font-semibold" onClick={() => setProfileOpen(false)}>

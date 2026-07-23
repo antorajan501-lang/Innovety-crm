@@ -54,6 +54,7 @@ enum AttendanceStatus {
   ABSENT
   LEAVE
   WORK_FROM_HOME
+  MISSED
 }
 
 model User {
@@ -82,8 +83,9 @@ model User {
   submissions      TaskSubmission[]
   raisedTickets    Ticket[]         @relation("TicketCreator")
   assignedTickets  Ticket[]         @relation("TicketAssignee")
-  announcements    Announcement[]   @relation("AnnouncementCreator")
-  notifications    Notification[]
+  announcements          Announcement[]   @relation("AnnouncementCreator")
+  receivedAnnouncements  Announcement[]   @relation("AnnouncementTargetUser")
+  notifications          Notification[]
   activityLogs     ActivityLog[]
   comments         Comment[]
   leaves           LeaveRequest[]   @relation("UserLeaves")
@@ -98,9 +100,10 @@ model Team {
   updatedAt   DateTime     @updatedAt
 
   // Relations
-  leader      User?        @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
-  members     TeamMember[]
-  tasks       Task[]
+  leader        User?          @relation("TeamLeader", fields: [leaderId], references: [id], onDelete: SetNull)
+  members       TeamMember[]
+  tasks         Task[]
+  announcements Announcement[]
 }
 
 model TeamMember {
@@ -130,6 +133,10 @@ model Attendance {
   workingHours Float?           // Decimals representing decimal hours
   status       AttendanceStatus @default(PRESENT)
   editedBy     String?          // User ID who edited attendance
+  lateMinutes     Int?
+  earlyWindowUsed Int?
+  gracePeriodUsed Int?
+  shiftStartUsed  String?
 
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -212,14 +219,18 @@ model Ticket {
 }
 
 model Announcement {
-  id        String   @id @default(uuid())
-  title     String
-  content   String
-  creatorId String
-  targetTeamId String? // If null, general announcement for all
-  createdAt DateTime @default(now())
+  id           String   @id @default(uuid())
+  title        String
+  content      String
+  creatorId    String
+  targetType   String   @default("ALL") // "ALL", "TEAM", "INDIVIDUAL"
+  targetTeamId String?
+  targetUserId String?
+  createdAt    DateTime @default(now())
 
-  creator   User     @relation("AnnouncementCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  creator      User     @relation("AnnouncementCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  targetTeam   Team?    @relation(fields: [targetTeamId], references: [id], onDelete: SetNull)
+  targetUser   User?    @relation("AnnouncementTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
 }
 
 model Notification {
@@ -257,6 +268,8 @@ model SystemSettings {
   officeLongitude  Float    @default(77.594562)
   allowedRadiusMeters Float  @default(200.0)
   officeLocationName  String @default("MRF Headquarters")
+  earlyWindowMinutes Int    @default(30)
+  gracePeriodMinutes Int    @default(15)
   updatedAt        DateTime @updatedAt
 }
 

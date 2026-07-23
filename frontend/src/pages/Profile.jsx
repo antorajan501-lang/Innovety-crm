@@ -194,7 +194,9 @@ const Profile = () => {
           </div>
 
           <h3 className="mt-4 font-bold text-base">{user?.name}</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">{user?.employeeId} • <span className="capitalize">{user?.role?.toLowerCase().replace('_', ' ')}</span></p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {user?.employeeId} • <span className="capitalize">{user?.role === 'ADMIN' ? 'Super Admin' : user?.role?.toLowerCase().replace('_', ' ')}</span>
+          </p>
 
           <div className="mt-6 border-t border-border/30 pt-4 w-full text-xs space-y-2.5 text-left text-muted-foreground">
             <p><strong>Email:</strong> <span className="text-foreground">{user?.email}</span></p>

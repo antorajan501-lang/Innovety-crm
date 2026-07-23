@@ -23,6 +23,7 @@ const init = (server) => {
 
       // Join standard rooms
       socket.join('global');
+      socket.join(`user_${userId}`);
       if (teamId) {
         socket.join(`team_${teamId}`);
       }
@@ -53,6 +54,10 @@ const init = (server) => {
 // Send direct notification to active user
 const sendNotificationToUser = (userId, notification) => {
   if (!io) return;
+  // Emit to user room (works across multiple connections/devices)
+  io.to(`user_${userId}`).emit('notification', notification);
+
+  // Fallback direct socket emit if user socket is tracked
   const userRecord = onlineUsers.get(userId);
   if (userRecord && userRecord.socketId) {
     io.to(userRecord.socketId).emit('notification', notification);

@@ -23,3 +23,10 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+
+# Temporary test scripts
+backend/test_*.js
+backend/check_*.js
+backend/checkUsers.js
+backend/get_pw.js
+backend/run_live_e2e_verification.js

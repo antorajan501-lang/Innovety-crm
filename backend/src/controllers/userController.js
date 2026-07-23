@@ -173,6 +173,12 @@ const editUser = async (req, res) => {
     const { id } = req.params;
     const { name, email, phone, dob, college, department, joiningDate, role, status } = req.body;
 
+    // Fetch current user to compare DOB
+    const existingUser = await prisma.user.findUnique({ where: { id } });
+    if (!existingUser) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
     const data = {
       name,
       email,
@@ -183,9 +189,33 @@ const editUser = async (req, res) => {
       status
     };
 
+    let dobPasswordReset = false;
+
     if (dob) {
-      data.dob = new Date(dob);
+      const newDob = new Date(dob);
+      data.dob = newDob;
+
+      // Detect DOB change for non-admin roles and auto-reset password
+      const oldDobStr = existingUser.dob ? existingUser.dob.toISOString().split('T')[0] : null;
+      const newDobStr = newDob.toISOString().split('T')[0];
+      const roleRequiresReset = ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'].includes(existingUser.role);
+
+      if (roleRequiresReset && oldDobStr !== newDobStr) {
+        const newTempPassword = formatDobToPassword(newDob);
+        data.password = await bcrypt.hash(newTempPassword, 10);
+        dobPasswordReset = true;
+
+        // Audit: record DOB change and password reset — never log the password value
+        await logActivity({
+          userId: req.user.id,
+          action: 'USER_DOB_CHANGED',
+          details: `Admin updated DOB for ${existingUser.name} (${existingUser.employeeId}): ` +
+                   `${oldDobStr || 'not set'} → ${newDobStr}. ` +
+                   `Initial password automatically reset based on new DOB.`
+        });
+      }
     }
+
     if (joiningDate) {
       data.joiningDate = new Date(joiningDate);
     }
@@ -202,7 +232,7 @@ const editUser = async (req, res) => {
     });
 
     const { password: _, ...userWithoutPassword } = updatedUser;
-    res.json(userWithoutPassword);
+    res.json({ ...userWithoutPassword, dobPasswordReset });
   } catch (error) {
     console.error('Edit user error:', error);
     res.status(500).json({ message: 'Failed to update user.' });

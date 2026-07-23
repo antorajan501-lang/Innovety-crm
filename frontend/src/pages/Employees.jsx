@@ -125,10 +125,13 @@ const Employees = () => {
     if (!selectedUser) return;
     try {
       setLoading(true);
-      await api.put(`/users/${selectedUser.id}`, formData);
+      const res = await api.put(`/users/${selectedUser.id}`, formData);
       setEditModalOpen(false);
       setSelectedUser(null);
-      setAlertMsg({ type: 'success', text: 'Employee record updated.' });
+      const successMsg = res.data.dobPasswordReset
+        ? 'Date of Birth updated successfully. The user\'s initial password has been reset based on the new DOB.'
+        : 'Employee record updated.';
+      setAlertMsg({ type: 'success', text: successMsg });
       fetchUsers();
     } catch (err) {
       setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to update employee.' });
@@ -616,7 +619,7 @@ const Employees = () => {
                 {detailsModalUser.employeeId}
               </span>
               <p className="text-xs text-muted-foreground mt-2 font-medium">
-                System Admin / Enterprise Staff
+                Super Admin / Enterprise Staff
               </p>
             </div>
 

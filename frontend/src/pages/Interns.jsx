@@ -126,10 +126,13 @@ const Interns = () => {
     e.preventDefault();
     try {
       setLoading(true);
-      await api.put(`/users/${selectedUser.id}`, { ...formData, role: 'INTERN' });
+      const res = await api.put(`/users/${selectedUser.id}`, { ...formData, role: 'INTERN' });
       setEditModalOpen(false);
       setSelectedUser(null);
-      setAlertMsg({ type: 'success', text: 'User details updated.' });
+      const successMsg = res.data.dobPasswordReset
+        ? 'Date of Birth updated successfully. The user\'s initial password has been reset based on the new DOB.'
+        : 'User details updated.';
+      setAlertMsg({ type: 'success', text: successMsg });
       fetchUsers();
     } catch (err) {
       setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to edit user details.' });

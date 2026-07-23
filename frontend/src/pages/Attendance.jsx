@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -31,6 +32,7 @@ const Attendance = () => {
   // Leave & WFH States
   const [tab, setTab] = useState('Clock');
   const [leaves, setLeaves] = useState([]);
+  const [clockInStatus, setClockInStatus] = useState(null);
   const [leaveForm, setLeaveForm] = useState({
     startDate: '',
     endDate: '',
@@ -52,6 +54,15 @@ const Attendance = () => {
     browser: '',
     device: 'Desktop'
   });
+
+  const fetchClockInStatus = async () => {
+    try {
+      const res = await api.get('/attendance/status');
+      setClockInStatus(res.data);
+    } catch (err) {
+      console.error('Fetch clock in status error:', err);
+    }
+  };
 
   const fetchLeaves = async () => {
     try {
@@ -83,7 +94,7 @@ const Attendance = () => {
         type: 'LEAVE'
       });
       setShowPreviewModal(false);
-      setAlert('Formal Leave Letter submitted successfully! Awaiting Admin review & sanction.');
+      setAlert('Formal Leave Letter submitted successfully! Awaiting Super Admin review & sanction.');
       fetchLeaves();
     } catch (err) {
       setAlert(err.response?.data?.message || 'Failed to submit request.');
@@ -130,9 +141,28 @@ const Attendance = () => {
     return () => clearInterval(timer);
   }, []);
 
+  // Read ?tab= query param to deep-link directly to the Leaves tab
+  const location = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tabParam = params.get('tab');
+    if (tabParam === 'Leaves') {
+      setTab('Leaves');
+      fetchLeaves();
+    }
+  }, [location.search]);
+
+
+  useEffect(() => {
+    fetchClockInStatus();
+    fetchAttendanceStatus();
+    fetchSettings();
+  }, []);
+
   const fetchAttendanceStatus = async () => {
     try {
       setLoading(true);
+      fetchClockInStatus();
       const res = await api.get('/attendance/logs');
       const localDateStr = new Date().toLocaleDateString('en-CA');
       const todayRecord = res.data.find(log => {
@@ -502,7 +532,7 @@ const Attendance = () => {
           </div>
 
           <div className="text-[10px] text-muted-foreground bg-muted/40 p-3 rounded-xl border border-border/30 mt-4">
-            <span className="font-bold text-foreground">Rule: </span> When Admin accepts your letter, Work From Home (WFH) permission is automatically activated for your dates. If declined, your status for those dates is marked as ABSENT.
+            <span className="font-bold text-foreground">Rule: </span> When Super Admin accepts your letter, Work From Home (WFH) permission is automatically activated for your dates. If declined, your status for those dates is marked as ABSENT.
           </div>
         </div>
       </div>
@@ -553,6 +583,53 @@ const Attendance = () => {
             </div>
           )}
 
+          {/* Server-enforced Clock-In Window Status Banner */}
+          {clockInStatus && !clockedRecord && (
+            <>
+              {clockInStatus.state === 'BEFORE_WINDOW' && (
+                <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 flex items-center justify-between text-xs font-semibold text-left mb-4 animate-in slide-in-from-top duration-300">
+                  <div className="flex items-center gap-3">
+                    <Clock className="h-5 w-5 text-amber-500 shrink-0" />
+                    <div>
+                      <p className="font-extrabold text-sm text-amber-600 dark:text-amber-400">Clock-In Window Not Open Yet 🕒</p>
+                      <p className="text-[11px] opacity-90 mt-0.5">
+                        Clock-in is available from <strong>{clockInStatus.windowOpenFormatted}</strong> (Shift Start: {clockInStatus.shiftStartFormatted}).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {clockInStatus.state === 'OPEN_ON_TIME' && new Date() > new Date(clockInStatus.shiftStartTime) && (
+                <div className="p-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 flex items-center justify-between text-xs font-semibold text-left mb-4 animate-in slide-in-from-top duration-300">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+                    <div>
+                      <p className="font-extrabold text-sm text-emerald-600 dark:text-emerald-400">Grace Period Active ✨</p>
+                      <p className="text-[11px] opacity-90 mt-0.5">
+                        Clock-in is still considered <strong>On Time (PRESENT)</strong> until <strong>{clockInStatus.windowCloseFormatted}</strong>.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {clockInStatus.state === 'OPEN_LATE' && (
+                <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 flex items-center justify-between text-xs font-semibold text-left mb-4 animate-in slide-in-from-top duration-300">
+                  <div className="flex items-center gap-3">
+                    <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 animate-bounce" />
+                    <div>
+                      <p className="font-extrabold text-sm text-amber-600 dark:text-amber-400">Late Clock-In Window Active ⚠️</p>
+                      <p className="text-[11px] opacity-90 mt-0.5">
+                        Grace period ended at {clockInStatus.windowCloseFormatted}. Your clock-in will be marked as <strong>LATE</strong>.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
           {/* Active Leave Banner on Clock Tab */}
           {activeTodayLeave && (
             <div className={`p-4 rounded-2xl border flex items-center justify-between text-xs font-semibold text-left ${activeTodayLeave.status === 'APPROVED' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300' : activeTodayLeave.status === 'REJECTED' ? 'bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300' : 'bg-yellow-500/10 border-yellow-500/30 text-yellow-700 dark:text-yellow-300'}`}>
@@ -566,10 +643,10 @@ const Attendance = () => {
                 )}
                 <div>
                   <p className="font-extrabold text-sm">
-                    {activeTodayLeave.status === 'APPROVED' ? 'Work From Home (WFH) Assigned for Today!' : activeTodayLeave.status === 'REJECTED' ? 'Leave Request Declined by Admin' : 'Leave Letter Pending Admin Sanction'}
+                    {activeTodayLeave.status === 'APPROVED' ? 'Work From Home (WFH) Assigned for Today!' : activeTodayLeave.status === 'REJECTED' ? 'Leave Request Declined by Super Admin' : 'Leave Letter Pending Super Admin Sanction'}
                   </p>
                   <p className="text-[11px] opacity-90 mt-0.5">
-                    {activeTodayLeave.status === 'APPROVED' ? 'Admin has accepted your leave letter. Location boundary checks are bypassed for remote clock-in.' : activeTodayLeave.status === 'REJECTED' ? 'Your leave request was declined. Attendance for today is recorded as ABSENT.' : 'Your formal leave letter has been submitted and is currently awaiting Admin approval.'}
+                    {activeTodayLeave.status === 'APPROVED' ? 'Super Admin has accepted your leave letter. Location boundary checks are bypassed for remote clock-in.' : activeTodayLeave.status === 'REJECTED' ? 'Your leave request was declined. Attendance for today is recorded as ABSENT.' : 'Your formal leave letter has been submitted and is currently awaiting Super Admin approval.'}
                   </p>
                 </div>
               </div>
@@ -610,7 +687,7 @@ const Attendance = () => {
               <div className="mt-8 flex gap-4 w-full max-w-sm">
                 <button
                   onClick={handleClockIn}
-                  disabled={loading || !!clockedRecord}
+                  disabled={loading || !!clockedRecord || clockInStatus?.state === 'BEFORE_WINDOW'}
                   className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground py-3 text-sm font-semibold hover:bg-primary-hover active:scale-95 disabled:opacity-40 shadow-lg shadow-primary/25 transition-all"
                 >
                   <Play className="h-4 w-4" />
@@ -726,7 +803,7 @@ const Attendance = () => {
                         <td className="px-4 py-3">{formatWorkingHours(log.workingHours)}</td>
                         <td className="px-4 py-3">
                           <span className={`inline-flex rounded-full px-2 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : 'bg-red-500/10 text-red-500'}`}>
-                            {log.status}
+                            {log.status} {log.lateMinutes ? `(${log.lateMinutes}m late)` : ''}
                           </span>
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{log.ipAddress}</td>

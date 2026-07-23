@@ -13,7 +13,9 @@ const SiteSettings = () => {
     officeLatitude: 12.971598,
     officeLongitude: 77.594562,
     allowedRadiusMeters: 200,
-    officeLocationName: 'MRF Headquarters'
+    officeLocationName: 'MRF Headquarters',
+    earlyWindowMinutes: 30,
+    gracePeriodMinutes: 15
   });
 
   const [loading, setLoading] = useState(false);
@@ -69,12 +71,28 @@ const SiteSettings = () => {
     try {
       setLoading(true);
       setAlert(null);
+
+      const earlyWin = parseInt(settings.earlyWindowMinutes, 10);
+      const gracePer = parseInt(settings.gracePeriodMinutes, 10);
+
+      if (isNaN(earlyWin) || earlyWin < 0 || earlyWin > 120) {
+        setAlert({ type: 'error', message: 'Early Clock-In Window must be between 0 and 120 minutes.' });
+        setLoading(false);
+        return;
+      }
+      if (isNaN(gracePer) || gracePer < 0 || gracePer > 120) {
+        setAlert({ type: 'error', message: 'Grace Period must be between 0 and 120 minutes.' });
+        setLoading(false);
+        return;
+      }
       
       const payload = {
         ...settings,
         officeLatitude: parseFloat(settings.officeLatitude),
         officeLongitude: parseFloat(settings.officeLongitude),
-        allowedRadiusMeters: parseFloat(settings.allowedRadiusMeters)
+        allowedRadiusMeters: parseFloat(settings.allowedRadiusMeters),
+        earlyWindowMinutes: earlyWin,
+        gracePeriodMinutes: gracePer
       };
 
       const res = await api.put('/settings', payload);
@@ -258,7 +276,7 @@ const SiteSettings = () => {
 
               {/* Team Leader Shift */}
               <div className="p-4 rounded-xl border border-border/30 bg-muted/10 space-y-4">
-                <h4 className="text-xs font-bold text-violet-500">Team Leader Core Hours</h4>
+                <h4 className="text-xs font-bold text-violet-500">Admin Core Hours</h4>
                 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5">
@@ -281,6 +299,43 @@ const SiteSettings = () => {
                       required
                     />
                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Time Window Rules Configuration */}
+            <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 space-y-4">
+              <h4 className="text-xs font-bold text-primary">Clock-In Time Window & Grace Period Rules</h4>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Early Clock-In Window (Minutes before shift start)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="120"
+                    name="earlyWindowMinutes"
+                    value={settings.earlyWindowMinutes}
+                    onChange={handleChange}
+                    placeholder="e.g. 30"
+                    required
+                  />
+                  <span className="text-[10px] text-muted-foreground italic">Default: 30 mins (Opens at Shift Start − Early Window)</span>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Grace Period (Minutes after shift start for Late clock-in)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="120"
+                    name="gracePeriodMinutes"
+                    value={settings.gracePeriodMinutes}
+                    onChange={handleChange}
+                    placeholder="e.g. 15"
+                    required
+                  />
+                  <span className="text-[10px] text-muted-foreground italic">Default: 15 mins (Closes at Shift Start + Grace Period)</span>
                 </div>
               </div>
             </div>

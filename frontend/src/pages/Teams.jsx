@@ -230,7 +230,7 @@ const Teams = () => {
           <h3 className="text-sm font-bold text-foreground">Not Assigned to a Team</h3>
           <p className="mt-1.5 text-xs text-muted-foreground max-w-sm mx-auto">
             {(user.role === 'INTERN' || user.role === 'EMPLOYEE')
-              ? "You have not been assigned to any workspace team yet. Please contact your administrator or team leader to get allocated."
+              ? "You have not been assigned to any workspace team yet. Please contact your administrator or admin to get allocated."
               : "No workspace teams found. Click 'Create Team' to register a new team."}
           </p>
         </div>
@@ -325,9 +325,9 @@ const Teams = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Assign Team Leader</label>
+                <label className="text-xs font-semibold text-muted-foreground">Assign Admin</label>
                 <select name="leaderId" value={formData.leaderId} onChange={handleInputChange}>
-                  <option value="">Select Team Leader</option>
+                  <option value="">Select Admin</option>
                   {availableLeaders.map(leader => (
                     <option key={leader.id} value={leader.id}>{leader.name} ({leader.employeeId})</option>
                   ))}
@@ -368,9 +368,9 @@ const Teams = () => {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Assign Team Leader</label>
+                <label className="text-xs font-semibold text-muted-foreground">Assign Admin</label>
                 <select name="leaderId" value={formData.leaderId} onChange={handleInputChange}>
-                  <option value="">Select Team Leader</option>
+                  <option value="">Select Admin</option>
                   {availableLeaders.map(leader => (
                     <option key={leader.id} value={leader.id}>{leader.name} ({leader.employeeId})</option>
                   ))}
@@ -455,7 +455,7 @@ const Teams = () => {
                 {/* Team Details Header Card */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="rounded-xl border border-border/30 bg-muted/20 p-3.5">
-                    <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Team Leader</p>
+                    <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-wider">Admin</p>
                     <div className="flex items-center gap-2.5 mt-2">
                       <img
                         src={teamDetails.leader?.profilePic ? getUploadUrl(teamDetails.leader.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${teamDetails.leader?.name}`}
