@@ -801,11 +801,9 @@ const Tasks = () => {
                     {task.status.replace('_', ' ')}
                   </span>
 
-                  <img 
-                    src={task.assignee?.profilePic ? getUploadUrl(task.assignee.profilePic) : `https://api.dicebear.com/7.x/initials/svg?seed=${task.assignee?.name}`}
-                    className="h-5 w-5 rounded-full border object-cover"
-                    title={task.assignee?.name}
-                    alt="avatar"
+                  <UserAvatar
+                    user={task.assignee}
+                    className="h-5 w-5 rounded-full"
                   />
                 </div>
               </div>
@@ -1274,20 +1272,23 @@ const Tasks = () => {
           </div>
         </div>
 
-        {/* Sub Tab Navigation */}
-        <div className="flex items-center border-b border-border/40 gap-4 overflow-x-auto pb-0.5 scrollbar-thin">
-          {subTabs.map(tab => (
-            <button
-              key={tab}
-              onClick={() => setActiveSubTab(tab)}
-              className={`text-xs font-semibold pb-2 border-b-2 px-1 transition-all ${
-                activeSubTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
+        {/* Sub Tab Navigation — visible only on Board */}
+        {activeSubTab === 'Board' && (
+          <div className="flex items-center border-b border-border/40 gap-4 overflow-x-auto pb-0.5 scrollbar-thin">
+            {subTabs.map(tab => (
+              <button
+                key={tab}
+                onClick={() => setActiveSubTab(tab)}
+                className={`text-xs font-semibold pb-2 border-b-2 px-1 transition-all ${
+                  activeSubTab === tab ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+        )}
+
       </div>
 
       {/* Filter bar */}
@@ -1379,7 +1380,7 @@ const Tasks = () => {
 
             if (activeProjects.length === 0) {
               return (
-                <div className="bg-card border border-dashed border-border/60 rounded-3xl p-12 text-center space-y-3 shadow-xs">
+                <div className="bg-[#FCFCFC] dark:bg-card border border-dashed border-[#E5E7EB] dark:border-border/60 rounded-3xl p-12 text-center space-y-3 shadow-xs">
                   <FolderOpen className="h-10 w-10 text-muted-foreground mx-auto" />
                   <h3 className="text-sm font-bold text-foreground">No Projects Found</h3>
                   <p className="text-xs text-muted-foreground max-w-sm mx-auto">
@@ -1405,7 +1406,7 @@ const Tasks = () => {
               const progressPct = totalTasksCount > 0 ? Math.round((completedTasksCount / totalTasksCount) * 100) : 0;
 
               return (
-                <div key={proj.id} className="rounded-3xl border border-border/70 bg-card/60 p-5 shadow-sm space-y-4 text-left transition-all">
+                <div key={proj.id} className="rounded-3xl border border-[#E5E7EB] bg-white dark:bg-card dark:border-border/50 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] space-y-4 text-left transition-all duration-250 hover:-translate-y-0.5 hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
                   {/* Project Workspace Header Banner */}
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/40 pb-4">
                     <div className="space-y-1">
@@ -1436,7 +1437,7 @@ const Tasks = () => {
                     {/* Right side: Leader, Team & Progress Bar */}
                     <div className="flex flex-wrap items-center gap-5 shrink-0">
                       {/* Project Leader & Team info */}
-                      <div className="flex items-center gap-2 bg-muted/30 border border-border/40 px-3 py-1.5 rounded-2xl">
+                      <div className="flex items-center gap-2 bg-white dark:bg-muted/30 border border-[#E5E7EB] dark:border-border/40 px-3 py-1.5 rounded-2xl shadow-sm">
                         <div className="text-left text-[11px]">
                           <span className="text-[9px] font-bold text-muted-foreground uppercase block leading-none">Leader & Team</span>
                           <span className="font-extrabold text-foreground block">{proj.leader?.name || 'Unassigned Leader'}</span>
@@ -1445,7 +1446,7 @@ const Tasks = () => {
                       </div>
 
                       {/* Dynamic Progress Ring / Bar */}
-                      <div className="w-44 bg-muted/30 border border-border/40 p-2.5 rounded-2xl space-y-1">
+                      <div className="w-44 bg-white dark:bg-muted/30 border border-[#E5E7EB] dark:border-border/40 p-2.5 rounded-2xl space-y-1 shadow-sm">
                         <div className="flex justify-between items-center text-[10px] font-bold">
                           <span className="text-muted-foreground uppercase">Completion</span>
                           <span className="text-primary font-black">{progressPct}% ({completedTasksCount}/{totalTasksCount})</span>
@@ -1469,7 +1470,7 @@ const Tasks = () => {
 
                   {/* Kanban Columns OR Empty State */}
                   {roleTasks.length === 0 ? (
-                    <div className="border border-dashed border-border/60 bg-muted/15 rounded-2xl p-8 text-center space-y-3">
+                    <div className="border border-dashed border-[#E5E7EB] dark:border-border/60 bg-[#FCFCFC] dark:bg-muted/15 rounded-2xl p-8 text-center space-y-3">
                       <FolderOpen className="h-8 w-8 text-muted-foreground/60 mx-auto" />
                       <div className="space-y-1">
                         <p className="text-xs font-extrabold text-foreground">This project is active but no tasks have been created yet.</p>
@@ -1527,44 +1528,44 @@ const Tasks = () => {
                                     draggable
                                     onDragStart={(e) => onDragStart(e, task.id)}
                                     onClick={() => openDetailModal(task)}
-                                    className="group bg-card border border-border/40 rounded-xl p-3 shadow hover:border-primary/45 cursor-grab active:cursor-grabbing transition-all text-left space-y-2.5 animate-in fade-in duration-200"
+                                    className="group bg-[linear-gradient(135deg,#F7FFF9_0%,#EEFDF5_30%,#E5F9EE_65%,#F4FFF8_100%)] hover:bg-[linear-gradient(135deg,#F1FFF5_0%,#E7FCEF_40%,#DDF8E8_100%)] dark:bg-card border border-[rgba(16,185,129,0.18)] dark:border-border/40 rounded-[18px] p-3 shadow-[0_6px_18px_rgba(16,185,129,0.10)] hover:-translate-y-[3px] hover:shadow-[0_14px_30px_rgba(16,185,129,0.16)] hover:border-emerald-500/30 cursor-grab active:cursor-grabbing transition-all duration-250 text-left space-y-2.5 animate-in fade-in duration-200"
                                   >
-                                    <h4 className="text-xs font-bold text-foreground group-hover:text-primary leading-tight line-clamp-2">
+                                    <h4 className="text-xs font-bold text-[#0F172A] dark:text-foreground group-hover:text-primary leading-tight line-clamp-2">
                                       {task.title}
                                     </h4>
 
                                     {/* Middle: Deadline & Type info */}
                                     <div className="flex flex-wrap items-center gap-2">
-                                      <div className="flex items-center gap-1 rounded bg-muted/65 border border-border/30 px-1.5 py-0.5 text-[9px] text-muted-foreground font-semibold">
+                                      <div className="flex items-center gap-1 rounded bg-white/70 dark:bg-muted/65 border border-emerald-500/10 px-1.5 py-0.5 text-[9px] text-[#64748B] dark:text-muted-foreground font-semibold">
                                         <Calendar className="h-2.5 w-2.5" />
                                         <span>{new Date(task.deadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                                       </div>
 
                                       {task.sprintName && (
-                                        <span className="text-[8px] bg-slate-100 dark:bg-slate-800 text-muted-foreground px-1.5 py-0.5 rounded font-mono font-bold">
+                                        <span className="text-[8px] bg-emerald-100/60 dark:bg-slate-800 text-emerald-800 dark:text-muted-foreground px-1.5 py-0.5 rounded font-mono font-bold">
                                           {task.sprintName}
                                         </span>
                                       )}
                                     </div>
 
                                     {/* Bottom Bar: Key & Type icon left, Avatar right */}
-                                    <div className="flex items-center justify-between pt-1 border-t border-border/20">
+                                    <div className="flex items-center justify-between pt-1 border-t border-emerald-500/10 dark:border-border/20">
                                       <div className="flex items-center gap-1.5">
                                         {getTypeIcon(task.type)}
-                                        <span className="text-[9px] text-muted-foreground font-mono font-bold">
+                                        <span className="text-[9px] text-[#0EA5E9] font-mono font-bold">
                                           MRF-{task.id.slice(0, 4).toUpperCase()}
                                         </span>
                                       </div>
 
                                       <div className="flex items-center gap-1.5">
                                         {task.storyPoints > 0 && (
-                                          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-muted border text-[8px] font-bold text-muted-foreground" title="Story Points">
+                                          <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white/80 dark:bg-muted border border-emerald-500/20 text-[8px] font-bold text-slate-600 dark:text-muted-foreground" title="Story Points">
                                             {task.storyPoints}
                                           </span>
                                         )}
                                         <UserAvatar
                                           user={task.assignee}
-                                          className="h-5 w-5 rounded-full border object-cover"
+                                          className="h-5 w-5 rounded-full border-2 border-white shadow-[0_2px_8px_rgba(16,185,129,0.20)] object-cover"
                                         />
                                       </div>
                                     </div>

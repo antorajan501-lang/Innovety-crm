@@ -11,6 +11,7 @@ import {
 import api, { getSocket, downloadChatAttachment } from '../services/api';
 
 import { useAuth } from '../context/AuthContext';
+import UserAvatar from '../components/common/UserAvatar';
 
 const EMOJI_LIST = ['😊', '👍', '🔥', '🎉', '❤️', '🙌', '🚀', '✅', '😂', '💡', '👏', '🎯', '💯', '🙏', '✨', '⚡'];
 
@@ -1027,13 +1028,12 @@ const Chat = () => {
                             <Users className="h-5 w-5" />
                           </div>
                         ) : (
-                          <div className="h-[40px] w-[40px] rounded-xl bg-primary text-white font-bold flex items-center justify-center text-sm overflow-hidden shadow-xs">
-                            {r.displayPic ? (
-                              <img src={r.displayPic.startsWith('http') ? r.displayPic : `${api.defaults.baseURL.replace('/api', '')}${r.displayPic}`} alt="" className="w-full h-full object-cover" />
-                            ) : (
-                              r.name?.charAt(0) || 'U'
-                            )}
-                          </div>
+                          <UserAvatar
+                            user={r.otherUser}
+                            src={r.displayPic}
+                            name={r.name}
+                            className="h-[40px] w-[40px] rounded-xl overflow-hidden shadow-xs"
+                          />
                         )}
 
                         {/* Online Status Dot for Direct Users */}
@@ -1313,13 +1313,10 @@ const Chat = () => {
                           className={`flex gap-2 items-start text-left px-4 ${isOwn ? 'flex-row-reverse' : 'flex-row'} ${isDifferentSender ? 'mt-4' : 'mt-2'}`}
                         >
                           {!isOwn && (
-                            <div className="h-10 w-10 rounded-2xl bg-primary text-white font-bold flex items-center justify-center text-xs overflow-hidden shrink-0 mt-0.5 shadow-xs">
-                              {msg.sender?.profilePic ? (
-                                <img src={msg.sender.profilePic.startsWith('http') ? msg.sender.profilePic : `${api.defaults.baseURL.replace('/api', '')}${msg.sender.profilePic}`} alt="" className="w-full h-full object-cover" />
-                              ) : (
-                                msg.sender?.name?.charAt(0) || 'U'
-                              )}
-                            </div>
+                            <UserAvatar
+                              user={msg.sender}
+                              className="h-10 w-10 rounded-2xl shrink-0 mt-0.5 shadow-xs"
+                            />
                           )}
 
                           {isSelectMode && !msg.isDeleted && (
@@ -1718,13 +1715,12 @@ const Chat = () => {
                   <>
                     {/* Top Avatar Banner */}
                     <div className="flex flex-col items-center text-center p-4 rounded-2xl bg-primary/5 border border-primary/15 space-y-2">
-                      <div className="h-20 w-20 rounded-2xl bg-primary text-white font-black text-2xl flex items-center justify-center shadow-lg shadow-primary/20 overflow-hidden">
-                        {(roomDetails?.otherUser?.profilePic || activeRoom.displayPic) ? (
-                          <img src={(roomDetails?.otherUser?.profilePic || activeRoom.displayPic).startsWith('http') ? (roomDetails?.otherUser?.profilePic || activeRoom.displayPic) : `${api.defaults.baseURL.replace('/api', '')}${(roomDetails?.otherUser?.profilePic || activeRoom.displayPic)}`} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          (roomDetails?.otherUser?.name || activeRoom.name)?.charAt(0) || 'U'
-                        )}
-                      </div>
+                      <UserAvatar
+                        user={roomDetails?.otherUser}
+                        src={activeRoom.displayPic}
+                        name={activeRoom.name}
+                        className="h-20 w-20 rounded-2xl shadow-lg shadow-primary/20"
+                      />
                       <div>
                         <h4 className="font-black text-sm text-foreground">{roomDetails?.otherUser?.name || activeRoom.name}</h4>
                         <div className="flex items-center justify-center gap-1.5 mt-1">
@@ -1882,13 +1878,10 @@ const Chat = () => {
                           return (
                             <div key={m.id} className="flex items-center justify-between p-2 rounded-xl bg-card border border-border/60 hover:bg-primary/5 transition-all">
                               <div className="flex items-center gap-2.5 truncate">
-                                <div className="h-8 w-8 rounded-xl bg-primary text-white font-bold flex items-center justify-center text-xs overflow-hidden shrink-0">
-                                  {m.profilePic ? (
-                                    <img src={m.profilePic.startsWith('http') ? m.profilePic : `${api.defaults.baseURL.replace('/api', '')}${m.profilePic}`} alt="" className="w-full h-full object-cover" />
-                                  ) : (
-                                    m.name?.charAt(0) || 'U'
-                                  )}
-                                </div>
+                                <UserAvatar
+                                  user={m}
+                                  className="h-8 w-8 rounded-xl shrink-0"
+                                />
                                 <div className="truncate">
                                   <p className="font-bold text-foreground text-xs truncate flex items-center gap-1">
                                     <span>{m.name}</span>

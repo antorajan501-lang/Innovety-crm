@@ -4,6 +4,7 @@ import {
   FolderOpen, Eye, X, RefreshCw, Lock
 } from 'lucide-react';
 import api from '../../../services/api';
+import UserAvatar from '../../../components/common/UserAvatar';
 
 const TeamDirectory = () => {
   const [teams, setTeams] = useState([]);
@@ -125,9 +126,7 @@ const TeamDirectory = () => {
 
                 {/* Team Leader Banner */}
                 <div className="p-3 rounded-xl bg-muted/30 border border-border/30 flex items-center gap-3">
-                  <div className="h-8 w-8 rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold flex items-center justify-center text-xs shrink-0">
-                    {team.leader?.name?.charAt(0) || 'L'}
-                  </div>
+                  <UserAvatar user={team.leader} name={team.leader?.name || 'Unassigned'} className="h-8 w-8 shrink-0" />
                   <div className="truncate">
                     <span className="text-[9px] font-bold text-muted-foreground uppercase block">Team Leader</span>
                     <p className="text-xs font-bold text-foreground truncate">{team.leader?.name || 'Unassigned'}</p>

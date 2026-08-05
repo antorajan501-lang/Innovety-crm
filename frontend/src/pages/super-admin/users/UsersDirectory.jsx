@@ -4,6 +4,7 @@ import {
   CheckCircle2, AlertCircle, X, UserCheck
 } from 'lucide-react';
 import api from '../../../services/api';
+import UserAvatar from '../../../components/common/UserAvatar';
 
 const UsersDirectory = () => {
   const [users, setUsers] = useState([]);
@@ -318,9 +319,7 @@ const UsersDirectory = () => {
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-full bg-primary text-white font-black flex items-center justify-center text-sm shrink-0 border border-primary/30">
-                        {u.name?.charAt(0) || 'U'}
-                      </div>
+                      <UserAvatar user={u} className="h-10 w-10 shrink-0" />
                       <div>
                         <p className="font-bold text-foreground text-xs">{u.name}</p>
                         <p className="text-[11px] text-muted-foreground font-medium">{u.email}</p>
@@ -389,9 +388,7 @@ const UsersDirectory = () => {
           <div className="w-full max-w-2xl rounded-2xl border border-border/40 bg-card p-6 shadow-2xl space-y-5 text-left max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-border/30 pb-3">
               <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-emerald-950 text-white font-extrabold flex items-center justify-center text-sm border border-emerald-800">
-                  {selectedUser.name?.charAt(0)}
-                </div>
+                <UserAvatar user={selectedUser} className="h-10 w-10 shrink-0" />
                 <div>
                   <h3 className="text-base font-bold text-foreground">{selectedUser.name}</h3>
                   <p className="text-xs text-muted-foreground font-mono">{selectedUser.email} • {selectedUser.employeeId}</p>

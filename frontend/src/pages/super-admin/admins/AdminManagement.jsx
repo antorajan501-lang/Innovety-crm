@@ -5,6 +5,7 @@ import {
   X, CheckCircle2, AlertCircle, RefreshCw, Lock, UserX
 } from 'lucide-react';
 import api from '../../../services/api';
+import UserAvatar from '../../../components/common/UserAvatar';
 
 const AdminManagement = () => {
   const [searchParams] = useSearchParams();
@@ -218,9 +219,7 @@ const AdminManagement = () => {
                 <tr key={admin.id} className="hover:bg-muted/10 transition-all whitespace-nowrap">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
-                      <div className="h-9 w-9 rounded-xl bg-primary/10 text-primary font-extrabold flex items-center justify-center text-xs shrink-0 border border-primary/20">
-                        {admin.name?.charAt(0) || 'A'}
-                      </div>
+                      <UserAvatar user={admin} className="h-9 w-9 shrink-0" />
                       <div>
                         <p className="font-bold text-foreground text-xs">{admin.name}</p>
                         <p className="text-[10px] text-muted-foreground font-mono">{admin.email} • {admin.employeeId}</p>
