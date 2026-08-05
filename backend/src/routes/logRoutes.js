@@ -3,7 +3,7 @@ const router = express.Router();
 const { getActivityLogs } = require('../controllers/logController');
 const { authenticate, requireRole } = require('../middleware/auth');
 
-router.use(authenticate, requireRole(['ADMIN']));
+router.use(authenticate);
 
 router.get('/', getActivityLogs);
 

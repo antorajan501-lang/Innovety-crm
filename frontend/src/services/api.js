@@ -133,9 +133,9 @@ export const getSocket = () => {
   if (!socketInstance) {
     const backendServer = API_URL.replace(/\/api\/?$/, '');
     socketInstance = io(backendServer, {
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       reconnection: true,
-      reconnectionAttempts: 10,
+      reconnectionAttempts: 15,
       reconnectionDelay: 1000
     });
   }

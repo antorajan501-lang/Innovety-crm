@@ -38,12 +38,33 @@ const parseUserAgent = (userAgentString) => {
   return { browser, device };
 };
 
+const getOrCreateSystemSettings = async () => {
+  let settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
+  if (!settings) {
+    settings = await prisma.systemSettings.create({
+      data: {
+        id: 'GLOBAL',
+        companyName: 'INNOVEITY',
+        senderEmail: 'somusuraj72@gmail.com',
+        internShiftStart: '09:30',
+        internShiftEnd: '18:30',
+        tlShiftStart: '09:30',
+        tlShiftEnd: '18:30',
+        officeLocationName: 'Innoveity Headquarters',
+        earlyWindowMinutes: 30,
+        gracePeriodMinutes: 15
+      }
+    });
+  }
+  return settings;
+};
+
 const getClockInStatus = async (req, res) => {
   try {
     const userId = req.user.id;
     const now = new Date();
 
-    const settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
+    const settings = await getOrCreateSystemSettings();
     const timeZone = getSystemTimeZone(settings);
     const todayDate = getTodayZonedDate(now, timeZone);
 
@@ -86,7 +107,7 @@ const clockIn = async (req, res) => {
     const userId = req.user.id;
     const now = new Date();
 
-    const settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
+    const settings = await getOrCreateSystemSettings();
     const timeZone = getSystemTimeZone(settings);
     const todayDate = getTodayZonedDate(now, timeZone);
 
@@ -137,6 +158,8 @@ const clockIn = async (req, res) => {
       } else if (validation.reason === 'ALREADY_CLOCKED_OUT') {
         msg = `You have already clocked out today.`;
       }
+
+      console.warn(`[ClockIn 400 Rejected] User: ${userId} (${req.user.role}) | Reason: ${validation.reason} | WindowOpen: ${validation.windowOpenFormatted} | CurrentTime: ${validation.currentTimeFormatted}`);
 
       return res.status(400).json({
         success: false,

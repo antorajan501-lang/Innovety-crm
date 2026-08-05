@@ -142,24 +142,31 @@ const validateAttendanceWindow = ({ userRole, settings, attendanceRecord, approv
     lateMinutes = Math.floor(diffMs / (1000 * 60));
   }
 
-  // Development Server Diagnostics
-  if (process.env.NODE_ENV !== 'production' || process.env.DEBUG_ATTENDANCE === 'true') {
-    console.log(`[AttendanceEngine] Diagnostics:`, {
-      serverISO: now.toISOString(),
-      configuredTimeZone: windowInfo.timeZone,
-      currentTimeFormatted: windowInfo.currentTimeFormatted,
-      role: userRole,
-      shiftStartStr: windowInfo.shiftStartStr,
-      windowOpenFormatted: windowInfo.windowOpenFormatted,
-      shiftStartFormatted: windowInfo.shiftStartFormatted,
-      windowCloseFormatted: windowInfo.windowCloseFormatted,
-      state,
-      canClockIn,
-      canClockOut,
-      reason,
-      lateMinutes
-    });
-  }
+  // Always output Diagnostics to stdout/PM2 for real-time production troubleshooting
+  console.log(`[AttendanceEngine] Diagnostics:`, {
+    serverISO: now.toISOString(),
+    serverUTCString: now.toUTCString(),
+    configuredTimeZone: windowInfo.timeZone,
+    envTimeZone: process.env.SYSTEM_TIMEZONE || 'Not Set',
+    currentTimeFormatted: windowInfo.currentTimeFormatted,
+    role: userRole,
+    rawDbSettings: {
+      internShiftStart: settings?.internShiftStart,
+      tlShiftStart: settings?.tlShiftStart,
+      earlyWindowMinutes: settings?.earlyWindowMinutes,
+      gracePeriodMinutes: settings?.gracePeriodMinutes,
+      timeZone: settings?.timeZone
+    },
+    shiftStartStr: windowInfo.shiftStartStr,
+    windowOpenFormatted: windowInfo.windowOpenFormatted,
+    shiftStartFormatted: windowInfo.shiftStartFormatted,
+    windowCloseFormatted: windowInfo.windowCloseFormatted,
+    state,
+    canClockIn,
+    canClockOut,
+    reason,
+    lateMinutes
+  });
 
   return {
     canClockIn,

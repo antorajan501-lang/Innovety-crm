@@ -74,14 +74,18 @@ const TeamRow = ({ team, animate }) => {
         <TeamAvatar name={team.teamName} rank={team.rank} />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-extrabold text-foreground truncate">{team.teamName}</p>
-          <div className="flex items-center gap-1 mt-0.5">
-            <Users className="h-3 w-3 text-muted-foreground" />
-            <span className="text-[10px] text-muted-foreground font-semibold">
+          <div className="flex flex-wrap items-center gap-2 mt-0.5">
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground font-semibold">
+              <Users className="h-3 w-3 text-muted-foreground" />
               {team.members} {team.members === 1 ? 'Member' : 'Members'}
             </span>
+            <span className="text-[10px] text-muted-foreground/60 font-semibold">
+              • {team.totalProjects || 0} {team.totalProjects === 1 ? 'Project' : 'Projects'}
+              {team.activeProjects > 0 ? ` (${team.activeProjects} Active)` : ''}
+            </span>
             {team.leader && (
-              <span className="text-[10px] text-muted-foreground/60 font-medium ml-1 truncate">
-                · {team.leader}
+              <span className="text-[10px] text-muted-foreground/60 font-medium truncate">
+                • Lead: {team.leader}
               </span>
             )}
           </div>
@@ -149,8 +153,18 @@ const TeamPerformanceRankings = () => {
     const socket = getSocket();
     if (!socket) return;
     const handler = () => fetchRankings();
-    socket.on('team_performance_updated', handler);
-    return () => socket.off('team_performance_updated', handler);
+
+    const events = [
+      'team_performance_updated',
+      'project_created', 'project_updated', 'project_deleted',
+      'task_created', 'task_updated', 'task_deleted',
+      'team_created', 'team_updated', 'team_deleted'
+    ];
+
+    events.forEach(evt => socket.on(evt, handler));
+    return () => {
+      events.forEach(evt => socket.off(evt, handler));
+    };
   }, [fetchRankings]);
 
   return (

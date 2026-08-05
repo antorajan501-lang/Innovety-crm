@@ -2,7 +2,7 @@ const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
 const { syncProjectLifecycleChatRoom } = require('../services/projectChatService');
-const { getIo } = require('../socket');
+const { getIo, broadcastTeamPerformanceUpdate } = require('../socket');
 
 /**
  * Generate Next Project Code (PRJ-1001, PRJ-1002...)
@@ -176,6 +176,8 @@ const createProject = async (req, res) => {
     } catch (sockErr) {
       console.error('[project_created Socket Error]:', sockErr);
     }
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     return res.status(201).json({
       success: true,
@@ -576,6 +578,8 @@ const updateProject = async (req, res) => {
     // Trigger Chat Room Sync
     await syncProjectLifecycleChatRoom(id);
 
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
+
     return res.status(200).json({
       message: `Project ${updatedProject.projectCode} updated successfully.`,
       project: updatedProject
@@ -626,6 +630,8 @@ const deleteProject = async (req, res) => {
 
     // Archive Project Chat Room
     await syncProjectLifecycleChatRoom(id);
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     return res.status(200).json({ message: `Project ${project.projectCode} deleted successfully.` });
   } catch (error) {
