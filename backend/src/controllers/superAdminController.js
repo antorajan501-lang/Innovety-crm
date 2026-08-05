@@ -440,20 +440,26 @@ const getAdmins = async (req, res) => {
  * Helper to auto-generate Admin Employee ID (e.g. AD-1005)
  */
 const generateAdminEmployeeId = async () => {
-  const lastAdmin = await prisma.user.findFirst({
+  const admins = await prisma.user.findMany({
     where: { employeeId: { startsWith: 'AD-' } },
-    orderBy: { employeeId: 'desc' }
+    select: { employeeId: true }
   });
 
-  if (!lastAdmin) return 'AD-1001';
+  let maxNum = 1000;
+  admins.forEach(u => {
+    if (u.employeeId) {
+      const match = u.employeeId.match(/AD-(\d+)/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+  });
 
-  const match = lastAdmin.employeeId.match(/AD-(\d+)/);
-  if (match) {
-    const num = parseInt(match[1], 10) + 1;
-    return `AD-${num.toString().padStart(4, '0')}`;
-  }
-
-  return `AD-${Math.floor(1000 + Math.random() * 9000)}`;
+  const nextNum = maxNum + 1;
+  return `AD-${nextNum.toString().padStart(4, '0')}`;
 };
 
 /**
@@ -472,34 +478,49 @@ const createAdmin = async (req, res) => {
       return res.status(400).json({ message: 'User with this email already exists.' });
     }
 
-    const employeeId = await generateAdminEmployeeId();
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newAdmin = await prisma.user.create({
-      data: {
-        employeeId,
-        name,
-        email,
-        phone: phone || null,
-        password: hashedPassword,
-        role: 'ADMIN',
-        status,
-        department: department || 'Administration',
-        designation: designation || 'System Administrator'
-      },
-      select: {
-        id: true,
-        employeeId: true,
-        name: true,
-        email: true,
-        phone: true,
-        role: true,
-        status: true,
-        department: true,
-        designation: true,
-        createdAt: true
+    let newAdmin = null;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (!newAdmin && attempts < maxAttempts) {
+      attempts++;
+      const employeeId = await generateAdminEmployeeId();
+      try {
+        newAdmin = await prisma.user.create({
+          data: {
+            employeeId,
+            name,
+            email,
+            phone: phone || null,
+            password: hashedPassword,
+            role: 'ADMIN',
+            status,
+            department: department || 'Administration',
+            designation: designation || 'System Administrator'
+          },
+          select: {
+            id: true,
+            employeeId: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+            department: true,
+            designation: true,
+            createdAt: true
+          }
+        });
+      } catch (err) {
+        if (err.code === 'P2002' && (err.meta?.target?.includes('employeeId') || String(err).includes('employeeId')) && attempts < maxAttempts) {
+          console.warn(`[createAdmin] Concurrency collision on employeeId. Retrying attempt ${attempts}...`);
+          continue;
+        }
+        throw err;
       }
-    });
+    }
 
     await logActivity({
       userId: req.user.id,

@@ -5,12 +5,36 @@ const { logActivity } = require('../utils/activityLogger');
 const { addUserToCompanyChat, removeUserFromCompanyChat } = require('../services/companyChatService');
 const { disconnectUserSocket } = require('../socket');
 
-// Helper to auto-generate employee ID per role
+// Helper to auto-generate employee ID per role (e.g. EM-1001, IN-1005)
 const generateEmployeeId = async (role) => {
-  const count = await prisma.user.count({ where: { role } });
   const prefix = role === 'EMPLOYEE' ? 'EM' : role === 'ADMIN' ? 'AD' : role === 'TEAM_LEADER' ? 'TL' : 'IN';
-  const number = 1001 + count;
-  return `${prefix}-${number}`;
+
+  const users = await prisma.user.findMany({
+    where: {
+      employeeId: {
+        startsWith: `${prefix}-`
+      }
+    },
+    select: {
+      employeeId: true
+    }
+  });
+
+  let maxNum = 1000;
+  users.forEach(u => {
+    if (u.employeeId) {
+      const match = u.employeeId.match(/^[A-Z]+-(\d+)$/);
+      if (match) {
+        const num = parseInt(match[1], 10);
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    }
+  });
+
+  const nextNum = maxNum + 1;
+  return `${prefix}-${nextNum}`;
 };
 
 // Helper to format DOB to temporary password (DDMMYYYY)
@@ -97,38 +121,53 @@ const createUser = async (req, res) => {
       return res.status(400).json({ message: 'User with this email already exists.' });
     }
 
-    const employeeId = await generateEmployeeId(role);
     const tempPasswordText = formatDobToPassword(dob);
     const hashedPassword = await bcrypt.hash(tempPasswordText, 10);
 
-    const newUser = await prisma.user.create({
-      data: {
-        employeeId,
-        name,
-        email,
-        password: hashedPassword,
-        phone,
-        dob: new Date(dob),
-        college: college || companyName || null,
-        department,
-        joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
-        role,
-        status: 'ACTIVE',
-        profilePic: profilePicPath,
-        candidateType: candidateType || null,
-        resume: resumePath || null,
-        degree: degree || null,
-        currentYearSemester: currentYearSemester || null,
-        graduationYear: graduationYear || null,
-        internshipRole: internshipRole || null,
-        internshipDuration: internshipDuration || null,
-        highestQualification: highestQualification || null,
-        keySkills: keySkills || null,
-        companyName: companyName || college || null,
-        designation: designation || null,
-        totalExperience: totalExperience || null
+    let newUser = null;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (!newUser && attempts < maxAttempts) {
+      attempts++;
+      const employeeId = await generateEmployeeId(role);
+      try {
+        newUser = await prisma.user.create({
+          data: {
+            employeeId,
+            name,
+            email,
+            password: hashedPassword,
+            phone,
+            dob: new Date(dob),
+            college: college || companyName || null,
+            department,
+            joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
+            role,
+            status: 'ACTIVE',
+            profilePic: profilePicPath,
+            candidateType: candidateType || null,
+            resume: resumePath || null,
+            degree: degree || null,
+            currentYearSemester: currentYearSemester || null,
+            graduationYear: graduationYear || null,
+            internshipRole: internshipRole || null,
+            internshipDuration: internshipDuration || null,
+            highestQualification: highestQualification || null,
+            keySkills: keySkills || null,
+            companyName: companyName || college || null,
+            designation: designation || null,
+            totalExperience: totalExperience || null
+          }
+        });
+      } catch (err) {
+        if (err.code === 'P2002' && (err.meta?.target?.includes('employeeId') || String(err).includes('employeeId')) && attempts < maxAttempts) {
+          console.warn(`[createUser] Concurrency collision on employeeId. Retrying attempt ${attempts}...`);
+          continue;
+        }
+        throw err;
       }
-    });
+    }
 
     // Sync user with Company Chat Room
     await addUserToCompanyChat(newUser.id);
