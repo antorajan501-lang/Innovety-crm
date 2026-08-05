@@ -166,6 +166,12 @@ const broadcastAttendanceEvent = (eventName, data) => {
   io.emit(eventName, data);
 };
 
+// Broadcast team performance update signal (triggers ranking refresh on all dashboards)
+const broadcastTeamPerformanceUpdate = () => {
+  if (!io) return;
+  io.emit('team_performance_updated');
+};
+
 module.exports = {
   init,
   getIo,
@@ -173,6 +179,7 @@ module.exports = {
   sendAnnouncement,
   getOnlineUsers,
   disconnectUserSocket,
-  broadcastAttendanceEvent
+  broadcastAttendanceEvent,
+  broadcastTeamPerformanceUpdate
 };
 

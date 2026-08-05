@@ -1,6 +1,7 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { syncAllTeamProjectChats } = require('../services/projectChatService');
+const { broadcastTeamPerformanceUpdate } = require('../socket');
 
 const createTeam = async (req, res) => {
   try {
@@ -31,6 +32,8 @@ const createTeam = async (req, res) => {
       action: 'TEAM_CREATE',
       details: `Created team: ${newTeam.name}`
     });
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     res.status(201).json(newTeam);
   } catch (error) {
@@ -187,6 +190,8 @@ const editTeam = async (req, res) => {
       details: `Updated team info for: ${updatedTeam.name}`
     });
 
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
+
     res.json(updatedTeam);
   } catch (error) {
     console.error('Edit team error:', error);
@@ -216,6 +221,8 @@ const deleteTeam = async (req, res) => {
       action: 'TEAM_DELETE',
       details: `Deleted team: ${team.name} (Chat room archived)`
     });
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     res.json({ message: 'Team deleted successfully and team chat archived.' });
   } catch (error) {
@@ -260,6 +267,8 @@ const assignMembers = async (req, res) => {
       action: 'TEAM_MEMBER_ASSIGN',
       details: `Updated team members of team ID: ${id}`
     });
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     res.json({ message: 'Team members updated successfully.' });
   } catch (error) {

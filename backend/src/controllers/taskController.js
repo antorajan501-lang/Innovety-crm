@@ -3,7 +3,7 @@ const { createNotification } = require('../services/notification');
 const { logActivity } = require('../utils/activityLogger');
 const { sendTaskAssignmentEmail, sendTaskStatusUpdateEmail, sendTeamTaskAssignmentEmail } = require('../services/email');
 const { syncProjectLifecycleChatRoom } = require('../services/projectChatService');
-const { getIo } = require('../socket');
+const { getIo, broadcastTeamPerformanceUpdate } = require('../socket');
 
 const createTask = async (req, res) => {
   try {
@@ -109,6 +109,8 @@ const createTask = async (req, res) => {
         action: 'TASK_CREATE_TEAM',
         details: `Assigned team task "${title}" to team "${team.name}" (${tasksCreated.length} interns)`
       });
+
+      try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
       return res.status(201).json({
         message: `Task assigned successfully to all ${tasksCreated.length} interns on team "${team.name}".`,
@@ -217,6 +219,8 @@ const createTask = async (req, res) => {
     } catch (e) {
       console.error('Socket emit task_created error:', e);
     }
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     res.status(201).json(task);
   } catch (error) {
@@ -470,6 +474,8 @@ const updateTaskStatus = async (req, res) => {
       console.error('Socket emit task_updated error:', e);
     }
 
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
+
     res.json(updatedTask);
   } catch (error) {
     console.error('Update task status error:', error);
@@ -551,6 +557,8 @@ const submitTask = async (req, res) => {
       action: 'TASK_SUBMIT',
       details: `Submitted work for task "${task.title}"`
     });
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     res.status(201).json(submission);
   } catch (error) {
@@ -705,6 +713,8 @@ const updateTask = async (req, res) => {
     if (updated.projectId) {
       await syncProjectLifecycleChatRoom(updated.projectId);
     }
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     res.json(updated);
   } catch (error) {
@@ -869,6 +879,8 @@ const deleteTask = async (req, res) => {
       action: 'TASK_DELETE',
       details: `Deleted task "${task.title}" (ID: ${id})`
     });
+
+    try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
     res.json({ message: 'Task deleted successfully.' });
   } catch (error) {

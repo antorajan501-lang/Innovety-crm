@@ -8,6 +8,7 @@ import UserAvatar from '../components/common/UserAvatar';
 import EmployeeDashboard from '../components/dashboard/EmployeeDashboard';
 import TeamLeaderDashboard from '../components/dashboard/TeamLeaderDashboard';
 import LeaveOverviewCard from '../components/dashboard/LeaveOverviewCard';
+import TeamPerformanceRankings from '../components/dashboard/TeamPerformanceRankings';
 import {
   Users,
   Briefcase,
@@ -128,7 +129,6 @@ const Dashboard = () => {
   });
 
   const [activities, setActivities] = useState([]);
-  const [teamPerformances, setTeamPerformances] = useState([]);
   const [taskChartData, setTaskChartData] = useState([]);
   const [burndownChartData, setBurndownChartData] = useState([]);
   const [sprintStats, setSprintStats] = useState({ totalPoints: 0, completedPoints: 0, pendingPoints: 0 });
@@ -258,12 +258,6 @@ const Dashboard = () => {
         }
 
         setActivities(logsData);
-        setTeamPerformances(teamsData.map(t => ({
-          name: t.name,
-          performance: t.performance || 0,
-          active: t.activeTasks || 0,
-          completed: t.completedTasks || 0
-        })));
 
         // Chart data for tasks distribution
         setTaskChartData([
@@ -1180,32 +1174,7 @@ const Dashboard = () => {
         </div>
 
         {/* Team Performance Rankings */}
-        <div className="clean-card text-left space-y-4">
-          <div className="flex items-center justify-between border-b border-border/30 pb-3">
-            <h3 className="text-sm font-bold text-foreground">Team Performance Rankings</h3>
-            <Award className="h-4 w-4 text-primary" />
-          </div>
-          <div className="dash-scroll max-h-72 space-y-4 pr-0.5">
-            {teamPerformances.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-4">No teams created yet.</p>
-            ) : (
-              teamPerformances.map((team, idx) => (
-                <div key={idx} className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="text-foreground">{team.name}</span>
-                    <span className="text-primary font-mono">{team.performance}% Completed</span>
-                  </div>
-                  <div className="h-2 w-full bg-primary/10 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-primary rounded-full transition-all duration-500"
-                      style={{ width: `${Math.max(team.performance, 5)}%` }}
-                    />
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        <TeamPerformanceRankings />
       </motion.div>
 
     </motion.div>
