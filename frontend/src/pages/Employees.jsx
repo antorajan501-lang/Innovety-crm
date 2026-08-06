@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import api, { getUploadUrl, downloadFile } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
 import ConfirmModal from '../components/common/ConfirmModal';
@@ -30,11 +30,19 @@ import {
 
 const Employees = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const urlSearch = new URLSearchParams(location.search).get('search') || '';
+
   const [users, setUsers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(urlSearch);
   const [statusFilter, setStatusFilter] = useState('');
+
+  useEffect(() => {
+    const sParam = new URLSearchParams(location.search).get('search') || '';
+    setSearch(sParam);
+  }, [location.search]);
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);

@@ -145,6 +145,14 @@ model User {
   casualLeaveQuota        Int              @default(12)
   sickLeaveQuota          Int              @default(12)
   emergencyLeaveQuota     Int              @default(6)
+  resetOtpHash            String?
+  resetOtpExpiry          DateTime?
+  resetOtpAttempts        Int              @default(0)
+  lastOtpSentAt           DateTime?
+  resetTokenHash          String?
+  resetTokenExpiry        DateTime?
+  otpHourlyCount          Int              @default(0)
+  otpHourlyWindowStart    DateTime?
   createdAt               DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 

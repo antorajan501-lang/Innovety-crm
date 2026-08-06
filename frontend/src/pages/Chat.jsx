@@ -6,9 +6,9 @@ import {
   Reply, Trash2, Edit3, Check, CheckCheck, FileText,
   Download, X, Sparkles, Building2, Info, Folder, Calendar, UserCheck, Lock, ExternalLink, Loader2,
   Play, Pause, Music, FileSpreadsheet, Package, Headphones, Copy, MoreVertical,
-  Forward, CheckSquare, Save, Share2
+  Forward, CheckSquare, Save, Share2, Pin
 } from 'lucide-react';
-import api, { getSocket, downloadChatAttachment } from '../services/api';
+import api, { getSocket, downloadChatAttachment, getUploadUrl } from '../services/api';
 
 import { useAuth } from '../context/AuthContext';
 import UserAvatar from '../components/common/UserAvatar';
@@ -382,7 +382,10 @@ const Chat = () => {
 
   // Handle click outside & keydown for context menu
   useEffect(() => {
-    const handleGlobalClick = () => {
+    const handleGlobalClick = (e) => {
+      if (e?.target?.closest('.msg-options-btn') || e?.target?.closest('.msg-context-menu')) {
+        return;
+      }
       setContextMenu(null);
       setActiveMenuMsgId(null);
     };
@@ -413,20 +416,46 @@ const Chat = () => {
     }, 2500);
   };
 
-  const handleContextMenuTrigger = (e, msg) => {
-    e.preventDefault();
-    e.stopPropagation();
+  // Message Action Menu Trigger (Exclusively via Three-Dot Button)
+  const openMessageMenu = (e, msg) => {
+    if (e) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    }
     if (!msg) return;
 
-    const mouseX = e.clientX;
-    const mouseY = e.clientY;
-    const menuWidth = 220;
+    let clientX = e?.clientX;
+    let clientY = e?.clientY;
+
+    // Calculate position from target element when position is missing (e.g. three-dot button click)
+    if ((clientX === undefined || clientY === undefined || (clientX === 0 && clientY === 0)) && e?.currentTarget) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      clientX = rect.left;
+      clientY = rect.bottom + 4;
+    }
+
+    const mouseX = clientX !== undefined && clientX !== 0 ? clientX : (window.innerWidth / 2);
+    const mouseY = clientY !== undefined && clientY !== 0 ? clientY : (window.innerHeight / 2);
+
+    const menuWidth = 200;
     const menuHeight = 280;
 
-    const posX = mouseX + menuWidth > window.innerWidth ? mouseX - menuWidth : mouseX;
-    const posY = mouseY + menuHeight > window.innerHeight ? mouseY - menuHeight : mouseY;
+    const posX = mouseX + menuWidth > window.innerWidth ? Math.max(10, mouseX - menuWidth) : mouseX;
+    const posY = mouseY + menuHeight > window.innerHeight ? Math.max(10, mouseY - menuHeight) : mouseY;
 
     setContextMenu({ x: posX, y: posY, msg });
+  };
+
+  const handleTogglePinAction = async (msg) => {
+    if (!msg) return;
+    try {
+      const res = await api.put(`/chat/messages/${msg.id}/pin`);
+      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, isPinned: res.data.isPinned } : m));
+      showToast(res.data.isPinned ? 'Message pinned' : 'Message unpinned');
+    } catch (err) {
+      console.error('Failed to toggle pin:', err);
+      showToast(err.response?.data?.message || 'Failed to pin message');
+    }
   };
 
   const handleTouchStartTrigger = (e, msg) => {
@@ -1177,7 +1206,7 @@ const Chat = () => {
                     ) : (
                       <div className="h-[42px] w-[42px] rounded-xl bg-primary text-white font-bold flex items-center justify-center text-sm overflow-hidden shadow-xs">
                         {activeRoom.displayPic ? (
-                          <img src={activeRoom.displayPic.startsWith('http') ? activeRoom.displayPic : `${api.defaults.baseURL.replace('/api', '')}${activeRoom.displayPic}`} alt="" className="w-full h-full object-cover" />
+                          <img src={getUploadUrl(activeRoom.displayPic)} alt="" className="w-full h-full object-cover" />
                         ) : (
                           activeRoom.name?.charAt(0) || 'U'
                         )}
@@ -1331,17 +1360,29 @@ const Chat = () => {
                           )}
 
                           <div className={`max-w-[88%] sm:max-w-[80%] md:max-w-[75%] min-w-0 w-fit ${isOwn ? 'ml-auto' : 'mr-auto'}`}>
-
                             {isEmojiMsg ? (
                               /* ─── UNIFORM DYNAMIC THEME EMOJI MESSAGE BUBBLE ─── */
                               <div
-                                onContextMenu={(e) => handleContextMenuTrigger(e, msg)}
+                                onContextMenu={(e) => openMessageMenu(e, msg)}
                                 onTouchStart={(e) => handleTouchStartTrigger(e, msg)}
                                 onTouchEnd={handleTouchEndTrigger}
-                                className={`inline-flex flex-col p-[10px_12px_8px_12px] rounded-[22px] transition-all duration-200 hover:-translate-y-[1px] bg-primary text-white shadow-md shadow-primary/20 ${isOwn ? 'rounded-br-[4px] ml-auto' : 'rounded-bl-[4px] mr-auto'
+                                className={`group/msg relative inline-flex flex-col p-[10px_12px_8px_12px] rounded-[22px] transition-all duration-200 hover:-translate-y-[1px] bg-primary text-white shadow-md shadow-primary/20 ${isOwn ? 'rounded-br-[4px] ml-auto' : 'rounded-bl-[4px] mr-auto'
                                   }`}
                                 style={{ width: 'fit-content', height: 'fit-content', maxWidth: '100%' }}
                               >
+                                {!msg.isDeleted && (
+                                  <div className="absolute top-2 right-2.5 opacity-0 group-hover/msg:opacity-100 transition-opacity z-20">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => openMessageMenu(e, msg)}
+                                      className="msg-options-btn p-1 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-md transition-all shadow-xs cursor-pointer"
+                                      title="Message options"
+                                    >
+                                      <MoreVertical className="h-3.5 w-3.5 text-white pointer-events-none" />
+                                    </button>
+                                  </div>
+                                )}
+
                                 {!isOwn && activeRoom.type !== 'DIRECT' && (
                                   <p
                                     className="text-[15px] font-bold mb-[6px] leading-[1.2] truncate select-none text-left w-full"
@@ -1369,7 +1410,7 @@ const Chat = () => {
                             ) : (
                               /* ─── UNIFORM DYNAMIC THEME TEXT / ATTACHMENT MESSAGE BUBBLE ─── */
                               <div
-                                onContextMenu={(e) => handleContextMenuTrigger(e, msg)}
+                                onContextMenu={(e) => openMessageMenu(e, msg)}
                                 onTouchStart={(e) => handleTouchStartTrigger(e, msg)}
                                 onTouchEnd={handleTouchEndTrigger}
                                 className={`group/msg relative inline-flex flex-col p-[10px_12px_8px_12px] rounded-[22px] transition-all duration-200 hover:-translate-y-[1px] bg-primary text-white shadow-md shadow-primary/20 max-w-full overflow-hidden ${isOwn ? 'rounded-br-[4px]' : 'rounded-bl-[4px]'
@@ -1380,59 +1421,12 @@ const Chat = () => {
                                   <div className="absolute top-2 right-2.5 opacity-0 group-hover/msg:opacity-100 transition-opacity z-20">
                                     <button
                                       type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setActiveMenuMsgId(activeMenuMsgId === msg.id ? null : msg.id);
-                                      }}
-                                      className="p-1 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-md transition-all shadow-xs"
+                                      onClick={(e) => openMessageMenu(e, msg)}
+                                      className="msg-options-btn p-1 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-md transition-all shadow-xs cursor-pointer"
                                       title="Message options"
                                     >
-                                      <MoreVertical className="h-3.5 w-3.5 text-white" />
+                                      <MoreVertical className="h-3.5 w-3.5 text-white pointer-events-none" />
                                     </button>
-
-                                    {activeMenuMsgId === msg.id && (
-                                      <div
-                                        className="absolute right-0 top-7 w-36 bg-slate-900/90 border border-white/20 backdrop-blur-xl rounded-xl shadow-2xl py-1 z-30 animate-in fade-in zoom-in-95 duration-150 text-white"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setReplyingTo(msg);
-                                            setActiveMenuMsgId(null);
-                                          }}
-                                          className="w-full px-3 py-2 text-left text-[13px] font-medium hover:bg-white/15 flex items-center gap-2 transition-colors text-white"
-                                        >
-                                          <Reply className="h-4 w-4 text-white" />
-                                          Reply
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            navigator.clipboard.writeText(msg.message || '');
-                                            setActiveMenuMsgId(null);
-                                          }}
-                                          className="w-full px-3 py-2 text-left text-[13px] font-medium hover:bg-white/15 flex items-center gap-2 transition-colors text-white"
-                                        >
-                                          <Copy className="h-4 w-4 text-white" />
-                                          Copy
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setDeleteTargetMsg(msg);
-                                            setDeleteMode(msg.senderId === currentUser?.id ? 'EVERYONE' : 'ME');
-                                            setActiveMenuMsgId(null);
-                                          }}
-                                          className="w-full px-3 py-2 text-left text-[13px] font-medium hover:bg-red-500/20 text-red-300 flex items-center gap-2 transition-colors border-t border-white/10"
-                                        >
-                                          <Trash2 className="h-4 w-4 text-red-400" />
-                                          Delete
-                                        </button>
-                                      </div>
-                                    )}
                                   </div>
                                 )}
                                 {!isOwn && activeRoom.type !== 'DIRECT' && (
@@ -2148,11 +2142,27 @@ const Chat = () => {
                   setReplyingTo(contextMenu.msg);
                   setContextMenu(null);
                 }}
-                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left"
+                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left cursor-pointer"
               >
                 <Reply className="h-4 w-4 text-primary shrink-0" />
                 <span>Reply</span>
               </button>
+
+              {/* Edit (Own Messages Only) */}
+              {(contextMenu.msg.senderId === currentUser?.id || contextMenu.msg.sender?.id === currentUser?.id) && !contextMenu.msg.attachmentUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingMsg(contextMenu.msg);
+                    setNewMessage(contextMenu.msg.message || '');
+                    setContextMenu(null);
+                  }}
+                  className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left cursor-pointer"
+                >
+                  <Edit3 className="h-4 w-4 text-primary shrink-0" />
+                  <span>Edit Message</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -2160,7 +2170,7 @@ const Chat = () => {
                   handleCopyAction(contextMenu.msg);
                   setContextMenu(null);
                 }}
-                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left"
+                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left cursor-pointer"
               >
                 <Copy className="h-4 w-4 text-primary shrink-0" />
                 <span>{isImageAttachment(contextMenu.msg) ? 'Copy Image' : 'Copy'}</span>
@@ -2172,11 +2182,26 @@ const Chat = () => {
                   setForwardTargetMsg(contextMenu.msg);
                   setContextMenu(null);
                 }}
-                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left"
+                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left cursor-pointer"
               >
                 <Forward className="h-4 w-4 text-primary shrink-0" />
                 <span>Forward</span>
               </button>
+
+              {/* Pin / Unpin (Admin & TL) */}
+              {(currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'TEAM_LEADER') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleTogglePinAction(contextMenu.msg);
+                    setContextMenu(null);
+                  }}
+                  className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left cursor-pointer"
+                >
+                  <Pin className="h-4 w-4 text-primary shrink-0" />
+                  <span>{contextMenu.msg.isPinned ? 'Unpin Message' : 'Pin Message'}</span>
+                </button>
+              )}
 
               {contextMenu.msg.attachmentUrl && (
                 <button
@@ -2185,7 +2210,7 @@ const Chat = () => {
                     handleSaveAsAction(contextMenu.msg);
                     setContextMenu(null);
                   }}
-                  className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left"
+                  className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left cursor-pointer"
                 >
                   <Save className="h-4 w-4 text-primary shrink-0" />
                   <span>Save As...</span>
@@ -2199,7 +2224,7 @@ const Chat = () => {
                     handleShareAction(contextMenu.msg);
                     setContextMenu(null);
                   }}
-                  className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left"
+                  className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left cursor-pointer"
                 >
                   <Share2 className="h-4 w-4 text-primary shrink-0" />
                   <span>Share</span>
@@ -2213,7 +2238,7 @@ const Chat = () => {
                   setSelectedMsgIds(new Set([contextMenu.msg.id]));
                   setContextMenu(null);
                 }}
-                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left"
+                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-white/90 hover:bg-primary/20 hover:text-primary transition-colors text-left cursor-pointer"
               >
                 <CheckSquare className="h-4 w-4 text-primary shrink-0" />
                 <span>Select</span>
@@ -2228,7 +2253,7 @@ const Chat = () => {
                   setDeleteMode(contextMenu.msg.senderId === currentUser?.id || currentUser?.role === 'ADMIN' ? 'EVERYONE' : 'ME');
                   setContextMenu(null);
                 }}
-                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-red-300 hover:bg-red-500/20 hover:text-red-200 transition-colors text-left"
+                className="w-full h-10 px-3 py-2 rounded-lg flex items-center gap-3 text-[13px] font-semibold text-red-300 hover:bg-red-500/20 hover:text-red-200 transition-colors text-left cursor-pointer"
               >
                 <Trash2 className="h-4 w-4 text-red-400 shrink-0" />
                 <span>Delete</span>

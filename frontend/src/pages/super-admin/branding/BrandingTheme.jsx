@@ -4,7 +4,7 @@ import {
   Palette, Upload, Image as ImageIcon, Trash2, CheckCircle2,
   Building2, Save, Sun, Moon, Sparkles, RefreshCw, AlertCircle
 } from 'lucide-react';
-import api from '../../../services/api';
+import api, { getUploadUrl } from '../../../services/api';
 import { useTheme } from '../../../context/ThemeContext';
 
 const THEME_PRESETS = [
@@ -232,7 +232,7 @@ const BrandingTheme = () => {
               <div className="h-14 w-14 rounded-xl border border-border/50 bg-card flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
                 {logoPreview ? (
                   <img
-                    src={logoPreview.startsWith('blob:') ? logoPreview : `${api.defaults.baseURL.replace('/api', '')}${logoPreview}`}
+                    src={getUploadUrl(logoPreview)}
                     alt="Company Logo Preview"
                     className="h-full w-full object-contain p-1"
                   />

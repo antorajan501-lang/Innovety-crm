@@ -38,10 +38,19 @@ api.interceptors.response.use(
 );
 
 export const getUploadUrl = (path) => {
-  if (!path) return '';
-  if (path.startsWith('http://') || path.startsWith('https://')) return encodeURI(path);
+  if (!path || typeof path !== 'string') return '';
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:') || path.startsWith('blob:')) {
+    return encodeURI(path);
+  }
+
+  let cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+  // Prepend /api if path starts with /uploads/ so reverse proxies (like Nginx) routing /api pass requests to backend
+  if (cleanPath.startsWith('/uploads/')) {
+    cleanPath = `/api${cleanPath}`;
+  }
+
   const backendServer = API_URL.replace(/\/api\/?$/, '');
-  const cleanPath = path.startsWith('/') ? path : `/${path}`;
   return encodeURI(`${backendServer}${cleanPath}`);
 };
 

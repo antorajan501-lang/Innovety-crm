@@ -3,7 +3,7 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { useTheme } from '../../context/ThemeContext';
-import api from '../../services/api';
+import api, { getUploadUrl } from '../../services/api';
 import {
   LayoutDashboard,
   Users,
@@ -41,12 +41,68 @@ import {
   Wrench,
   FileCode,
   ListTree,
-  Sparkles
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-import { getUploadUrl } from '../../services/api';
 import UserAvatar from '../common/UserAvatar';
+
+// Comprehensive Quick Navigation Module Registry with Partial Keyword Support & Role Security
+const QUICK_NAV_ITEMS = [
+  // Overview
+  { label: 'Dashboard', path: '/', keywords: ['dashboard', 'home', 'main', 'overview'], category: 'Overview', icon: LayoutDashboard, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'Platform Dashboard', path: '/super-admin/dashboard', keywords: ['super admin', 'platform dashboard', 'superadmin', 'control center'], category: 'Platform Control', icon: LayoutDashboard, roles: ['SUPER_ADMIN'] },
+  { label: 'My Profile', path: '/profile', keywords: ['profile', 'account', 'me', 'my profile', 'details'], category: 'Overview', icon: UserIcon, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+
+  // Workspaces & Tasks
+  { label: 'Projects', path: '/projects', keywords: ['projects', 'proj', 'project list', 'client projects'], category: 'Workspaces', icon: FolderOpen, roles: ['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE'] },
+  { label: 'Active Board', path: '/tasks?tab=Board', keywords: ['active board', 'board', 'kanban', 'active project', 'sprint', 'active'], category: 'Workspaces', icon: Layers, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'My Tasks / Task Board', path: '/tasks', keywords: ['tasks', 'task', 'task board', 'my tasks', 'todo'], category: 'Workspaces', icon: FileText, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'Backlog', path: '/tasks?tab=Backlog', keywords: ['backlog', 'task backlog', 'issues'], category: 'Workspaces', icon: FileText, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'Roadmap', path: '/tasks?tab=Timeline', keywords: ['roadmap', 'timeline', 'schedule', 'gantt'], category: 'Workspaces', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'Repositories', path: '/tasks?tab=Code', keywords: ['repositories', 'repo', 'git', 'code', 'github'], category: 'Workspaces', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'Integrations', path: '/tasks?tab=Development', keywords: ['integrations', 'webhooks', 'api', 'dev'], category: 'Workspaces', icon: Settings, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+
+  // Communication
+  { label: 'Chat Room', path: '/chat', keywords: ['chat', 'messages', 'chat room', 'messaging', 'dm', 'discussion'], category: 'Communication', icon: MessageSquare, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'Announcements', path: '/announcements', keywords: ['announcements', 'announcement', 'broadcast', 'news', 'notice'], category: 'Communication', icon: Megaphone, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+
+  // Operations
+  { label: 'My Work Logs', path: '/worklogs', keywords: ['work logs', 'worklogs', 'log', 'time tracking', 'hours'], category: 'Operations', icon: Clock, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'Attendance', path: '/attendance', keywords: ['attendance', 'atten', 'clock in', 'clock out', 'timesheet'], category: 'Operations', icon: Clock, roles: ['INTERN', 'TEAM_LEADER', 'EMPLOYEE'] },
+  { label: 'Attendance Audit', path: '/attendance-audit', keywords: ['attendance audit', 'attendance logs', 'attendance history', 'atten'], category: 'Operations', icon: Clock, roles: ['ADMIN', 'TEAM_LEADER'] },
+  { label: 'Apply Leave / Leave Management', path: '/leave-management', keywords: ['leave', 'leaves', 'apply leave', 'leave management', 'vacation', 'time off', 'pto'], category: 'Operations', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
+  { label: 'Ticket Desk', path: '/tickets', keywords: ['tickets', 'ticket', 'ticket desk', 'support', 'help', 'issue'], category: 'Operations', icon: Ticket, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+  { label: 'Assets', path: '/assets', keywords: ['assets', 'asset', 'hardware', 'laptop', 'inventory', 'devices'], category: 'Operations', icon: Laptop, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+
+  // Finance & Payroll
+  { label: 'Payroll', path: '/payroll/dashboard', keywords: ['payroll', 'pay', 'salary', 'finance', 'payroll dashboard'], category: 'Finance & Payroll', icon: BarChart3, roles: ['ADMIN', 'SUPER_ADMIN'] },
+  { label: 'My Payslips & Salary', path: '/my-payroll', keywords: ['payroll', 'pay', 'my payslips', 'salary', 'my payroll', 'payslip'], category: 'Finance & Payroll', icon: FileText, roles: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'] },
+  { label: 'Salary Templates', path: '/payroll/templates', keywords: ['salary templates', 'templates', 'payroll templates'], category: 'Finance & Payroll', icon: FileText, roles: ['ADMIN'] },
+  { label: 'Salary Structures', path: '/payroll/structures', keywords: ['salary structures', 'structures'], category: 'Finance & Payroll', icon: Users, roles: ['ADMIN'] },
+  { label: 'Payroll Processing', path: '/payroll/processing', keywords: ['payroll processing', 'process salary', 'disburse'], category: 'Finance & Payroll', icon: Layers, roles: ['ADMIN'] },
+  { label: 'Payslips Desk', path: '/payroll/payslips', keywords: ['payslips desk', 'all payslips', 'generate payslip'], category: 'Finance & Payroll', icon: FileCode, roles: ['ADMIN'] },
+  { label: 'Calendar / Holiday Calendar', path: '/payroll/holidays', keywords: ['calendar', 'holidays', 'holiday calendar', 'vacation calendar'], category: 'Finance & Payroll', icon: Calendar, roles: ['ADMIN'] },
+  { label: 'Payroll Reports', path: '/payroll/reports', keywords: ['payroll reports', 'financial reports'], category: 'Finance & Payroll', icon: BarChart3, roles: ['ADMIN', 'SUPER_ADMIN'] },
+
+  // System Control & Directories
+  { label: 'Employees Directory', path: '/employees', keywords: ['employees', 'emp', 'employee directory', 'staff'], category: 'System Control', icon: Users, roles: ['ADMIN'] },
+  { label: 'Interns Directory', path: '/interns', keywords: ['interns', 'intern', 'intern directory'], category: 'System Control', icon: Users, roles: ['ADMIN'] },
+  { label: 'Team Leaders Directory', path: '/team-leaders', keywords: ['team leaders', 'tl', 'leads', 'managers'], category: 'System Control', icon: Users, roles: ['ADMIN'] },
+  { label: 'Teams', path: '/teams', keywords: ['teams', 'departments', 'groups'], category: 'System Control', icon: Briefcase, roles: ['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE'] },
+  { label: 'Reports', path: '/reports', keywords: ['reports', 'analytics', 'metrics'], category: 'System Control', icon: BarChart3, roles: ['ADMIN', 'TEAM_LEADER'] },
+  { label: 'Audit Logs', path: '/audit-logs', keywords: ['audit logs', 'audit', 'activity log', 'history'], category: 'System Control', icon: History, roles: ['ADMIN'] },
+  { label: 'Settings', path: '/settings', keywords: ['settings', 'site settings', 'config', 'preferences'], category: 'System Control', icon: Settings, roles: ['ADMIN'] },
+
+  // Super Admin Control & Builder
+  { label: 'Users Directory', path: '/super-admin/users', keywords: ['users directory', 'all users', 'superadmin users'], category: 'Platform Control', icon: Users, roles: ['SUPER_ADMIN'] },
+  { label: 'Team Directory', path: '/super-admin/teams', keywords: ['team directory', 'superadmin teams'], category: 'Platform Control', icon: Briefcase, roles: ['SUPER_ADMIN'] },
+  { label: 'Admin Management', path: '/super-admin/admins', keywords: ['admin management', 'admins', 'admin list'], category: 'Platform Control', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
+  { label: 'Branding & Theme', path: '/super-admin/branding', keywords: ['branding', 'theme', 'logo', 'colors'], category: 'Platform Control', icon: Sparkles, roles: ['SUPER_ADMIN'] },
+  { label: 'Form Builder', path: '/super-admin/platform-builder/forms', keywords: ['form builder', 'builder', 'forms'], category: 'Platform Control', icon: FileCode, roles: ['SUPER_ADMIN'] },
+  { label: 'Menu Builder', path: '/super-admin/platform-builder/menus', keywords: ['menu builder', 'menus', 'navigation builder'], category: 'Platform Control', icon: ListTree, roles: ['SUPER_ADMIN'] }
+];
 
 const DashboardLayout = ({ children }) => {
   const navigate = useNavigate();
@@ -63,6 +119,7 @@ const DashboardLayout = ({ children }) => {
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
 
   const isExpanded = isPinned || isHovered || sidebarOpen;
@@ -75,6 +132,53 @@ const DashboardLayout = ({ children }) => {
   };
 
   const profileRef = useRef(null);
+  const searchRef = useRef(null);
+
+  const userRoleUpper = String(user?.role || '').toUpperCase();
+
+  // Instant Client-Side Filter for Quick Navigation Modules with Role Permission Safety & Partial Keyword Matching
+  const navSearchResults = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+
+    return QUICK_NAV_ITEMS.filter((item) => {
+      // 1. Role Permission check
+      const hasPermission = item.roles.includes(userRoleUpper);
+      if (!hasPermission) return false;
+
+      // 2. Partial matching on label, category, path, or keywords
+      const labelMatch = item.label.toLowerCase().includes(q);
+      const categoryMatch = item.category.toLowerCase().includes(q);
+      const pathMatch = item.path.toLowerCase().includes(q);
+      const keywordMatch = item.keywords.some((kw) => kw.toLowerCase().includes(q));
+
+      return labelMatch || categoryMatch || pathMatch || keywordMatch;
+    });
+  }, [searchQuery, userRoleUpper]);
+
+  // Handle outside click for Search Dropdown
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setSearchDropdownOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', handleOutsideClick, true);
+    return () => document.removeEventListener('pointerdown', handleOutsideClick, true);
+  }, []);
+
+  const handleQuickNavSubmit = (e) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+
+    if (navSearchResults.length > 0) {
+      navigate(navSearchResults[0].path);
+      setSearchDropdownOpen(false);
+      setSearchQuery('');
+    } else {
+      setSearchDropdownOpen(true);
+    }
+  };
 
   // Handle outside click, Esc key, and scroll dismissal for Profile Dropdown
   useEffect(() => {
@@ -425,7 +529,7 @@ const DashboardLayout = ({ children }) => {
               <Link to={user?.role === 'SUPER_ADMIN' ? '/super-admin/dashboard' : '/'} className="flex items-center gap-2.5 pr-3 border-r border-border/40 shrink-0">
                 {companyLogo ? (
                   <img
-                    src={companyLogo.startsWith('blob:') ? companyLogo : `${api.defaults.baseURL.replace('/api', '')}${companyLogo}`}
+                    src={getUploadUrl(companyLogo)}
                     alt={companyName || 'Logo'}
                     className="h-9 max-w-[170px] object-contain shrink-0"
                   />
@@ -449,26 +553,90 @@ const DashboardLayout = ({ children }) => {
               </div>
             </div>
 
-            {/* Center: Extended Global Search Bar Berth (Centered) */}
-            <div className="hidden md:flex flex-1 items-center justify-center max-w-2xl mx-6 sm:mx-8">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (searchQuery.trim()) {
-                    navigate(`/tasks?search=${encodeURIComponent(searchQuery)}`);
-                  }
-                }}
-                className="relative w-full"
-              >
+            {/* Center: Quick Navigation Search Bar Berth */}
+            <div className="hidden md:flex flex-1 items-center justify-center max-w-2xl mx-6 sm:mx-8 relative" ref={searchRef}>
+              <form onSubmit={handleQuickNavSubmit} className="relative w-full">
                 <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Search resources, tasks, employees, tickets..."
+                  placeholder="Quick Search: type 'atten', 'proj', 'chat', 'pay', 'leave'..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 text-xs font-medium rounded-2xl border border-border/60 bg-muted/40 hover:bg-muted/60 focus:bg-background focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all shadow-inner"
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setSearchDropdownOpen(true);
+                  }}
+                  onFocus={() => {
+                    if (searchQuery.trim()) setSearchDropdownOpen(true);
+                  }}
+                  className="w-full pl-10 pr-10 py-2 text-xs font-medium rounded-2xl border border-border/60 bg-muted/40 hover:bg-muted/60 focus:bg-background focus:border-primary/50 focus:ring-2 focus:ring-primary/20 transition-all shadow-inner"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSearchDropdownOpen(false);
+                    }}
+                    className="absolute right-3.5 top-2.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
               </form>
+
+              {/* Quick Navigation Dropdown Popover */}
+              {searchDropdownOpen && searchQuery.trim() && (
+                <div className="absolute top-full left-0 right-0 mt-2 z-50 rounded-2xl border border-border/80 bg-white dark:bg-slate-900 p-3 shadow-2xl animate-in fade-in slide-in-from-top-2 duration-150 max-h-96 overflow-y-auto">
+                  {navSearchResults.length === 0 ? (
+                    <div className="py-6 text-center text-xs text-muted-foreground font-semibold">
+                      <p>No matching page found.</p>
+                      <p className="text-[11px] font-normal text-muted-foreground/70 mt-1">
+                        Try typing a page name like "Attendance", "Projects", "Leave", "Tasks", "Chat", or "Payroll".
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="px-2 py-1 text-[10px] font-extrabold uppercase text-muted-foreground tracking-wider border-b border-border/40 mb-1 flex items-center justify-between">
+                        <span>Matching Navigation Modules ({navSearchResults.length})</span>
+                        <span>Click or Press Enter to Navigate</span>
+                      </div>
+                      {navSearchResults.map((item, idx) => {
+                        const IconComponent = item.icon || Search;
+                        return (
+                          <div
+                            key={idx}
+                            onClick={() => {
+                              navigate(item.path);
+                              setSearchDropdownOpen(false);
+                              setSearchQuery('');
+                            }}
+                            className="flex items-center justify-between p-2.5 rounded-xl hover:bg-primary/10 cursor-pointer transition-colors group"
+                          >
+                            <div className="flex items-center gap-3 overflow-hidden">
+                              <div className="p-2 rounded-lg bg-muted group-hover:bg-primary group-hover:text-white transition-colors shrink-0">
+                                <IconComponent className="h-4 w-4" />
+                              </div>
+                              <div className="truncate">
+                                <p className="text-xs font-bold text-foreground group-hover:text-primary transition-colors truncate">
+                                  {item.label}
+                                </p>
+                                <p className="text-[11px] text-muted-foreground font-mono truncate">{item.path}</p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0 ml-2">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase tracking-wider bg-muted text-muted-foreground group-hover:bg-primary/20 group-hover:text-primary transition-colors">
+                                {item.category}
+                              </span>
+                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary group-hover:translate-x-0.5 transition-all" />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Right: Tools & User Profile */}

@@ -86,12 +86,32 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const requestPasswordReset = async (userId) => {
+  const requestPasswordReset = async (email) => {
     try {
-      const res = await api.post('/auth/forgot-password', { userId, employeeId: userId, email: userId });
-      return { success: true, message: res.data.message, tempPassword: res.data.tempPassword };
+      const res = await api.post('/auth/forgot-password', { email });
+      return { success: true, message: res.data.message };
     } catch (error) {
-      const msg = error.response?.data?.message || 'Failed to process password reset.';
+      const msg = error.response?.data?.message || 'Failed to process password reset request.';
+      return { success: false, message: msg };
+    }
+  };
+
+  const verifyResetOtp = async (email, otp) => {
+    try {
+      const res = await api.post('/auth/verify-reset-otp', { email, otp });
+      return { success: true, message: res.data.message, resetToken: res.data.resetToken };
+    } catch (error) {
+      const msg = error.response?.data?.message || 'Failed to verify OTP.';
+      return { success: false, message: msg };
+    }
+  };
+
+  const resetPasswordWithToken = async (email, resetToken, newPassword, confirmPassword) => {
+    try {
+      const res = await api.post('/auth/reset-password', { email, resetToken, newPassword, confirmPassword });
+      return { success: true, message: res.data.message };
+    } catch (error) {
+      const msg = error.response?.data?.message || 'Failed to reset password.';
       return { success: false, message: msg };
     }
   };
@@ -105,7 +125,9 @@ export const AuthProvider = ({ children }) => {
     logout,
     updateProfile,
     changePassword,
-    requestPasswordReset
+    requestPasswordReset,
+    verifyResetOtp,
+    resetPasswordWithToken
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

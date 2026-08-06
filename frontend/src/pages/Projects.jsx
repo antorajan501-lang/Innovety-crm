@@ -64,7 +64,13 @@ const Projects = () => {
   });
 
   const [activeTab, setActiveTab] = useState('ALL');
-  const [searchQuery, setSearchQuery] = useState('');
+  const urlSearch = new URLSearchParams(location.search).get('search') || '';
+  const [searchQuery, setSearchQuery] = useState(urlSearch);
+
+  useEffect(() => {
+    const sParam = new URLSearchParams(location.search).get('search') || '';
+    setSearchQuery(sParam);
+  }, [location.search]);
 
   // Modals state
   const [createModalOpen, setCreateModalOpen] = useState(false);

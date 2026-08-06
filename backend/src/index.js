@@ -70,8 +70,8 @@ app.use(express.urlencoded({ extended: true }));
 const fs = require('fs');
 const { authenticate } = require('./middleware/auth');
 
-// Serve static upload directories with headers
-app.use('/uploads', express.static(path.join(__dirname, '../uploads'), {
+// Serve static upload directories with headers (supports both /uploads and /api/uploads for Nginx reverse proxies)
+app.use(['/uploads', '/api/uploads'], express.static(path.join(__dirname, '../uploads'), {
   setHeaders: (res, filePath) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'public, max-age=31536000');
@@ -134,7 +134,6 @@ app.get('/api/download-file', authenticate, (req, res) => {
 const superAdminRoutes = require('./routes/superAdminRoutes');
 const platformBuilderRoutes = require('./routes/platformBuilderRoutes');
 
-// Mount API routes
 app.use('/api/super-admin/platform-builder', platformBuilderRoutes);
 app.use('/api/super-admin', superAdminRoutes);
 app.get('/api/platform/settings', async (req, res) => {

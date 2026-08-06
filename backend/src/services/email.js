@@ -355,11 +355,54 @@ const sendTeamTaskAssignmentEmail = async (team, task, creator, leader, members)
   }
 };
 
+const sendPasswordResetOtpEmail = async (user, otp) => {
+  const mailTransporter = await getTransporter();
+  const companyName = process.env.COMPANY_NAME || 'Innoveity';
+
+  const mailOptions = {
+    from: `"${companyName}" <${process.env.SENDER_EMAIL || 'no-reply@enterprise-crm.com'}>`,
+    to: user.email,
+    subject: `${companyName} Password Reset OTP`,
+    text: `Hello ${user.name},\n\n` +
+          `Your password reset OTP is:\n\n` +
+          `  ${otp}\n\n` +
+          `This OTP is valid for 5 minutes. Do not share this OTP with anyone.\n\n` +
+          `If you did not request a password reset, please ignore this email or contact support if you have concerns.\n\n` +
+          `Regards,\n` +
+          `${companyName} Team`,
+    html: `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">` +
+          `<h2 style="color: #4f46e5; margin-bottom: 16px; font-size: 20px;">Password Reset OTP</h2>` +
+          `<p style="font-size: 15px; color: #334155;">Hello <strong>${user.name}</strong>,</p>` +
+          `<p style="font-size: 14px; color: #475569;">You recently requested to reset your password for your <strong>${companyName}</strong> account. Use the OTP below to complete your verification:</p>` +
+          `<div style="background-color: #f1f5f9; border-left: 4px solid #4f46e5; padding: 16px; border-radius: 8px; margin: 24px 0; text-align: center;">` +
+          `  <span style="font-family: monospace; font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #0f172a;">${otp}</span>` +
+          `</div>` +
+          `<p style="font-size: 13px; color: #64748b;"><strong>Note:</strong> This OTP will expire in <strong>5 minutes</strong>. If you did not request a password reset, please ignore this email.</p>` +
+          `<hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />` +
+          `<p style="font-size: 12px; color: #94a3b8; margin: 0;">Regards,<br/><strong>${companyName} Security Team</strong></p>` +
+          `</div>`
+  };
+
+  try {
+    const info = await mailTransporter.sendMail(mailOptions);
+    console.log(`Password reset OTP email sent to ${user.email} (Message ID: ${info.messageId})`);
+    const previewUrl = nodemailer.getTestMessageUrl(info);
+    if (previewUrl) {
+      console.log(`Ethereal OTP Email Preview URL: ${previewUrl}`);
+    }
+    return info;
+  } catch (error) {
+    console.error(`Failed to send OTP email to ${user.email}:`, error);
+    throw error;
+  }
+};
+
 module.exports = {
   sendWelcomeEmail,
   sendTaskAssignmentEmail,
   sendNewTicketNotificationEmail,
   sendTicketUpdateEmail,
   sendTaskStatusUpdateEmail,
-  sendTeamTaskAssignmentEmail
+  sendTeamTaskAssignmentEmail,
+  sendPasswordResetOtpEmail
 };

@@ -169,6 +169,12 @@ const createUser = async (req, res) => {
       }
     }
 
+    console.log('[createUser] Successfully created user:', {
+      createdEmployeeId: newUser.employeeId,
+      createdUserId: newUser.id,
+      role: newUser.role
+    });
+
     // Sync user with Company Chat Room
     await addUserToCompanyChat(newUser.id);
 
@@ -180,10 +186,11 @@ const createUser = async (req, res) => {
     await logActivity({
       userId: req.user.id,
       action: 'USER_CREATE',
-      details: `Created new user ${newUser.name} (${employeeId}) with role ${role}`
+      details: `Created new user ${newUser.name} (${newUser.employeeId}) with role ${role}`
     });
 
     const { password: _, ...userWithoutPassword } = newUser;
+    console.log('[createUser] Returning success response');
     res.status(201).json(userWithoutPassword);
   } catch (error) {
     console.error('Create user error:', error);
