@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { createTask, getTasks, getTaskById, updateTaskStatus, submitTask, addComment, updateTask, createSubtask, toggleSubtask, deleteSubtask, deleteTask } = require('../controllers/taskController');
+const { submitForReview, approveTask, rejectTask, retryTask, getTaskReviewHistory } = require('../controllers/taskReviewController');
 const { authenticate, requireRole } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
@@ -14,6 +15,13 @@ router.delete('/:id', requireRole(['ADMIN', 'TEAM_LEADER']), deleteTask);
 router.put('/:id/status', updateTaskStatus);
 router.post('/:id/submit', requireRole(['INTERN', 'EMPLOYEE']), upload.array('files', 5), submitTask);
 router.post('/:id/comment', addComment);
+
+// Task Review Workflow Routes
+router.post('/:id/submit-review', submitForReview);
+router.post('/:id/approve', approveTask);
+router.post('/:id/reject', rejectTask);
+router.post('/:id/retry', retryTask);
+router.get('/:id/review-history', getTaskReviewHistory);
 
 // Subtasks routes
 router.post('/:id/subtasks', createSubtask);

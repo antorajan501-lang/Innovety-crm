@@ -153,6 +153,42 @@ model User {
   resetTokenExpiry        DateTime?
   otpHourlyCount          Int              @default(0)
   otpHourlyWindowStart    DateTime?
+
+  // Organization Structure Relations & Fields
+  positionId              String?
+  position                Position?              @relation("UserPosition", fields: [positionId], references: [id], onDelete: SetNull)
+  branchId                String?
+  branch                  OrgBranch?             @relation("UserBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  departmentId            String?
+  departmentRef           DepartmentMaster?      @relation("UserDepartment", fields: [departmentId], references: [id], onDelete: SetNull)
+  designationId           String?
+  designationRef          DesignationMaster?     @relation("UserDesignation", fields: [designationId], references: [id], onDelete: SetNull)
+  reportingManagerId      String?
+  reportingManager        User?                  @relation("ReportingHierarchy", fields: [reportingManagerId], references: [id], onDelete: SetNull)
+  subordinates            User[]                 @relation("ReportingHierarchy")
+  gender                  String?
+  shiftId                 String?
+  shiftRef                ShiftMaster?           @relation("UserShift", fields: [shiftId], references: [id], onDelete: SetNull)
+  employmentType          String?
+  probationPeriod         String?
+
+  // Future-Ready Enterprise Placeholders
+  grade                   String?
+  jobLevel                String?
+  costCenter              String?
+  businessUnit            String?
+  workLocation            String?
+  promotionEligible       Boolean                @default(false)
+  promotionDate           DateTime?
+
+  // Position History
+  positionHistories       PositionHistory[]      @relation("UserPositionHistory")
+  changedPositionHistories PositionHistory[]     @relation("ChangedByPositionHistory")
+
+  // Promotion History
+  promotionHistories      PromotionHistory[]     @relation("UserPromotionHistory")
+  promotionsPerformed     PromotionHistory[]     @relation("PromotedByHistory")
+
   createdAt               DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
@@ -162,6 +198,8 @@ model User {
   attendances      Attendance[]
   assignedTasks    Task[]           @relation("TaskAssignee")
   createdTasks     Task[]           @relation("TaskCreator")
+  reviewedTasks    Task[]           @relation("TaskReviewer")
+  createdReviewHistory TaskReviewHistory[] @relation("TaskReviewHistoryCreator")
   submissions      TaskSubmission[]
   raisedTickets    Ticket[]         @relation("TicketCreator")
   assignedTickets  Ticket[]         @relation("TicketAssignee")
@@ -171,6 +209,8 @@ model User {
   activityLogs     ActivityLog[]
   comments         Comment[]
   leaves           LeaveRequest[]   @relation("UserLeaves")
+  userLeaveBalances UserLeaveBalance[]
+  leaveCreditHistories LeaveCreditHistory[]
   assignedAssets        Asset[]           @relation("UserAssignedAssets")
   assetAssignmentHistory AssetAssignment[] @relation("UserAssignmentHistory")
   assetAssignedByHistory AssetAssignment[] @relation("UserAssignedByHistory")
@@ -193,7 +233,128 @@ model User {
   performedRevisions       SalaryRevision[]  @relation("RevisedByRevisions")
   payslips                 Payslip[]         @relation("UserPayslips")
   processedBatches         PayrollBatch[]    @relation("ProcessedBatches")
+  stageApprovals           ProjectWorkflowStage[]   @relation("StageApprover")
+  requestedStageAudits     TaskStageApprovalAudit[] @relation("StageAuditRequestedBy")
+  approvedStageAudits      TaskStageApprovalAudit[] @relation("StageAuditApprovedBy")
 }
+
+model Position {
+  id          String            @id @default(uuid())
+  name        String            @unique
+  code        String            @unique
+  level       Int               @unique
+  description String?
+  color       String            @default("#4F46E5")
+  textColor   String            @default("#FFFFFF")
+  icon        String            @default("Award")
+  priority    Int               @default(0)
+  sortOrder   Int               @default(0)
+  status      String            @default("ACTIVE") // ACTIVE, INACTIVE
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  users       User[]            @relation("UserPosition")
+  oldInHistory PositionHistory[] @relation("OldPositionHistory")
+  newInHistory PositionHistory[] @relation("NewPositionHistory")
+  prevInPromotions PromotionHistory[] @relation("PrevPromotionPosition")
+  nextInPromotions PromotionHistory[] @relation("NextPromotionPosition")
+}
+
+model PositionHistory {
+  id            String    @id @default(uuid())
+  userId        String
+  oldPositionId String?
+  newPositionId String?
+  changedById   String?
+  effectiveDate DateTime  @default(now())
+  reason        String?
+  createdAt     DateTime  @default(now())
+
+  user          User      @relation("UserPositionHistory", fields: [userId], references: [id], onDelete: Cascade)
+  oldPosition   Position? @relation("OldPositionHistory", fields: [oldPositionId], references: [id], onDelete: SetNull)
+  newPosition   Position? @relation("NewPositionHistory", fields: [newPositionId], references: [id], onDelete: SetNull)
+  changedBy     User?     @relation("ChangedByPositionHistory", fields: [changedById], references: [id], onDelete: SetNull)
+}
+
+model PromotionHistory {
+  id                 String    @id @default(uuid())
+  userId             String
+  previousRole       Role
+  newRole            Role
+  previousPositionId String?
+  newPositionId     String?
+  previousEmployeeId String
+  newEmployeeId     String
+  promotedById       String?
+  promotionReason    String?
+  effectiveDate      DateTime  @default(now())
+  createdAt          DateTime  @default(now())
+
+  user               User      @relation("UserPromotionHistory", fields: [userId], references: [id], onDelete: Cascade)
+  previousPosition   Position? @relation("PrevPromotionPosition", fields: [previousPositionId], references: [id], onDelete: SetNull)
+  newPosition        Position? @relation("NextPromotionPosition", fields: [newPositionId], references: [id], onDelete: SetNull)
+  promotedBy         User?     @relation("PromotedByHistory", fields: [promotedById], references: [id], onDelete: SetNull)
+}
+
+model OrgBranch {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  code      String   @unique
+  city      String?
+  country   String?  @default("India")
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]   @relation("UserBranch")
+}
+
+model DepartmentMaster {
+  id           String              @id @default(uuid())
+  name         String              @unique
+  code         String              @unique
+  description  String?
+  status       String              @default("ACTIVE")
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  users        User[]              @relation("UserDepartment")
+  designations DesignationMaster[]
+}
+
+model DesignationMaster {
+  id           String            @id @default(uuid())
+  name         String            @unique
+  code         String            @unique
+  departmentId String?
+  status       String            @default("ACTIVE")
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  department   DepartmentMaster? @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  users        User[]            @relation("UserDesignation")
+}
+
+model ShiftMaster {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  startTime String   @default("09:30")
+  endTime   String   @default("18:30")
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]   @relation("UserShift")
+}
+
+model EmploymentTypeMaster {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 
 model Team {
   id          String       @id @default(uuid())
@@ -229,8 +390,8 @@ model Attendance {
   id               String           @id @default(uuid())
   userId           String
   date             DateTime         @db.Date
-  clockIn          DateTime
-  clockOut     DateTime?
+  clockIn          DateTime?
+  clockOut         DateTime?
   clockInLocation  String?
   clockOutLocation String?
   ipAddress    String?
@@ -264,26 +425,38 @@ model Task {
   storyPoints Int?         @default(0)
   sprintName     String?
   projectId      String?
-  milestoneId    String?
-  estimatedHours Float?          @default(0)
-  actualHours    Float?          @default(0)
-  approvalStatus ApprovalStatus  @default(NOT_REQUIRED)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  milestoneId          String?
+  estimatedHours       Float?                   @default(0)
+  actualHours          Float?                   @default(0)
+  approvalStatus       ApprovalStatus           @default(NOT_REQUIRED)
+  stageId              String?
+  stageApprovalStatus  ApprovalStatus           @default(NOT_REQUIRED)
+  reviewStatus         String                   @default("PENDING") // PENDING, APPROVED, REJECTED, RESUBMITTED
+  correctionText       String?
+  correctionAudioUrl   String?
+  reviewedById         String?
+  reviewedAt           DateTime?
+  resubmittedAt        DateTime?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
 
-  team           Team?             @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  project        Project?          @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  milestone      ProjectMilestone? @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
-  assignee       User              @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
-  creator        User              @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: Cascade)
-  submissions    TaskSubmission[]
-  comments       Comment[]
-  history        TaskHistory[]
-  subtasks       Subtask[]
-  chatRooms      ChatRoom[]
-  dependents     TaskDependency[]  @relation("TaskDependents")
-  prerequisites  TaskDependency[]  @relation("TaskPrerequisites")
-  workLogs       WorkLog[]
+  team                 Team?                    @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  project              Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  milestone            ProjectMilestone?        @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  stage                ProjectWorkflowStage?    @relation("TaskStage", fields: [stageId], references: [id], onDelete: SetNull)
+  assignee             User                     @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: Cascade)
+  creator              User                     @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  reviewedBy           User?                    @relation("TaskReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  submissions          TaskSubmission[]
+  comments             Comment[]
+  history              TaskHistory[]
+  reviewHistory        TaskReviewHistory[]
+  subtasks             Subtask[]
+  chatRooms            ChatRoom[]
+  dependents           TaskDependency[]         @relation("TaskDependents")
+  prerequisites        TaskDependency[]         @relation("TaskPrerequisites")
+  workLogs             WorkLog[]
+  stageApprovalAudits  TaskStageApprovalAudit[]
 }
 
 model TaskSubmission {
@@ -303,10 +476,25 @@ model Comment {
   taskId    String
   userId    String
   text      String
+  audioUrl  String?
+  type      String?  @default("TEXT") // TEXT, AUDIO
   createdAt DateTime @default(now())
 
   task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model TaskReviewHistory {
+  id           String   @id @default(uuid())
+  taskId       String
+  action       String   // SUBMITTED, APPROVED, REJECTED, RESUBMITTED
+  message      String?
+  audioUrl     String?
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  createdBy    User     @relation("TaskReviewHistoryCreator", fields: [createdById], references: [id], onDelete: Cascade)
 }
 
 model TaskHistory {
@@ -537,6 +725,82 @@ model LeaveRequest {
   user                User     @relation("UserLeaves", fields: [userId], references: [id], onDelete: Cascade)
 }
 
+enum LeaveAllocationType {
+  ANNUAL
+  MONTHLY
+}
+
+model LeavePolicy {
+  id                  String               @id @default(uuid())
+  isGlobal            Boolean              @default(true)
+  allocationType      LeaveAllocationType  @default(ANNUAL)
+  carryForwardEnabled Boolean              @default(true)
+  maxCarryForwardDays Float                @default(5.0)
+  halfDayAllowed      Boolean              @default(true)
+  workingDaysOnly     Boolean              @default(true)
+  autoApproval        Boolean              @default(false)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+}
+
+model LeaveType {
+  id                String               @id @default(uuid())
+  name              String               @unique
+  code              String               @unique
+  description       String?
+  color             String               @default("#3B82F6")
+  icon              String               @default("Calendar")
+  displayOrder      Int                  @default(0)
+  isPaid            Boolean              @default(true)
+  annualDays        Float                @default(12.0)
+  monthlyCreditDays Float                @default(1.0)
+  allowCarryForward Boolean              @default(false)
+  requireDoc        Boolean              @default(false)
+  allowHalfDay      Boolean              @default(true)
+  isSystem          Boolean              @default(false) // Protects system default types
+  isActive          Boolean              @default(true)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  userBalances      UserLeaveBalance[]
+  creditHistories   LeaveCreditHistory[]
+}
+
+model UserLeaveBalance {
+  id             String    @id @default(uuid())
+  userId         String
+  leaveTypeId    String
+  allocated      Float     @default(0.0)
+  used           Float     @default(0.0)
+  pending        Float     @default(0.0)
+  available      Float     @default(0.0)
+  carryForward   Float     @default(0.0)
+  expired        Float     @default(0.0)
+  lastCreditedAt DateTime?
+  updatedAt      DateTime  @updatedAt
+
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaveType      LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, leaveTypeId])
+}
+
+model LeaveCreditHistory {
+  id           String    @id @default(uuid())
+  userId       String
+  leaveTypeId  String
+  creditedDays Float
+  creditedOn   DateTime  @default(now())
+  month        Int
+  year         Int
+  note         String?
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leaveType    LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, leaveTypeId, month, year])
+}
+
 model Branch {
   id           String     @id @default(uuid())
   repoId       String
@@ -621,6 +885,7 @@ model Project {
   milestones         ProjectMilestone[]
   history            ProjectHistory[]
   workLogs           WorkLog[]
+  workflowStages     ProjectWorkflowStage[]
 }
 
 model ProjectMember {
@@ -1099,6 +1364,45 @@ model Payslip {
   user               User               @relation("UserPayslips", fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([batchId, userId])
+}
+
+model ProjectWorkflowStage {
+  id               String                 @id @default(uuid())
+  projectId        String
+  name             String
+  color            String                 @default("#6366F1")
+  order            Int                    @default(0)
+  requiresApproval Boolean                @default(false)
+  approverRole     String?                // PROJECT_LEADER, ADMIN, ASSIGNED_LEADER
+  approverId       String?
+  isCompletedStage Boolean                @default(false)
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  project          Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  approver         User?                  @relation("StageApprover", fields: [approverId], references: [id], onDelete: SetNull)
+  tasks            Task[]                 @relation("TaskStage")
+  approvalAudits   TaskStageApprovalAudit[]
+
+  @@unique([projectId, name])
+}
+
+model TaskStageApprovalAudit {
+  id            String               @id @default(uuid())
+  taskId        String
+  stageId       String
+  requestedById String
+  approvedById  String?
+  status        ApprovalStatus       @default(PENDING)
+  approvedAt    DateTime?
+  rejectedAt    DateTime?
+  comment       String?
+  createdAt     DateTime             @default(now())
+
+  task          Task                 @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  stage         ProjectWorkflowStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  requestedBy   User                 @relation("StageAuditRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
+  approvedBy    User?                @relation("StageAuditApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
 }
 
 

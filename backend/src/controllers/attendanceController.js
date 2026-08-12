@@ -306,50 +306,235 @@ const clockOut = async (req, res) => {
   }
 };
 
+// Helper to check if shift/attendance day has ended for a given target date
+const isShiftEndedForDate = (targetDateObj, now, settings) => {
+  const timeZone = getSystemTimeZone(settings);
+  const todayZoned = getTodayZonedDate(now, timeZone);
+
+  // If target date is strictly in the past, day has ended
+  if (targetDateObj.getTime() < todayZoned.getTime()) {
+    return true;
+  }
+  // If target date is in the future, shift has not ended
+  if (targetDateObj.getTime() > todayZoned.getTime()) {
+    return false;
+  }
+
+  // If target date is today, check if current time is past shift end window (default 18:00 IST)
+  const shiftEndHour = settings?.shiftEndHour !== undefined ? settings.shiftEndHour : 18;
+  const shiftEndMinute = settings?.shiftEndMinute !== undefined ? settings.shiftEndMinute : 0;
+
+  const currentH = now.getHours();
+  const currentM = now.getMinutes();
+
+  if (currentH > shiftEndHour || (currentH === shiftEndHour && currentM >= shiftEndMinute)) {
+    return true;
+  }
+
+  return false;
+};
+
 const getAttendanceLogs = async (req, res) => {
   try {
-    const { userId, startDate, endDate } = req.query;
-    const where = {};
+    const { userId, status, startDate, endDate } = req.query;
+    const settings = await getOrCreateSystemSettings();
+    const timeZone = getSystemTimeZone(settings);
+    const now = new Date();
+    const todayZoned = getTodayZonedDate(now, timeZone);
 
-    if (startDate || endDate) {
-      where.date = {};
-      if (startDate) where.date.gte = new Date(startDate);
-      if (endDate) where.date.lte = new Date(endDate);
+    // 1. Determine Date Range (Clamped to TODAY maximum)
+    let minDate = startDate ? new Date(startDate) : todayZoned;
+    let maxDate = endDate ? new Date(endDate) : todayZoned;
+
+    if (minDate > maxDate) {
+      const temp = minDate;
+      minDate = maxDate;
+      maxDate = temp;
     }
 
+    // STRICT RULE: Attendance Audit Maximum Date = TODAY
+    if (maxDate > todayZoned) {
+      maxDate = todayZoned;
+    }
+
+    // If requested range is entirely in the future, return empty list immediately
+    if (minDate > todayZoned) {
+      return res.json([]);
+    }
+
+    // Generate array of distinct dates within [minDate, maxDate], excluding future dates
+    const dateList = [];
+    const curr = new Date(minDate);
+    while (curr <= maxDate && curr <= todayZoned) {
+      dateList.push(new Date(curr));
+      curr.setDate(curr.getDate() + 1);
+    }
+
+    // 2. Determine Active Users Scope (Strictly Attendance-Eligible Roles ONLY)
+    let userWhere = {
+      status: 'ACTIVE',
+      role: { in: ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'] }
+    };
     if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
-      where.userId = req.user.id;
+      userWhere.id = req.user.id;
     } else if (req.user.role === 'TEAM_LEADER') {
-      if (userId) {
-        const member = await prisma.teamMember.findFirst({
-          where: {
-            userId,
-            team: { leaderId: req.user.id }
-          }
-        });
-        if (!member) {
-          return res.status(403).json({ message: 'Unauthorized to view this user\'s attendance.' });
-        }
-        where.userId = userId;
+      if (userId && userId !== 'ALL' && userId !== '') {
+        userWhere.id = userId;
       } else {
         const teamMembers = await prisma.teamMember.findMany({
           where: { team: { leaderId: req.user.id } }
         });
-        where.userId = { in: teamMembers.map((m) => m.userId) };
+        const allowedIds = teamMembers.map((m) => m.userId);
+        allowedIds.push(req.user.id);
+        userWhere.id = { in: allowedIds };
       }
-    } else if (req.user.role === 'ADMIN' && userId) {
-      where.userId = userId;
+    } else if ((req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN') && userId && userId !== 'ALL' && userId !== '') {
+      userWhere.id = userId;
     }
 
-    const logs = await prisma.attendance.findMany({
-      where,
-      include: {
-        user: { select: { id: true, name: true, employeeId: true, email: true, department: true } }
+    const activeUsers = await prisma.user.findMany({
+      where: userWhere,
+      select: {
+        id: true,
+        name: true,
+        employeeId: true,
+        email: true,
+        department: true,
+        profilePic: true,
+        role: true
       },
-      orderBy: { date: 'desc' }
+      orderBy: { name: 'asc' }
     });
 
-    res.json(logs);
+    const userIds = activeUsers.map(u => u.id);
+
+    // 3. Fetch Real Attendance & Approved Leaves for the date range & users
+    const realAttendances = await prisma.attendance.findMany({
+      where: {
+        date: { gte: minDate, lte: maxDate },
+        userId: { in: userIds }
+      },
+      include: {
+        user: { select: { id: true, name: true, employeeId: true, email: true, department: true, profilePic: true } }
+      }
+    });
+
+    const approvedLeaves = await prisma.leaveRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        startDate: { lte: maxDate },
+        endDate: { gte: minDate },
+        userId: { in: userIds }
+      }
+    });
+
+    // Build lookup maps for fast matching
+    const attendanceMap = new Map();
+    realAttendances.forEach(att => {
+      const dateStr = att.date.toISOString().split('T')[0];
+      attendanceMap.set(`${att.userId}_${dateStr}`, att);
+    });
+
+    // 4. Merge into View Model
+    const mergedLogs = [];
+
+    for (const dObj of dateList) {
+      const dateStr = dObj.toISOString().split('T')[0];
+      const dayEnded = isShiftEndedForDate(dObj, now, settings);
+
+      for (const u of activeUsers) {
+        const key = `${u.id}_${dateStr}`;
+        const realAtt = attendanceMap.get(key);
+
+        if (realAtt) {
+          mergedLogs.push(realAtt);
+          continue;
+        }
+
+        // Check if user has an approved leave spanning dObj
+        const leave = approvedLeaves.find(l => {
+          if (l.userId !== u.id) return false;
+          const lStart = new Date(l.startDate).toISOString().split('T')[0];
+          const lEnd = new Date(l.endDate).toISOString().split('T')[0];
+          return dateStr >= lStart && dateStr <= lEnd;
+        });
+
+        if (leave) {
+          const leaveTypeName = leave.leaveType || leave.type || 'LEAVE';
+          const leaveStatusStr = leaveTypeName.toUpperCase().endsWith('LEAVE') || leaveTypeName.toUpperCase() === 'WFH'
+            ? leaveTypeName.toUpperCase()
+            : `${leaveTypeName.toUpperCase()} LEAVE`;
+
+          mergedLogs.push({
+            id: `leave_${u.id}_${dateStr}`,
+            isSynthetic: true,
+            userId: u.id,
+            date: dObj,
+            clockIn: null,
+            clockOut: null,
+            workingHours: null,
+            status: leaveStatusStr,
+            leaveType: leaveTypeName,
+            user: u
+          });
+          continue;
+        }
+
+        // No attendance & No approved leave
+        const targetStatus = dayEnded ? 'ABSENT' : 'PENDING';
+        mergedLogs.push({
+          id: `pending_${u.id}_${dateStr}`,
+          isSynthetic: true,
+          userId: u.id,
+          date: dObj,
+          clockIn: null,
+          clockOut: null,
+          workingHours: null,
+          status: targetStatus,
+          user: u
+        });
+      }
+    }
+
+    // 5. Apply Status Filter
+    let filtered = mergedLogs;
+    if (status && status !== 'ALL' && status !== '') {
+      const targetS = status.toUpperCase();
+      filtered = mergedLogs.filter(log => {
+        if (targetS === 'LEAVE') {
+          return log.status === 'LEAVE' || log.status.includes('LEAVE') || log.status === 'SICK' || log.status === 'CASUAL';
+        }
+        if (targetS === 'ABSENT') {
+          return log.status === 'ABSENT';
+        }
+        if (targetS === 'PENDING') {
+          return log.status === 'PENDING';
+        }
+        return log.status === targetS;
+      });
+    }
+
+    // 6. Sort View Model: date DESC, clockIn DESC (nulls last), user name ASC
+    filtered.sort((a, b) => {
+      const dateA = new Date(a.date).getTime();
+      const dateB = new Date(b.date).getTime();
+      if (dateA !== dateB) return dateB - dateA;
+
+      const timeA = a.clockIn ? new Date(a.clockIn).getTime() : null;
+      const timeB = b.clockIn ? new Date(b.clockIn).getTime() : null;
+
+      if (timeA !== null && timeB !== null) {
+        if (timeA !== timeB) return timeB - timeA;
+      } else if (timeA !== null && timeB === null) {
+        return -1;
+      } else if (timeA === null && timeB !== null) {
+        return 1;
+      }
+
+      return (a.user?.name || '').localeCompare(b.user?.name || '');
+    });
+
+    res.json(filtered);
   } catch (error) {
     console.error('Get attendance logs error:', error);
     res.status(500).json({ message: 'Failed to retrieve attendance logs.' });
@@ -359,41 +544,120 @@ const getAttendanceLogs = async (req, res) => {
 const updateAttendance = async (req, res) => {
   try {
     const { id } = req.params;
-    const { clockIn, clockOut, status, workingHours } = req.body;
+    const { userId: bodyUserId, date: bodyDate, clockIn, clockOut, status, workingHours: clientWorkingHours } = req.body;
 
-    const record = await prisma.attendance.findUnique({
-      where: { id },
-      include: { user: true }
-    });
-
-    if (!record) {
-      return res.status(404).json({ message: 'Attendance record not found.' });
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Administrators can edit attendance records.' });
     }
 
+    let record = null;
+    let targetUserId = bodyUserId;
+    let targetDate = bodyDate ? new Date(bodyDate) : null;
+
+    // Check if real record exists in DB
+    if (id && !id.startsWith('pending_') && !id.startsWith('leave_') && !id.startsWith('synthetic_')) {
+      record = await prisma.attendance.findUnique({
+        where: { id },
+        include: { user: true }
+      });
+    } else if (id && (id.startsWith('pending_') || id.startsWith('leave_'))) {
+      const parts = id.split('_');
+      if (parts.length >= 3) {
+        targetUserId = parts[1];
+        targetDate = new Date(`${parts[2]}T00:00:00.000Z`);
+      }
+    }
+
+    if (!record && (!targetUserId || !targetDate)) {
+      return res.status(404).json({ message: 'Attendance record or user/date context not found.' });
+    }
+
+    // Rule: Protect Leave Management integration for DB LEAVE records
+    if (record && record.status === 'LEAVE' && status && status !== 'LEAVE') {
+      return res.status(400).json({ message: 'Approved Leave records are managed via Leave Management. Please resolve leave applications in Leave Management rather than changing Attendance logs directly.' });
+    }
+
+    const newStatus = status || (record ? record.status : 'PRESENT');
     const data = {
-      status,
+      status: newStatus,
       editedBy: req.user.id
     };
 
-    if (clockIn) data.clockIn = new Date(clockIn);
-    if (clockOut) data.clockOut = new Date(clockOut);
-    if (workingHours !== undefined) data.workingHours = parseFloat(workingHours);
+    if (newStatus === 'LEAVE' || newStatus === 'ABSENT') {
+      data.clockIn = null;
+      data.clockOut = null;
+      data.workingHours = 0;
+    } else {
+      const newClockIn = clockIn ? new Date(clockIn) : (record ? record.clockIn : null);
+      const newClockOut = clockOut ? new Date(clockOut) : (record ? record.clockOut : null);
 
-    const updated = await prisma.attendance.update({
-      where: { id },
-      data,
-      include: { user: { select: { id: true, name: true, employeeId: true } } }
-    });
+      if (!newClockIn && newStatus !== 'WORK_FROM_HOME') {
+        return res.status(400).json({ message: `Clock In time is required for ${newStatus} status.` });
+      }
+
+      if (newClockIn && newClockOut) {
+        if (new Date(newClockOut).getTime() < new Date(newClockIn).getTime()) {
+          return res.status(400).json({ message: 'Clock Out cannot be earlier than Clock In.' });
+        }
+        const diffMs = new Date(newClockOut).getTime() - new Date(newClockIn).getTime();
+        data.workingHours = Math.round((diffMs / (1000 * 60 * 60)) * 100) / 100;
+      } else if (clientWorkingHours !== undefined && clientWorkingHours !== null) {
+        data.workingHours = parseFloat(clientWorkingHours);
+      }
+
+      data.clockIn = newClockIn || null;
+      data.clockOut = newClockOut || null;
+
+      if (newStatus === 'LATE' && newClockIn) {
+        const settings = await getOrCreateSystemSettings();
+        const userObj = record ? record.user : await prisma.user.findUnique({ where: { id: targetUserId } });
+        const shiftStartStr = (userObj?.role === 'TEAM_LEADER' || userObj?.role === 'ADMIN')
+          ? (settings?.tlShiftStart || '09:30')
+          : (settings?.internShiftStart || '09:30');
+        const [shiftH, shiftM] = shiftStartStr.split(':').map(Number);
+
+        const shiftTimeObj = new Date(newClockIn);
+        shiftTimeObj.setHours(shiftH, shiftM, 0, 0);
+
+        const diffMins = Math.floor((newClockIn.getTime() - shiftTimeObj.getTime()) / 60000);
+        data.lateMinutes = diffMins > 0 ? diffMins : null;
+      } else if (newStatus !== 'LATE') {
+        data.lateMinutes = null;
+      }
+    }
+
+    let updated;
+    if (record) {
+      updated = await prisma.attendance.update({
+        where: { id: record.id },
+        data,
+        include: { user: { select: { id: true, name: true, employeeId: true } } }
+      });
+    } else {
+      updated = await prisma.attendance.upsert({
+        where: { userId_date: { userId: targetUserId, date: targetDate } },
+        update: data,
+        create: {
+          userId: targetUserId,
+          date: targetDate,
+          ...data
+        },
+        include: { user: { select: { id: true, name: true, employeeId: true } } }
+      });
+    }
+
+    const prevClockInStr = record && record.clockIn ? record.clockIn.toISOString() : 'NULL';
+    const newClockInStr = updated.clockIn ? updated.clockIn.toISOString() : 'NULL';
+    const prevClockOutStr = record && record.clockOut ? record.clockOut.toISOString() : 'NULL';
+    const newClockOutStr = updated.clockOut ? updated.clockOut.toISOString() : 'NULL';
 
     await logActivity({
       userId: req.user.id,
       action: 'ATTENDANCE_EDIT',
-      details: `Edited attendance for ${updated.user.name} on ${updated.date.toDateString()}`
+      details: `Admin (${req.user.name}) edited attendance for ${updated.user.name} (${updated.user.employeeId}) on ${updated.date.toISOString().split('T')[0]}: Status [${record ? record.status : 'PENDING'} -> ${updated.status}], ClockIn [${prevClockInStr} -> ${newClockInStr}], ClockOut [${prevClockOutStr} -> ${newClockOutStr}]`
     });
 
-    // Broadcast real-time Socket.IO event
     broadcastAttendanceEvent('attendance_updated', { userId: updated.userId, record: updated });
-
     res.json(updated);
   } catch (error) {
     console.error('Update attendance error:', error);
@@ -404,29 +668,49 @@ const updateAttendance = async (req, res) => {
 const getAttendanceAnalytics = async (req, res) => {
   try {
     const now = new Date();
-    const settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
+    const settings = await getOrCreateSystemSettings();
     const timeZone = getSystemTimeZone(settings);
 
     const startOfToday = getTodayZonedDate(now, timeZone);
     const endOfToday = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000 - 1);
 
-    const totalMembersCount = await prisma.user.count({
-      where: { role: { in: ['INTERN', 'EMPLOYEE'] }, status: 'ACTIVE' }
+    const activeUsers = await prisma.user.findMany({
+      where: { role: { in: ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'] }, status: 'ACTIVE' },
+      select: { id: true }
     });
-    
+    const totalMembersCount = activeUsers.length;
+    const userIds = activeUsers.map(u => u.id);
+
     const todayAttendances = await prisma.attendance.findMany({
       where: {
-        date: {
-          gte: startOfToday,
-          lte: endOfToday
-        }
+        date: { gte: startOfToday, lte: endOfToday },
+        userId: { in: userIds }
       }
     });
+
+    const todayApprovedLeaves = await prisma.leaveRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        startDate: { lte: endOfToday },
+        endDate: { gte: startOfToday },
+        userId: { in: userIds }
+      }
+    });
+
+    const dayEnded = isShiftEndedForDate(startOfToday, now, settings);
 
     const presentCount = todayAttendances.filter((a) => a.status === 'PRESENT' || a.status === 'WORK_FROM_HOME').length;
     const lateCount = todayAttendances.filter((a) => a.status === 'LATE').length;
     const halfDayCount = todayAttendances.filter((a) => a.status === 'HALF_DAY').length;
-    const absentCount = totalMembersCount - todayAttendances.length;
+
+    let absentCount = 0;
+    if (dayEnded) {
+      const usersWithActivity = new Set([
+        ...todayAttendances.map(a => a.userId),
+        ...todayApprovedLeaves.map(l => l.userId)
+      ]);
+      absentCount = userIds.filter(id => !usersWithActivity.has(id)).length;
+    }
 
     res.json({
       totalInterns: totalMembersCount,
@@ -434,7 +718,7 @@ const getAttendanceAnalytics = async (req, res) => {
       presentToday: presentCount,
       lateToday: lateCount,
       halfDayToday: halfDayCount,
-      absentToday: absentCount >= 0 ? absentCount : 0
+      absentToday: absentCount
     });
   } catch (error) {
     console.error('Attendance analytics error:', error);

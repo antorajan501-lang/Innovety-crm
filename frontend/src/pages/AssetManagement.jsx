@@ -844,22 +844,7 @@ const AssetManagement = () => {
                 </div>
 
                 <div className="flex flex-col gap-1 sm:col-span-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Category *</label>
-                    {!isCustomCategoryMode && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsCustomCategoryMode(true);
-                          setCustomCategoryInput('');
-                          setAssetForm({ ...assetForm, category: 'OTHER' });
-                        }}
-                        className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline"
-                      >
-                        + Add Custom
-                      </button>
-                    )}
-                  </div>
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase">Category *</label>
 
                   {!isCustomCategoryMode ? (
                     <select
@@ -881,7 +866,6 @@ const AssetManagement = () => {
                       {customCategoriesList.map((cc) => (
                         <option key={cc} value={cc}>{cc}</option>
                       ))}
-                      <option value="ADD_NEW">+ Add Custom Category...</option>
                     </select>
                   ) : (
                     <div className="relative flex items-center w-full">
@@ -959,11 +943,11 @@ const AssetManagement = () => {
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-muted-foreground uppercase">Cost (USD / INR)</label>
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase">Cost</label>
                   <input
                     type="number"
                     step="0.01"
-                    placeholder="e.g. 2499.00"
+                    placeholder="e.g. ₹2,00,000"
                     value={assetForm.cost}
                     onChange={(e) => setAssetForm({ ...assetForm, cost: e.target.value })}
                   />
@@ -1074,22 +1058,7 @@ const AssetManagement = () => {
                 </div>
 
                 <div className="flex flex-col gap-1 sm:col-span-1">
-                  <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-bold text-muted-foreground uppercase">Category *</label>
-                    {!isCustomCategoryMode && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsCustomCategoryMode(true);
-                          setCustomCategoryInput('');
-                          setAssetForm({ ...assetForm, category: 'OTHER' });
-                        }}
-                        className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold hover:underline"
-                      >
-                        + Add Custom
-                      </button>
-                    )}
-                  </div>
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase">Category *</label>
 
                   {!isCustomCategoryMode ? (
                     <select
@@ -1111,7 +1080,6 @@ const AssetManagement = () => {
                       {customCategoriesList.map((cc) => (
                         <option key={cc} value={cc}>{cc}</option>
                       ))}
-                      <option value="ADD_NEW">+ Add Custom Category...</option>
                     </select>
                   ) : (
                     <div className="relative flex items-center w-full">

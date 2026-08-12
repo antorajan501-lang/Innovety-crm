@@ -45,6 +45,8 @@ import UsersDirectory from './pages/super-admin/users/UsersDirectory';
 import TeamDirectory from './pages/super-admin/teams/TeamDirectory';
 import AdminManagement from './pages/super-admin/admins/AdminManagement';
 import PlatformBuilderDashboard from './pages/super-admin/builder/PlatformBuilderDashboard';
+import OrganizationManager from './pages/super-admin/organization/OrganizationManager';
+import LeavePolicySettings from './pages/super-admin/LeavePolicySettings';
 
 import ErrorBoundary from './components/common/ErrorBoundary';
 
@@ -133,6 +135,22 @@ const App = () => {
                 element={
                   <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
                     <AdminManagement />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/super-admin/organization"
+                element={
+                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                    <OrganizationManager />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/super-admin/leave-policy"
+                element={
+                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                    <LeavePolicySettings />
                   </ProtectedRoute>
                 }
               />

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import UserAvatar from '../components/common/UserAvatar';
 import {
   Search,
   Filter,
@@ -14,8 +15,78 @@ import {
   Check,
   CheckCircle,
   XCircle,
-  Phone
+  Phone,
+  RotateCcw
 } from 'lucide-react';
+
+const QUICK_FILTERS = [
+  { id: 'ALL', label: 'All Dates' },
+  { id: 'TODAY', label: 'Today' },
+  { id: 'THIS_WEEK', label: 'This Week' },
+  { id: 'THIS_MONTH', label: 'This Month' },
+  { id: 'CUSTOM', label: 'Custom Range' }
+];
+
+const getQuickFilterDates = (preset) => {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+
+  let fromDate = '';
+  let toDate = '';
+
+  if (preset === 'TODAY') {
+    fromDate = todayStr;
+    toDate = todayStr;
+  } else if (preset === 'THIS_WEEK') {
+    const day = now.getDay();
+    const diffToMonday = now.getDate() - day + (day === 0 ? -6 : 1);
+    const monday = new Date(now.getFullYear(), now.getMonth(), diffToMonday);
+
+    fromDate = monday.toISOString().split('T')[0];
+    toDate = todayStr; // Clamp to today max
+  } else if (preset === 'THIS_MONTH') {
+    fromDate = `${yyyy}-${mm}-01`;
+    toDate = todayStr; // Clamp to today max
+  }
+  return { fromDate, toDate };
+};
+
+const formatDateDDMMYYYY = (dateInput) => {
+  if (!dateInput) return '—';
+  if (typeof dateInput === 'string' && dateInput.includes('T')) {
+    const datePart = dateInput.split('T')[0];
+    const parts = datePart.split('-');
+    if (parts.length === 3) {
+      const [yyyy, mm, dd] = parts;
+      return `${dd}/${mm}/${yyyy}`;
+    }
+  } else if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
+    const [yyyy, mm, dd] = dateInput.split('-');
+    return `${dd}/${mm}/${yyyy}`;
+  }
+  const obj = new Date(dateInput);
+  if (isNaN(obj.getTime())) return '—';
+  const day = String(obj.getDate()).padStart(2, '0');
+  const month = String(obj.getMonth() + 1).padStart(2, '0');
+  const year = obj.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
+const formatLateMinutes = (totalMinutes) => {
+  if (!totalMinutes || totalMinutes <= 0) return '';
+  if (totalMinutes < 60) {
+    return `${totalMinutes} MIN LATE`;
+  }
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) {
+    return `${hours} HR LATE`;
+  }
+  return `${hours} HR ${minutes} MIN LATE`;
+};
 
 const AttendanceAudit = () => {
   const { user } = useAuth();
@@ -31,8 +102,12 @@ const AttendanceAudit = () => {
   const [loading, setLoading] = useState(false);
 
   // Filters
+  const [quickFilter, setQuickFilter] = useState('ALL');
   const [userIdFilter, setUserIdFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [shiftFilter, setShiftFilter] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -90,29 +165,42 @@ const AttendanceAudit = () => {
   const fetchUsersList = async () => {
     try {
       const res = await api.get('/users?limit=1000&status=ACTIVE');
-      setAllInterns(res.data.users || []);
+      const eligibleMembers = (res.data.users || []).filter(
+        u => u.role !== 'ADMIN' && u.role !== 'SUPER_ADMIN'
+      );
+      setAllInterns(eligibleMembers);
     } catch (e) {
       console.error(e);
     }
   };
 
-  const fetchLogsAndAnalytics = async () => {
+  const filtersRef = useRef({ userIdFilter, statusFilter, startDate, endDate });
+  useEffect(() => {
+    filtersRef.current = { userIdFilter, statusFilter, startDate, endDate };
+  }, [userIdFilter, statusFilter, startDate, endDate]);
+
+  const fetchLogsAndAnalytics = async (customParams) => {
     try {
       setLoading(true);
+      const activeFilters = customParams || filtersRef.current;
       const [logsRes, statsRes] = await Promise.all([
         api.get('/attendance/logs', {
           params: {
-            userId: userIdFilter,
-            startDate,
-            endDate
+            userId: activeFilters.userIdFilter || undefined,
+            status: activeFilters.statusFilter || undefined,
+            startDate: activeFilters.startDate || undefined,
+            endDate: activeFilters.endDate || undefined
           }
         }),
         api.get('/attendance/analytics')
       ]);
 
-      let logsData = logsRes.data;
-      if (statusFilter) {
-        logsData = logsData.filter(log => log.status === statusFilter);
+      let logsData = logsRes.data || [];
+      if (activeFilters.statusFilter) {
+        logsData = logsData.filter(log => log.status === activeFilters.statusFilter);
+      }
+      if (activeFilters.userIdFilter) {
+        logsData = logsData.filter(log => log.userId === activeFilters.userIdFilter);
       }
 
       setLogs(logsData);
@@ -126,11 +214,8 @@ const AttendanceAudit = () => {
 
   const formatLeavePeriod = (startDate, endDate) => {
     if (!startDate) return 'N/A';
-    const startObj = new Date(startDate);
-    const endObj = endDate ? new Date(endDate) : startObj;
-
-    const startStr = startObj.toLocaleDateString();
-    const endStr = endObj.toLocaleDateString();
+    const startStr = formatDateDDMMYYYY(startDate);
+    const endStr = endDate ? formatDateDDMMYYYY(endDate) : startStr;
 
     if (startStr === endStr) {
       return startStr;
@@ -161,43 +246,163 @@ const AttendanceAudit = () => {
       if (user.role === 'ADMIN') {
         fetchAllLeaves();
       }
-      fetchLogsAndAnalytics();
+      fetchLogsAndAnalytics(filtersRef.current);
     }, 4000);
 
     return () => clearInterval(pollInterval);
   }, []);
 
   useEffect(() => {
-    fetchLogsAndAnalytics();
+    fetchLogsAndAnalytics({ userIdFilter, statusFilter, startDate, endDate });
   }, [userIdFilter, statusFilter, startDate, endDate]);
+
+  const handleQuickFilterClick = (preset) => {
+    setQuickFilter(preset);
+    if (preset === 'ALL') {
+      setStartDate('');
+      setEndDate('');
+    } else if (preset === 'CUSTOM') {
+      // Keep current custom range
+    } else {
+      const dates = getQuickFilterDates(preset);
+      setStartDate(dates.fromDate);
+      setEndDate(dates.toDate);
+    }
+  };
+
+  const handleClearFilters = () => {
+    setQuickFilter('ALL');
+    setUserIdFilter('');
+    setStatusFilter('');
+    setShiftFilter('');
+    setDepartmentFilter('');
+    setSearchQuery('');
+    setStartDate('');
+    setEndDate('');
+  };
+
+  const departmentOptions = Array.from(new Set(allInterns.map(i => i.department).filter(Boolean)));
+
+  const todayISO = new Date().toISOString().split('T')[0];
+
+  const rawFilteredLogs = logs.filter(log => {
+    if (log.date) {
+      const logDateStr = new Date(log.date).toISOString().split('T')[0];
+      if (logDateStr > todayISO) return false; // Strictly disallow future dates
+    }
+    if (shiftFilter && log.shift !== shiftFilter && log.user?.shift !== shiftFilter) return false;
+    if (departmentFilter && log.user?.department !== departmentFilter) return false;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const nameMatch = log.user?.name?.toLowerCase().includes(q);
+      const empIdMatch = log.user?.employeeId?.toLowerCase().includes(q);
+      if (!nameMatch && !empIdMatch) return false;
+    }
+    return true;
+  });
+
+  const filteredLogs = [...rawFilteredLogs].sort((a, b) => {
+    // 1. Attendance Date DESC
+    const dateA = new Date(a.date).getTime();
+    const dateB = new Date(b.date).getTime();
+    if (dateA !== dateB) {
+      return dateB - dateA;
+    }
+
+    // 2. Same Date: Real clockIn DESC (nulls last for LEAVE)
+    const timeA = a.clockIn ? new Date(a.clockIn).getTime() : null;
+    const timeB = b.clockIn ? new Date(b.clockIn).getTime() : null;
+
+    if (timeA !== null && timeB !== null) {
+      if (timeA !== timeB) return timeB - timeA;
+    } else if (timeA !== null && timeB === null) {
+      return -1;
+    } else if (timeA === null && timeB !== null) {
+      return 1;
+    }
+
+    // 3. Fallback: ID DESC
+    return (b.id || '').localeCompare(a.id || '');
+  });
+
+  const formatDateTimeLocal = (dateVal, recordDate) => {
+    if (!dateVal) {
+      if (!recordDate) return '';
+      const recD = new Date(recordDate);
+      if (isNaN(recD.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${recD.getFullYear()}-${pad(recD.getMonth() + 1)}-${pad(recD.getDate())}T09:30`;
+    }
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
 
   const openEditModal = (record) => {
     setSelectedRecord(record);
     setEditForm({
-      clockIn: record.clockIn ? record.clockIn.split('.')[0] : '',
-      clockOut: record.clockOut ? record.clockOut.split('.')[0] : '',
+      clockIn: record.clockIn ? formatDateTimeLocal(record.clockIn, record.date) : formatDateTimeLocal(null, record.date),
+      clockOut: record.clockOut ? formatDateTimeLocal(record.clockOut, record.date) : '',
       status: record.status,
-      workingHours: record.workingHours || ''
+      workingHours: record.workingHours !== undefined && record.workingHours !== null ? String(record.workingHours) : '',
+      errorMsg: ''
     });
     setEditModalOpen(true);
   };
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
+    setEditForm(prev => ({ ...prev, errorMsg: '' }));
+
+    const targetStatus = editForm.status;
+
+    // Rule: Protect Leave Management integration
+    if (selectedRecord.status === 'LEAVE' && targetStatus !== 'LEAVE') {
+      setEditForm(prev => ({
+        ...prev,
+        errorMsg: 'Approved Leave records are managed via Leave Management. Please resolve leave applications in Leave Management rather than changing Attendance logs directly.'
+      }));
+      return;
+    }
+
+    // Rule: Validate Clock Out >= Clock In for active statuses
+    if (['PRESENT', 'LATE', 'HALF_DAY', 'WORK_FROM_HOME'].includes(targetStatus)) {
+      if (!editForm.clockIn && targetStatus !== 'WORK_FROM_HOME') {
+        setEditForm(prev => ({ ...prev, errorMsg: `Clock In time is required for ${targetStatus} status.` }));
+        return;
+      }
+      if (editForm.clockIn && editForm.clockOut) {
+        const tIn = new Date(editForm.clockIn).getTime();
+        const tOut = new Date(editForm.clockOut).getTime();
+        if (tOut < tIn) {
+          setEditForm(prev => ({ ...prev, errorMsg: 'Clock Out cannot be earlier than Clock In.' }));
+          return;
+        }
+      }
+    }
+
     try {
       setLoading(true);
       await api.put(`/attendance/${selectedRecord.id}`, {
-        clockIn: editForm.clockIn || undefined,
-        clockOut: editForm.clockOut || undefined,
-        status: editForm.status,
+        userId: selectedRecord.userId,
+        date: selectedRecord.date,
+        status: targetStatus,
+        clockIn: ['LEAVE', 'ABSENT'].includes(targetStatus) ? undefined : (editForm.clockIn || undefined),
+        clockOut: ['LEAVE', 'ABSENT'].includes(targetStatus) ? undefined : (editForm.clockOut || undefined),
         workingHours: editForm.workingHours ? parseFloat(editForm.workingHours) : undefined
       });
       setEditModalOpen(false);
       setSelectedRecord(null);
       setAlertMsg('Attendance log updated successfully.');
-      fetchLogsAndAnalytics();
+      fetchLogsAndAnalytics(filtersRef.current);
     } catch (err) {
-      setAlertMsg('Failed to update attendance log.');
+      console.error(err);
+      setEditForm(prev => ({
+        ...prev,
+        errorMsg: err.response?.data?.message || 'Failed to update attendance log.'
+      }));
+    } finally {
       setLoading(false);
     }
   };
@@ -327,29 +532,19 @@ const AttendanceAudit = () => {
         </div>
       )}
 
-      {/* Sub-tabs navigation at the top */}
-      {user.role === 'ADMIN' && (
-        <div className="flex border-b border-border/20 gap-6">
-          <button
-            onClick={() => setSubTab('Logs')}
-            className={`pb-2.5 text-xs font-bold uppercase tracking-wider transition-all relative ${subTab === 'Logs' ? 'text-primary font-black' : 'text-muted-foreground hover:text-foreground font-semibold'}`}
-          >
-            Attendance Audit Logs
-            {subTab === 'Logs' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />}
-          </button>
-          <button
-            onClick={() => setSubTab('Leaves')}
-            className={`pb-2.5 text-xs font-bold uppercase tracking-wider transition-all relative ${subTab === 'Leaves' ? 'text-primary font-black' : 'text-muted-foreground hover:text-foreground font-semibold'}`}
-          >
-            Sanction WFH & Leaves ({leaves.filter(l => l.status === 'PENDING').length})
-            {subTab === 'Leaves' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />}
-          </button>
-        </div>
-      )}
+      {/* Page Title Header */}
+      <div className="flex flex-col text-left space-y-1">
+        <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+          Attendance Audit
+        </h1>
+        <p className="text-sm text-muted-foreground font-medium">
+          Monitor employee attendance records, and daily activity.
+        </p>
+      </div>
 
-      {subTab === 'Logs' ? (
-        <>
-          {/* Analytics widgets row */}
+      {/* Main Attendance Audit Logs Panel */}
+      <div className="space-y-4">
+        {/* Analytics widgets row */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-5 text-left">
             <div className="rounded-2xl border border-border/40 bg-card p-4 shadow-premium">
               <span className="text-[10px] font-bold text-muted-foreground uppercase">Total Active Members</span>
@@ -373,112 +568,187 @@ const AttendanceAudit = () => {
             </div>
           </div>
 
-          {/* Filter panel */}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center bg-card p-4 rounded-2xl border border-border/40 shadow-premium">
-            <div className="flex flex-wrap gap-3 items-center flex-1">
-              <select value={userIdFilter} onChange={(e) => setUserIdFilter(e.target.value)} className="bg-muted/40 text-xs border rounded-xl px-3 py-2">
+          {/* Redesigned Attendance Audit Filter Card (Matching Leave History) */}
+          <div className="rounded-3xl border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
+            {/* Row 1: Quick Filter Chips & From/To Date Range */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              {/* Left: Calendar Icon & Quick Filter Chips */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0 text-xs font-bold scrollbar-thin shrink-0">
+                <span className="text-xs font-extrabold text-foreground uppercase tracking-wider flex items-center gap-1.5 mr-1">
+                  <Calendar className="h-4 w-4 text-primary" />
+                  <span>Date Range:</span>
+                </span>
+                {QUICK_FILTERS.map((q) => {
+                  const active = quickFilter === q.id;
+                  return (
+                    <button
+                      key={q.id}
+                      onClick={() => handleQuickFilterClick(q.id)}
+                      className={`h-9 px-3.5 rounded-xl transition-all cursor-pointer shrink-0 flex items-center justify-center text-xs ${
+                        active
+                          ? 'bg-primary text-primary-foreground font-black shadow-xs scale-102'
+                          : 'bg-card hover:bg-muted text-muted-foreground hover:text-foreground border border-border/60 font-semibold'
+                      }`}
+                    >
+                      {q.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Right: Date Pickers */}
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="relative flex items-center">
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => {
+                      setStartDate(e.target.value);
+                      setQuickFilter('CUSTOM');
+                    }}
+                    className="h-10 px-3 rounded-xl border border-border/70 bg-card text-xs font-medium text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary cursor-pointer shadow-2xs"
+                  />
+                </div>
+                <span className="text-xs font-bold text-muted-foreground">to</span>
+                <div className="relative flex items-center">
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => {
+                      setEndDate(e.target.value);
+                      setQuickFilter('CUSTOM');
+                    }}
+                    className="h-10 px-3 rounded-xl border border-border/70 bg-card text-xs font-medium text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary cursor-pointer shadow-2xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Row 2: Responsive Filters Grid (4 Columns) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {/* Member Select */}
+              <select
+                value={userIdFilter}
+                onChange={(e) => setUserIdFilter(e.target.value)}
+                className="h-11 px-3 rounded-xl border border-border/70 bg-card text-xs font-semibold text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary cursor-pointer"
+              >
                 <option value="">All Members</option>
                 {allInterns.map(intern => (
                   <option key={intern.id} value={intern.id}>{intern.name} ({intern.employeeId})</option>
                 ))}
               </select>
 
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-muted/40 text-xs border rounded-xl px-3 py-2">
+              {/* Attendance Status Filter */}
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="h-11 px-3 rounded-xl border border-border/70 bg-card text-xs font-semibold text-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary cursor-pointer"
+              >
                 <option value="">All Statuses</option>
                 <option value="PRESENT">Present</option>
                 <option value="LATE">Late</option>
                 <option value="HALF_DAY">Half Day</option>
                 <option value="ABSENT">Absent</option>
-                <option value="WORK_FROM_HOME">Work From Home</option>
+                <option value="LEAVE">On Leave</option>
+                <option value="WORK_FROM_HOME">WFH</option>
+                <option value="HOLIDAY">Holiday</option>
               </select>
 
-              <div className="flex items-center gap-2">
+              {/* Search Input */}
+              <div className="relative flex items-center">
+                <Search className="absolute left-3 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <input
-                  type="date"
-                  className="bg-muted/40 text-xs border rounded-xl px-3 py-1.5"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                />
-                <span className="text-muted-foreground text-xs">to</span>
-                <input
-                  type="date"
-                  className="bg-muted/40 text-xs border rounded-xl px-3 py-1.5"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
+                  type="text"
+                  placeholder="Search Employee / ID..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 h-11 rounded-xl border border-border/70 bg-card text-xs font-medium text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary"
                 />
               </div>
+
+              {/* Clear Filters Button */}
+              <button
+                onClick={handleClearFilters}
+                className="h-11 px-4 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 border border-rose-500/20 text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                title="Reset all filters"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Clear Filters</span>
+              </button>
             </div>
           </div>
 
-          {/* Logs Table */}
+          {/* Clean Logs Table */}
           <div className="w-full min-w-0 overflow-x-auto rounded-2xl border border-border/40 bg-card shadow-premium text-left">
-            <table className="w-full min-w-[1100px] text-sm border-collapse">
+            <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="text-xs font-semibold text-muted-foreground uppercase border-b border-border/30 bg-muted/20 whitespace-nowrap">
-                  <th className="px-6 py-4 whitespace-nowrap">Members</th>
+                  <th className="px-6 py-4 whitespace-nowrap">Member</th>
                   <th className="px-6 py-4 whitespace-nowrap">Date</th>
                   <th className="px-6 py-4 whitespace-nowrap">Clock In</th>
                   <th className="px-6 py-4 whitespace-nowrap">Clock Out</th>
                   <th className="px-6 py-4 whitespace-nowrap">Hours</th>
                   <th className="px-6 py-4 whitespace-nowrap">Status</th>
-                  <th className="px-6 py-4 whitespace-nowrap">Telemetry IP & Device</th>
-                  <th className="px-6 py-4 whitespace-nowrap">Location Signature</th>
-                  {user.role === 'ADMIN' && <th className="px-6 py-4 text-right whitespace-nowrap">Edit</th>}
+                  <th className="px-6 py-4 text-right whitespace-nowrap">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/25">
-                {logs.length === 0 ? (
+                {filteredLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={user.role === 'ADMIN' ? 9 : 8} className="px-6 py-10 text-center text-muted-foreground whitespace-nowrap">
+                    <td colSpan={7} className="px-6 py-10 text-center text-muted-foreground whitespace-nowrap">
                       No attendance logs match selected filters.
                     </td>
                   </tr>
                 ) : (
-                  logs.map((log) => (
+                  filteredLogs.map((log) => (
                     <tr key={log.id} className="hover:bg-muted/10 transition-all text-xs whitespace-nowrap">
                       <td className="px-6 py-4 font-semibold whitespace-nowrap">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-foreground text-sm">{log.user?.name}</span>
-                          <span className="text-[10px] text-muted-foreground">{log.user?.employeeId}</span>
+                        <div className="flex items-center gap-3">
+                          <UserAvatar
+                            user={log.user}
+                            className="h-9 w-9 sm:h-11 sm:w-11 rounded-full border border-[#E5E7EB] dark:border-border/50 shrink-0 object-cover"
+                          />
+                          <div>
+                            <span className="font-bold text-foreground text-sm block leading-tight">{log.user?.name || 'Member'}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono block mt-0.5">{log.user?.employeeId || 'EM-000'}</span>
+                          </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 font-medium whitespace-nowrap">{new Date(log.date).toLocaleDateString()}</td>
-                      <td className="px-6 py-4 font-mono whitespace-nowrap">{new Date(log.clockIn).toLocaleTimeString()}</td>
+                      <td className="px-6 py-4 font-medium whitespace-nowrap">{formatDateDDMMYYYY(log.date)}</td>
                       <td className="px-6 py-4 font-mono whitespace-nowrap">
-                        {log.clockOut ? new Date(log.clockOut).toLocaleTimeString() : 'Shift Active'}
+                        {log.clockIn ? new Date(log.clockIn).toLocaleTimeString() : '—'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">{log.workingHours ? `${log.workingHours} hrs` : '—'}</td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-emerald-500/10 text-emerald-600' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : 'bg-red-500/10 text-red-500'}`}>
-                          {log.status} {log.lateMinutes ? `(${log.lateMinutes}m late)` : ''}
-                        </span>
+                      <td className="px-6 py-4 font-mono whitespace-nowrap">
+                        {!log.clockIn ? '—' : log.clockOut ? new Date(log.clockOut).toLocaleTimeString() : 'Shift Active'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex flex-col">
-                          <span className="font-mono">{log.ipAddress || '127.0.0.1'}</span>
-                          <span className="text-[10px] text-muted-foreground">{log.browser || 'Browser'} ({log.device || 'Desktop'})</span>
-                        </div>
+                        {!log.workingHours || log.workingHours === 0 ? '—' : `${log.workingHours} hrs`}
                       </td>
-                      <td className="px-6 py-4 max-w-xs truncate whitespace-nowrap" title={log.clockInLocation}>
-                        {log.clockInLocation || '—'}
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {log.status === 'PENDING' || !log.status ? (
+                          <span className="text-muted-foreground font-bold">—</span>
+                        ) : (
+                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-emerald-500/10 text-emerald-600' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : log.status === 'HALF_DAY' ? 'bg-purple-500/10 text-purple-600' : log.status === 'ABSENT' ? 'bg-rose-500/10 text-rose-600' : 'bg-amber-500/10 text-amber-600'}`}>
+                            {log.status === 'LATE' && log.lateMinutes ? `LATE (${formatLateMinutes(log.lateMinutes)})` : log.status}
+                          </span>
+                        )}
                       </td>
-                      {user.role === 'ADMIN' && (
-                        <td className="px-6 py-4 text-right whitespace-nowrap">
-                          <button className="text-primary hover:text-primary-hover p-1 rounded hover:bg-muted" onClick={() => openEditModal(log)}>
-                            <Edit2 className="h-4 w-4" />
-                          </button>
-                        </td>
-                      )}
+                      <td className="px-6 py-4 text-right whitespace-nowrap">
+                        <button
+                          onClick={() => openEditModal(log)}
+                          className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all cursor-pointer inline-flex items-center justify-center border border-border/40"
+                          title="Edit Attendance"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
               </tbody>
             </table>
           </div>
-        </>
-      ) : (
-        renderLeavesApprovalTab()
-      )}
+      </div>
 
       {/* View Full Formal Letter Modal for Admin */}
       {viewingLetter && (
@@ -599,67 +869,109 @@ const AttendanceAudit = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold">Edit Log: {selectedRecord.user?.name}</h3>
-              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => {
-                setEditModalOpen(false);
-                setSelectedRecord(null);
-              }}>
+              <div className="flex items-center gap-3">
+                <UserAvatar
+                  user={selectedRecord.user}
+                  className="h-10 w-10 rounded-full border border-border/60 object-cover"
+                />
+                <div>
+                  <h3 className="text-base font-bold leading-tight">{selectedRecord.user?.name}</h3>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
+                    <span className="font-mono">{selectedRecord.user?.employeeId || 'EM-000'}</span>
+                    <span>•</span>
+                    <span className="font-semibold text-primary">{formatDateDDMMYYYY(selectedRecord.date)}</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                className="rounded-lg p-1.5 hover:bg-muted text-muted-foreground hover:text-foreground transition-all cursor-pointer"
+                onClick={() => {
+                  setEditModalOpen(false);
+                  setSelectedRecord(null);
+                }}
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <form onSubmit={handleEditSubmit} className="mt-4 space-y-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Clock In Time</label>
-                <input
-                  type="datetime-local"
-                  value={editForm.clockIn}
-                  onChange={(e) => setEditForm({ ...editForm, clockIn: e.target.value })}
-                  className="bg-background border px-3 py-2 rounded-xl text-xs"
-                />
-              </div>
+              {editForm.errorMsg && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 text-xs font-medium leading-relaxed">
+                  {editForm.errorMsg}
+                </div>
+              )}
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-muted-foreground">Clock Out Time</label>
-                <input
-                  type="datetime-local"
-                  value={editForm.clockOut}
-                  onChange={(e) => setEditForm({ ...editForm, clockOut: e.target.value })}
-                  className="bg-background border px-3 py-2 rounded-xl text-xs"
-                />
+                <label className="text-xs font-semibold text-muted-foreground">Attendance Status</label>
+                <select
+                  value={editForm.status}
+                  onChange={(e) => setEditForm({ ...editForm, status: e.target.value, errorMsg: '' })}
+                  className="bg-background border border-border/70 px-3 py-2.5 rounded-xl text-xs font-medium focus:ring-2 focus:ring-primary/20"
+                >
+                  <option value="PRESENT">PRESENT</option>
+                  <option value="LATE">LATE</option>
+                  <option value="HALF_DAY">HALF_DAY</option>
+                  <option value="WORK_FROM_HOME">WORK_FROM_HOME</option>
+                  <option value="LEAVE">LEAVE</option>
+                  <option value="ABSENT">ABSENT</option>
+                </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Hours Worked Override</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="e.g. 8.5"
-                    value={editForm.workingHours}
-                    onChange={(e) => setEditForm({ ...editForm, workingHours: e.target.value })}
-                    className="bg-background border px-3 py-2 rounded-xl text-xs"
-                  />
+              {editForm.status === 'LEAVE' && (
+                <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs leading-relaxed">
+                  <strong>Leave Protection:</strong> Approved Leave records are managed via Leave Management. Clock In and Clock Out timestamps remain <code>—</code>.
                 </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Attendance Status</label>
-                  <select
-                    value={editForm.status}
-                    onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
-                    className="bg-background border px-3 py-2 rounded-xl text-xs"
-                  >
-                    <option value="PRESENT">Present</option>
-                    <option value="LATE">Late</option>
-                    <option value="HALF_DAY">Half Day</option>
-                    <option value="ABSENT">Absent</option>
-                    <option value="WORK_FROM_HOME">Work From Home</option>
-                  </select>
-                </div>
-              </div>
+              )}
 
-              <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
-                Override Log Details
-              </button>
+              {editForm.status === 'ABSENT' && (
+                <div className="p-3.5 rounded-xl bg-muted/40 border border-border/40 text-muted-foreground text-xs leading-relaxed">
+                  <strong>Absent Record:</strong> Absent status contains no Clock In or Clock Out timestamps. Changing to PRESENT / LATE will require entering Clock In time.
+                </div>
+              )}
+
+              {['PRESENT', 'LATE', 'HALF_DAY', 'WORK_FROM_HOME'].includes(editForm.status) && (
+                <>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-muted-foreground">Clock In Time</label>
+                    <input
+                      type="datetime-local"
+                      value={editForm.clockIn}
+                      onChange={(e) => setEditForm({ ...editForm, clockIn: e.target.value, errorMsg: '' })}
+                      className="bg-background border border-border/70 px-3 py-2 rounded-xl text-xs font-mono"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-muted-foreground">Clock Out Time (Optional if active shift)</label>
+                    <input
+                      type="datetime-local"
+                      value={editForm.clockOut}
+                      onChange={(e) => setEditForm({ ...editForm, clockOut: e.target.value, errorMsg: '' })}
+                      className="bg-background border border-border/70 px-3 py-2 rounded-xl text-xs font-mono"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/30">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditModalOpen(false);
+                    setSelectedRecord(null);
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-border/50 text-xs font-bold text-muted-foreground hover:bg-muted transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2.5 rounded-xl bg-primary text-xs font-bold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50 transition-all cursor-pointer"
+                >
+                  {loading ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
             </form>
           </div>
         </div>

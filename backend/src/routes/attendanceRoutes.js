@@ -11,7 +11,7 @@ router.post('/clock-out', requireRole(['INTERN', 'TEAM_LEADER', 'EMPLOYEE']), cl
 router.get('/logs', getAttendanceLogs);
 router.get('/analytics', getAttendanceAnalytics);
 
-// Admin-only manual override of logs
-router.put('/:id', requireRole(['ADMIN']), updateAttendance);
+// Admin & Super Admin manual override of logs
+router.put('/:id', requireRole(['ADMIN', 'SUPER_ADMIN']), updateAttendance);
 
 module.exports = router;

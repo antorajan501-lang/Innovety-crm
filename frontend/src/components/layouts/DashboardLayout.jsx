@@ -42,6 +42,8 @@ import {
   FileCode,
   ListTree,
   Sparkles,
+  Award,
+  Building2,
   Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -59,7 +61,6 @@ const QUICK_NAV_ITEMS = [
   { label: 'Projects', path: '/projects', keywords: ['projects', 'proj', 'project list', 'client projects'], category: 'Workspaces', icon: FolderOpen, roles: ['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE'] },
   { label: 'Active Board', path: '/tasks?tab=Board', keywords: ['active board', 'board', 'kanban', 'active project', 'sprint', 'active'], category: 'Workspaces', icon: Layers, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'My Tasks / Task Board', path: '/tasks', keywords: ['tasks', 'task', 'task board', 'my tasks', 'todo'], category: 'Workspaces', icon: FileText, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-  { label: 'Backlog', path: '/tasks?tab=Backlog', keywords: ['backlog', 'task backlog', 'issues'], category: 'Workspaces', icon: FileText, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'Roadmap', path: '/tasks?tab=Timeline', keywords: ['roadmap', 'timeline', 'schedule', 'gantt'], category: 'Workspaces', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'Repositories', path: '/tasks?tab=Code', keywords: ['repositories', 'repo', 'git', 'code', 'github'], category: 'Workspaces', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'Integrations', path: '/tasks?tab=Development', keywords: ['integrations', 'webhooks', 'api', 'dev'], category: 'Workspaces', icon: Settings, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
@@ -73,6 +74,7 @@ const QUICK_NAV_ITEMS = [
   { label: 'Attendance', path: '/attendance', keywords: ['attendance', 'atten', 'clock in', 'clock out', 'timesheet'], category: 'Operations', icon: Clock, roles: ['INTERN', 'TEAM_LEADER', 'EMPLOYEE'] },
   { label: 'Attendance Audit', path: '/attendance-audit', keywords: ['attendance audit', 'attendance logs', 'attendance history', 'atten'], category: 'Operations', icon: Clock, roles: ['ADMIN', 'TEAM_LEADER'] },
   { label: 'Apply Leave / Leave Management', path: '/leave-management', keywords: ['leave', 'leaves', 'apply leave', 'leave management', 'vacation', 'time off', 'pto'], category: 'Operations', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
+  { label: 'Sanction WFH & Leaves', path: '/leave-management?tab=Sanction', keywords: ['sanction', 'wfh', 'leaves', 'approve leave', 'sanction wfh', 'sanction leaves'], category: 'Operations', icon: CheckCircle2, roles: ['ADMIN', 'TEAM_LEADER'] },
   { label: 'Ticket Desk', path: '/tickets', keywords: ['tickets', 'ticket', 'ticket desk', 'support', 'help', 'issue'], category: 'Operations', icon: Ticket, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'Assets', path: '/assets', keywords: ['assets', 'asset', 'hardware', 'laptop', 'inventory', 'devices'], category: 'Operations', icon: Laptop, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
 
@@ -96,7 +98,8 @@ const QUICK_NAV_ITEMS = [
   { label: 'Settings', path: '/settings', keywords: ['settings', 'site settings', 'config', 'preferences'], category: 'System Control', icon: Settings, roles: ['ADMIN'] },
 
   // Super Admin Control & Builder
-  { label: 'Users Directory', path: '/super-admin/users', keywords: ['users directory', 'all users', 'superadmin users'], category: 'Platform Control', icon: Users, roles: ['SUPER_ADMIN'] },
+  { label: 'Organization Manager', path: '/super-admin/organization', keywords: ['organization', 'positions', 'position', 'pos-mgr', 'pos-snr', 'pos-int', 'ranks', 'senior', 'lead', 'manager', 'director', 'branches', 'departments'], category: 'Platform Control', icon: Award, roles: ['SUPER_ADMIN'] },
+  { label: 'Users Directory', path: '/super-admin/users', keywords: ['users directory', 'all users', 'superadmin users', 'senior', 'junior', 'lead', 'manager'], category: 'Platform Control', icon: Users, roles: ['SUPER_ADMIN'] },
   { label: 'Team Directory', path: '/super-admin/teams', keywords: ['team directory', 'superadmin teams'], category: 'Platform Control', icon: Briefcase, roles: ['SUPER_ADMIN'] },
   { label: 'Admin Management', path: '/super-admin/admins', keywords: ['admin management', 'admins', 'admin list'], category: 'Platform Control', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
   { label: 'Branding & Theme', path: '/super-admin/branding', keywords: ['branding', 'theme', 'logo', 'colors'], category: 'Platform Control', icon: Sparkles, roles: ['SUPER_ADMIN'] },
@@ -254,7 +257,9 @@ const DashboardLayout = ({ children }) => {
         { label: 'Branding & Theme', path: '/super-admin/branding', icon: Sparkles, roles: ['SUPER_ADMIN'] },
         { label: 'Users Directory', path: '/super-admin/users', icon: Users, roles: ['SUPER_ADMIN'] },
         { label: 'Team Directory', path: '/super-admin/teams', icon: Briefcase, roles: ['SUPER_ADMIN'] },
-        { label: 'Admin Management', path: '/super-admin/admins', icon: ShieldCheck, roles: ['SUPER_ADMIN'] }
+        { label: 'Admin Management', path: '/super-admin/admins', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
+        { label: 'Organization Manager', path: '/super-admin/organization', icon: Award, roles: ['SUPER_ADMIN'] },
+        { label: 'Leave Policy', path: '/super-admin/leave-policy', icon: Calendar, roles: ['SUPER_ADMIN'] }
       ]
     },
     {
@@ -278,7 +283,6 @@ const DashboardLayout = ({ children }) => {
       items: [
         { label: 'Projects', path: '/projects', icon: FolderOpen, roles: ['ADMIN', 'TEAM_LEADER'] },
         { label: 'Active Board', path: '/tasks?tab=Board', icon: Layers, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-        { label: 'Backlog', path: '/tasks?tab=Backlog', icon: FileText, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
         { label: 'Roadmap', path: '/tasks?tab=Timeline', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
         { label: 'Repositories', path: '/tasks?tab=Code', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
         { label: 'Integrations', path: '/tasks?tab=Development', icon: Settings, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] }

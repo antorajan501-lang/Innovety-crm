@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Calendar,
   Search,
@@ -88,6 +88,20 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
   const isSuperAdmin = userRole === 'SUPER_ADMIN';
   const isAdmin = userRole === 'ADMIN';
   const isTL = userRole === 'TEAM_LEADER';
+  // Main Tab State (Sanction WFH & Leaves vs History)
+  const getInitialTab = () => {
+    const q = new URLSearchParams(window.location.search).get('tab');
+    if (q === 'History' || q === 'Desk') return 'History';
+    return 'Sanction';
+  };
+  const [mainTab, setMainTab] = useState(getInitialTab);
+  const [viewingLetter, setViewingLetter] = useState(null);
+
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('tab');
+    if (q === 'History' || q === 'Desk') setMainTab('History');
+    else if (q === 'Sanction') setMainTab('Sanction');
+  }, [window.location.search]);
 
   // Simplified Filter States
   const [quickFilter, setQuickFilter] = useState('ALL');
@@ -333,7 +347,9 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
-                  {isSuperAdmin ? 'Enterprise Leave Analytics & Audit Desk' : 'Leave Management Desk'}
+                  {mainTab === 'Sanction'
+                    ? 'Leave Management'
+                    : (isSuperAdmin ? 'Enterprise Leave Analytics & Audit Desk' : 'Leave Application History & Audit Desk')}
                 </h1>
                 {isSuperAdmin && (
                   <span className="text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-600 border border-rose-500/20">
@@ -342,9 +358,11 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                 )}
               </div>
               <p className="text-sm text-muted-foreground font-medium mt-0.5">
-                {isSuperAdmin
-                  ? 'Real-time leave analytics, workforce audit logs, and date-wise filtering.'
-                  : 'Manage, sanction, and audit leave applications across departments.'}
+                {mainTab === 'Sanction'
+                  ? 'Review and approve pending leave and work-from-home requests'
+                  : (isSuperAdmin
+                      ? 'Real-time leave analytics, workforce audit logs, and date-wise filtering.'
+                      : 'View historical leave applications, workforce audit logs, and date-wise records.')}
               </p>
             </div>
           </div>
@@ -372,46 +390,180 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
         </div>
       </div>
 
-      {/* 2. Dynamic Metric Cards (Updates Live with Active Filters) */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 print:grid-cols-3">
-        <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Total Filtered</span>
-          <span className="text-2xl font-black text-foreground mt-2">{metrics.total}</span>
-          <span className="text-[10px] text-muted-foreground mt-1">Applications</span>
+      {/* Sub-tabs Navigation for Leave Management */}
+      {(isAdmin || isTL) && (
+        <div className="flex border-b border-border/40 gap-6 print:hidden">
+          <button
+            onClick={() => setMainTab('Sanction')}
+            className={`pb-2.5 text-xs font-bold uppercase tracking-wider transition-all relative cursor-pointer ${
+              mainTab === 'Sanction' ? 'text-primary font-black' : 'text-muted-foreground hover:text-foreground font-semibold'
+            }`}
+          >
+            Sanction WFH & Leaves ({leaves.filter(l => ['PENDING_ADMIN_APPROVAL', 'PENDING_TL_APPROVAL', 'PENDING'].includes(l.status)).length})
+            {mainTab === 'Sanction' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />}
+          </button>
+          <button
+            onClick={() => setMainTab('History')}
+            className={`pb-2.5 text-xs font-bold uppercase tracking-wider transition-all relative cursor-pointer ${
+              mainTab === 'History' ? 'text-primary font-black' : 'text-muted-foreground hover:text-foreground font-semibold'
+            }`}
+          >
+            History
+            {mainTab === 'History' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-t" />}
+          </button>
         </div>
+      )}
 
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700 dark:text-amber-400">Pending</span>
-          <span className="text-2xl font-black text-amber-500 mt-2">{metrics.pending}</span>
-          <span className="text-[10px] text-amber-600/80 mt-1">In Pipeline</span>
-        </div>
+      {mainTab === 'Sanction' ? (
+        <div className="space-y-6">
+          {/* 2. Dynamic Metric Cards (Sanction Tab Only) */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 print:grid-cols-3">
+            <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-xs flex flex-col justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Total Filtered</span>
+              <span className="text-2xl font-black text-foreground mt-2">{metrics.total}</span>
+              <span className="text-[10px] text-muted-foreground mt-1">Applications</span>
+            </div>
 
-        <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Approved</span>
-          <span className="text-2xl font-black text-emerald-500 mt-2">{metrics.approved}</span>
-          <span className="text-[10px] text-emerald-600/80 mt-1">Sanctioned</span>
-        </div>
+            <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 shadow-xs flex flex-col justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700 dark:text-amber-400">Pending</span>
+              <span className="text-2xl font-black text-amber-500 mt-2">{metrics.pending}</span>
+              <span className="text-[10px] text-amber-600/80 mt-1">In Pipeline</span>
+            </div>
 
-        <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-4 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-700 dark:text-rose-400">Rejected</span>
-          <span className="text-2xl font-black text-rose-500 mt-2">{metrics.rejected}</span>
-          <span className="text-[10px] text-rose-600/80 mt-1">Declined</span>
-        </div>
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 shadow-xs flex flex-col justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Approved</span>
+              <span className="text-2xl font-black text-emerald-500 mt-2">{metrics.approved}</span>
+              <span className="text-[10px] text-emerald-600/80 mt-1">Sanctioned</span>
+            </div>
 
-        <div className="rounded-2xl border border-slate-500/30 bg-slate-500/5 p-4 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-600 dark:text-slate-400">Cancelled</span>
-          <span className="text-2xl font-black text-slate-500 mt-2">{metrics.cancelled}</span>
-          <span className="text-[10px] text-slate-500 mt-1">By Applicant</span>
-        </div>
+            <div className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-4 shadow-xs flex flex-col justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-700 dark:text-rose-400">Rejected</span>
+              <span className="text-2xl font-black text-rose-500 mt-2">{metrics.rejected}</span>
+              <span className="text-[10px] text-rose-600/80 mt-1">Declined</span>
+            </div>
 
-        <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4 shadow-xs flex flex-col justify-between">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">On Leave Today</span>
-          <span className="text-2xl font-black text-indigo-500 mt-2">{metrics.onLeaveToday}</span>
-          <span className="text-[10px] text-indigo-600/80 mt-1">Active Absence</span>
+            <div className="rounded-2xl border border-slate-500/30 bg-slate-500/5 p-4 shadow-xs flex flex-col justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-600 dark:text-slate-400">Cancelled</span>
+              <span className="text-2xl font-black text-slate-500 mt-2">{metrics.cancelled}</span>
+              <span className="text-[10px] text-slate-500 mt-1">By Applicant</span>
+            </div>
+
+            <div className="rounded-2xl border border-indigo-500/30 bg-indigo-500/5 p-4 shadow-xs flex flex-col justify-between">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-400">On Leave Today</span>
+              <span className="text-2xl font-black text-indigo-500 mt-2">{metrics.onLeaveToday}</span>
+              <span className="text-[10px] text-indigo-600/80 mt-1">Active Absence</span>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-border/40 bg-card p-6 shadow-xs text-left space-y-4">
+          <div className="flex items-center justify-between border-b border-border/30 pb-3">
+            <div>
+              <h3 className="text-xs font-bold uppercase tracking-tight text-foreground/80 flex items-center gap-2">
+                <FileText className="h-4 w-4 text-primary" />
+                Sanction Approval Queue
+              </h3>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Review and sanction pending leave and work-from-home application letters.
+              </p>
+            </div>
+            <span className="text-xs bg-primary/10 text-primary px-3 py-1 rounded-full font-bold">
+              {leaves.filter(l => ['PENDING_ADMIN_APPROVAL', 'PENDING_TL_APPROVAL', 'PENDING'].includes(l.status)).length} Pending Review
+            </span>
+          </div>
+
+          <div className="w-full min-w-0 overflow-x-auto">
+            <table className="w-full min-w-[900px] text-sm border-collapse">
+              <thead>
+                <tr className="text-xs font-semibold text-muted-foreground uppercase border-b border-border/30 bg-muted/20 text-left whitespace-nowrap">
+                  <th className="px-6 py-4 whitespace-nowrap">Applicant</th>
+                  <th className="px-6 py-4 whitespace-nowrap">Leave Type</th>
+                  <th className="px-6 py-4 whitespace-nowrap">Duration</th>
+                  <th className="px-6 py-4 text-center whitespace-nowrap">Read Letter</th>
+                  <th className="px-6 py-4 text-right whitespace-nowrap">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/25">
+                {(() => {
+                  const pendingLeaves = leaves.filter(l => ['PENDING_ADMIN_APPROVAL', 'PENDING_TL_APPROVAL', 'PENDING'].includes(l.status));
+                  if (pendingLeaves.length === 0) {
+                    return (
+                      <tr>
+                        <td colSpan={5} className="px-6 py-10 text-center text-muted-foreground whitespace-nowrap italic">
+                          No pending leave or WFH requests requiring sanction.
+                        </td>
+                      </tr>
+                    );
+                  }
+                  return pendingLeaves.map((l) => (
+                    <tr key={l.id} className="hover:bg-muted/10 transition-all text-xs whitespace-nowrap">
+                      <td className="px-6 py-4 font-semibold whitespace-nowrap">
+                        <div className="flex items-center gap-3">
+                          <UserAvatar
+                            user={l.user}
+                            className="h-9 w-9 sm:h-11 sm:w-11 rounded-full border border-[#E5E7EB] dark:border-border/50 shrink-0 object-cover"
+                          />
+                          <div>
+                            <span className="font-bold text-foreground text-sm block leading-tight">{l.user?.name || 'Applicant'}</span>
+                            <span className="text-[10px] text-muted-foreground font-mono block mt-0.5">
+                              {l.user?.employeeId || 'EM-000'} ({l.user?.role?.replace('_', ' ') || 'EMPLOYEE'})
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-[11px] font-extrabold font-mono uppercase shadow-2xs ${
+                          (l.leaveType || l.type) === 'WFH'
+                            ? 'bg-indigo-500/10 text-indigo-600 border border-indigo-500/20'
+                            : (l.leaveType || l.type) === 'SICK'
+                            ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20'
+                            : (l.leaveType || l.type) === 'EMERGENCY'
+                            ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
+                            : 'bg-primary/10 text-primary border border-primary/20'
+                        }`}>
+                          {l.leaveType || l.type || 'CASUAL'}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap font-bold text-foreground text-sm">
+                        {getDurationDisplay(l)}
+                      </td>
+                      <td className="px-6 py-4 text-center whitespace-nowrap">
+                        <button
+                          onClick={() => setViewingLetter(l)}
+                          className="inline-flex items-center gap-1.5 text-xs font-bold text-primary hover:bg-primary/10 px-3.5 py-1.5 rounded-xl border border-primary/20 transition-all active:scale-95 cursor-pointer"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          <span>Read Letter</span>
+                        </button>
+                      </td>
+                      <td className="px-6 py-4 text-right whitespace-nowrap">
+                        <div className="flex items-center gap-2 justify-end">
+                          <button
+                            onClick={(e) => handleQuickApprove(e, l)}
+                            className="h-8 w-8 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center shadow-md hover:scale-110 transition-all cursor-pointer"
+                            title="Accept & Sanction Leave Application"
+                          >
+                            <Check className="h-4 w-4 stroke-[3]" />
+                          </button>
+                          <button
+                            onClick={(e) => handleQuickReject(e, l)}
+                            className="h-8 w-8 rounded-full bg-rose-500 hover:bg-rose-600 text-white flex items-center justify-center shadow-md hover:scale-110 transition-all cursor-pointer"
+                            title="Decline Leave Application"
+                          >
+                            <X className="h-4 w-4 stroke-[3]" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ));
+                })()}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
-
-      {/* 3. Simplified Compact Two-Row Filter Section */}
+      ) : (
+        <>
+          {/* 3. Simplified Compact Two-Row Filter Section */}
       <div className="rounded-3xl border border-border/70 bg-card p-4 shadow-sm space-y-3 print:hidden">
         {/* Row 1: Quick Filter Chips & From/To Date Range */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -553,13 +705,11 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-border/60 bg-muted/20 text-xs font-black text-muted-foreground uppercase tracking-wider">
-                    <th className="py-4 px-5">Employee</th>
-                    <th className="py-4 px-4">ID & Dept</th>
+                    <th className="py-4 px-6 min-w-[200px]">Applicant</th>
                     <th className="py-4 px-4">Type</th>
                     <th className="py-4 px-4">Leave Duration</th>
-                    <th className="py-4 px-4 hidden lg:table-cell">Reason</th>
-                    <th className="py-4 px-4">Status</th>
-                    <th className="py-4 px-5 text-right">Actions</th>
+                    <th className="py-4 px-4 w-72 max-w-[320px]">Reason</th>
+                    <th className="py-4 px-5">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/40 text-xs sm:text-sm">
@@ -573,29 +723,19 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                         onClick={() => setSelectedLeave(leave)}
                         className="hover:bg-muted/30 transition-colors cursor-pointer group"
                       >
-                        {/* Employee Avatar & Name */}
-                        <td className="py-4 px-5">
+                        {/* Applicant Avatar, Name & ID */}
+                        <td className="py-4 px-6 min-w-[200px]">
                           <div className="flex items-center gap-3">
                             <UserAvatar user={leave.user} className="h-9 w-9 rounded-full border border-primary/20 shrink-0" />
                             <div>
                               <span className="font-bold text-foreground group-hover:text-primary transition-colors block text-sm whitespace-nowrap">
-                                {leave.user?.name || 'Employee'}
+                                {leave.user?.name || 'Applicant'}
                               </span>
                               <span className="text-xs text-muted-foreground block font-mono">
-                                {leave.user?.email}
+                                {leave.user?.employeeId || 'EM-000'}
                               </span>
                             </div>
                           </div>
-                        </td>
-
-                        {/* ID & Dept */}
-                        <td className="py-4 px-4 whitespace-nowrap">
-                          <span className="font-mono text-xs sm:text-sm font-bold text-foreground block">
-                            {leave.user?.employeeId || 'EM-000'}
-                          </span>
-                          <span className="text-xs text-muted-foreground block font-semibold">
-                            {leave.user?.department || 'General'}
-                          </span>
                         </td>
 
                         {/* Leave Type */}
@@ -621,13 +761,16 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                           </span>
                         </td>
 
-                        {/* Reason */}
-                        <td className="py-4 px-4 max-w-xs truncate text-xs text-muted-foreground font-medium hidden lg:table-cell">
+                        {/* Reason (Truncated with tooltip) */}
+                        <td
+                          className="py-4 px-4 text-xs text-muted-foreground font-medium w-72 max-w-[320px] truncate whitespace-nowrap overflow-hidden text-ellipsis"
+                          title={leave.reason || 'No details provided.'}
+                        >
                           {leave.reason || 'No details provided.'}
                         </td>
 
                         {/* Status */}
-                        <td className="py-4 px-4 whitespace-nowrap">
+                        <td className="py-4 px-5 whitespace-nowrap">
                           <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase ${
                             leave.status === 'APPROVED'
                               ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
@@ -648,39 +791,6 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                                 : leave.status}
                             </span>
                           </span>
-                        </td>
-
-                        {/* Actions */}
-                        <td className="py-4 px-5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => setSelectedLeave(leave)}
-                              className="p-2 rounded-xl border border-border/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-all cursor-pointer"
-                              title="View Application Details"
-                            >
-                              <Eye className="h-4 w-4" />
-                            </button>
-
-                            {/* Admin / TL Action Buttons (Hidden for Super Admin) */}
-                            {!isSuperAdmin && isActionable(leave) && (
-                              <>
-                                <button
-                                  onClick={(e) => handleQuickApprove(e, leave)}
-                                  className="h-8 w-8 rounded-full bg-emerald-500 hover:bg-emerald-600 text-white flex items-center justify-center shadow-xs transition-all cursor-pointer"
-                                  title="Sanction / Approve"
-                                >
-                                  <Check className="h-4 w-4 stroke-[3]" />
-                                </button>
-                                <button
-                                  onClick={(e) => handleQuickReject(e, leave)}
-                                  className="h-8 w-8 rounded-full bg-rose-500 hover:bg-rose-600 text-white flex items-center justify-center shadow-xs transition-all cursor-pointer"
-                                  title="Decline / Reject"
-                                >
-                                  <X className="h-4 w-4 stroke-[3]" />
-                                </button>
-                              </>
-                            )}
-                          </div>
                         </td>
                       </tr>
                     );
@@ -960,6 +1070,88 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                   >
                     <Check className="h-4 w-4 stroke-[3]" />
                     <span>{submittingAction ? 'Sanctioning...' : 'Approve Leave'}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      </>
+      )}
+
+      {/* Formal Letter Modal for Admin / TL */}
+      {viewingLetter && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 text-left">
+          <div className="w-full max-w-xl rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-primary" />
+                <h3 className="text-base font-bold">Formal Leave Application Letter</h3>
+              </div>
+              <button
+                className="rounded-lg p-1 hover:bg-muted cursor-pointer"
+                onClick={() => setViewingLetter(null)}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4 font-sans text-xs">
+              <div className="flex justify-between items-center bg-muted/40 p-3.5 rounded-xl border border-border/30">
+                <div>
+                  <span className="text-[10px] text-muted-foreground font-semibold uppercase block mb-0.5">Applicant Employee</span>
+                  <p className="font-bold text-sm text-foreground">{viewingLetter.user?.name}</p>
+                  <p className="text-[10px] text-muted-foreground font-mono">{viewingLetter.user?.employeeId} ({viewingLetter.user?.role?.replace('_', ' ')})</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] text-muted-foreground font-semibold uppercase block mb-0.5">Leave Type</span>
+                  <span className={`inline-block px-2.5 py-0.5 rounded-md text-[10px] font-extrabold font-mono uppercase ${
+                    (viewingLetter.leaveType || viewingLetter.type) === 'WFH' ? 'bg-indigo-500/10 text-indigo-600 border border-indigo-500/20' : 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
+                  }`}>
+                    {viewingLetter.leaveType || viewingLetter.type || 'CASUAL'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] text-muted-foreground font-bold uppercase">Reason / Application Letter</span>
+                <div className="bg-muted/10 p-4 rounded-xl border border-border/40 text-xs whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto font-medium text-foreground">
+                  {viewingLetter.reason || viewingLetter.letterContent || 'No details provided.'}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex items-center justify-between border-t border-border/40 pt-4">
+              <button
+                onClick={() => setViewingLetter(null)}
+                className="px-4 py-2 text-xs font-bold rounded-xl border hover:bg-muted cursor-pointer"
+              >
+                Close
+              </button>
+
+              {['PENDING_ADMIN_APPROVAL', 'PENDING_TL_APPROVAL', 'PENDING'].includes(viewingLetter.status) && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={(e) => {
+                      handleQuickApprove(e, viewingLetter);
+                      setViewingLetter(null);
+                    }}
+                    className="bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Check className="h-4 w-4 stroke-[3]" />
+                    <span>Accept (Sanction)</span>
+                  </button>
+
+                  <button
+                    onClick={(e) => {
+                      handleQuickReject(e, viewingLetter);
+                      setViewingLetter(null);
+                    }}
+                    className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <X className="h-4 w-4 stroke-[3]" />
+                    <span>Decline (Reject)</span>
                   </button>
                 </div>
               )}

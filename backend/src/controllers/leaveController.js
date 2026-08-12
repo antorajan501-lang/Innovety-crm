@@ -179,7 +179,7 @@ const getLeaves = async (req, res) => {
   }
 };
 
-// 2. Get Dynamic Leave Balances (Quota - APPROVED Leaves Only)
+// 2. Get Dynamic Leave Balances (Global Leave Policy UserLeaveBalance)
 const getLeaveBalances = async (req, res) => {
   try {
     const targetUserId = req.query.userId || req.user.id;
@@ -188,10 +188,7 @@ const getLeaveBalances = async (req, res) => {
       select: {
         id: true,
         name: true,
-        role: true,
-        casualLeaveQuota: true,
-        sickLeaveQuota: true,
-        emergencyLeaveQuota: true
+        role: true
       }
     });
 
@@ -199,58 +196,60 @@ const getLeaveBalances = async (req, res) => {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    // Quota deduction applies ONLY after final Admin approval (status = 'APPROVED')
-    const approvedLeaves = await prisma.leaveRequest.findMany({
-      where: {
-        userId: targetUserId,
-        status: 'APPROVED'
-      }
+    const activeLeaveTypes = await prisma.leaveType.findMany({
+      where: { isActive: true },
+      orderBy: { displayOrder: 'asc' }
     });
 
-    const pendingRequests = await prisma.leaveRequest.count({
+    for (const lt of activeLeaveTypes) {
+      await prisma.userLeaveBalance.upsert({
+        where: {
+          userId_leaveTypeId: {
+            userId: targetUserId,
+            leaveTypeId: lt.id
+          }
+        },
+        update: {},
+        create: {
+          userId: targetUserId,
+          leaveTypeId: lt.id,
+          allocated: lt.annualDays,
+          used: 0,
+          pending: 0,
+          available: lt.annualDays,
+          carryForward: 0,
+          expired: 0,
+          lastCreditedAt: new Date()
+        }
+      });
+    }
+
+    const balances = await prisma.userLeaveBalance.findMany({
+      where: { userId: targetUserId },
+      include: { leaveType: true },
+      orderBy: { leaveType: { displayOrder: 'asc' } }
+    });
+
+    const pendingRequestsCount = await prisma.leaveRequest.count({
       where: {
         userId: targetUserId,
         status: { in: ['PENDING_TL_APPROVAL', 'PENDING_ADMIN_APPROVAL'] }
       }
     });
 
-    let approvedCasual = 0;
-    let approvedSick = 0;
-    let approvedEmergency = 0;
-    let approvedWFH = 0;
-
-    approvedLeaves.forEach(l => {
-      const days = l.totalDays || 1;
-      const type = (l.leaveType || l.type || 'CASUAL').toUpperCase();
-      if (type === 'CASUAL') approvedCasual += days;
-      else if (type === 'SICK') approvedSick += days;
-      else if (type === 'EMERGENCY') approvedEmergency += days;
-      else if (type === 'WFH') approvedWFH += days;
+    const approvedRequestsCount = await prisma.leaveRequest.count({
+      where: {
+        userId: targetUserId,
+        status: 'APPROVED'
+      }
     });
-
-    const casualQuota = targetUser.casualLeaveQuota || 12;
-    const sickQuota = targetUser.sickLeaveQuota || 12;
-    const emergencyQuota = targetUser.emergencyLeaveQuota || 6;
-
-    const casualRemaining = Math.max(0, casualQuota - approvedCasual);
-    const sickRemaining = Math.max(0, sickQuota - approvedSick);
-    const emergencyRemaining = Math.max(0, emergencyQuota - approvedEmergency);
 
     res.json({
       userId: targetUser.id,
       userName: targetUser.name,
-      casualQuota,
-      casualRemaining,
-      approvedCasual,
-      sickQuota,
-      sickRemaining,
-      approvedSick,
-      emergencyQuota,
-      emergencyRemaining,
-      approvedEmergency,
-      approvedWFH, // WFH does NOT deduct leave quota
-      pendingRequests,
-      approvedRequests: approvedLeaves.length
+      balances,
+      pendingRequestsCount,
+      approvedRequestsCount
     });
   } catch (error) {
     console.error('Get leave balances error:', error);
@@ -598,8 +597,8 @@ const approveLeaveAdmin = async (req, res) => {
           data: {
             userId: leave.userId,
             date: targetDate,
-            clockIn: targetDate,
-            clockOut: targetDate,
+            clockIn: attendanceStatus === 'LEAVE' ? null : targetDate,
+            clockOut: attendanceStatus === 'LEAVE' ? null : targetDate,
             status: attendanceStatus,
             workingHours: attendanceStatus === 'WORK_FROM_HOME' ? 8.0 : 0,
             clockInLocation: attendanceStatus === 'WORK_FROM_HOME' ? 'Work From Home (Approved)' : 'Approved Leave Period'

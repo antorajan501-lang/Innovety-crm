@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Users, Search, RefreshCw, Eye, Lock, Unlock, Key, UserX,
-  CheckCircle2, AlertCircle, X, UserCheck
+  CheckCircle2, AlertCircle, X, UserCheck, Award
 } from 'lucide-react';
 import api from '../../../services/api';
 import UserAvatar from '../../../components/common/UserAvatar';
@@ -284,6 +284,7 @@ const UsersDirectory = () => {
               </th>
               <th className="px-4 py-3.5 whitespace-nowrap">USER</th>
               <th className="px-4 py-3.5 whitespace-nowrap">EMPLOYEE ID</th>
+              <th className="px-4 py-3.5 whitespace-nowrap">POSITION RANK</th>
               <th className="px-4 py-3.5 whitespace-nowrap">ROLE</th>
               <th className="px-4 py-3.5 whitespace-nowrap">DEPARTMENT / COLLEGE</th>
               <th className="px-4 py-3.5 whitespace-nowrap">STATUS</th>
@@ -328,6 +329,19 @@ const UsersDirectory = () => {
                   </td>
                   <td className="px-4 py-4 font-mono text-muted-foreground text-xs whitespace-nowrap">
                     {u.employeeId}
+                  </td>
+                  <td className="px-4 py-4 whitespace-nowrap">
+                    {u.position ? (
+                      <span
+                        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold shadow-xs"
+                        style={{ backgroundColor: u.position.color || '#4F46E5', color: u.position.textColor || '#FFFFFF' }}
+                      >
+                        <Award className="h-3 w-3" />
+                        <span>{u.position.name}</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground font-medium">Standard</span>
+                    )}
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">
                     <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-extrabold uppercase ${getRoleBadge(u.role)}`}>

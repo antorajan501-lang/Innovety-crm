@@ -213,12 +213,33 @@ const Attendance = () => {
 
 
 
+  const formatDateDDMMYYYY = (dateInput) => {
+    if (!dateInput) return '—';
+    if (typeof dateInput === 'string' && dateInput.includes('T')) {
+      const datePart = dateInput.split('T')[0];
+      const parts = datePart.split('-');
+      if (parts.length === 3) {
+        const [yyyy, mm, dd] = parts;
+        return `${dd}/${mm}/${yyyy}`;
+      }
+    } else if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      const [yyyy, mm, dd] = dateInput.split('-');
+      return `${dd}/${mm}/${yyyy}`;
+    }
+    const obj = new Date(dateInput);
+    if (isNaN(obj.getTime())) return '—';
+    const day = String(obj.getDate()).padStart(2, '0');
+    const month = String(obj.getMonth() + 1).padStart(2, '0');
+    const year = obj.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
   const formatTimeString = (date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
-  const formatWorkingHours = (hours) => {
-    if (!hours) return '0 hrs';
+  const formatWorkingHours = (hours, status) => {
+    if (status === 'LEAVE' || hours === null || hours === undefined || hours === 0) return '—';
     const hrs = Math.floor(hours);
     const mins = Math.round((hours - hrs) * 60);
     return `${hrs}h ${mins}m`;
@@ -425,12 +446,14 @@ const Attendance = () => {
               ) : (
                 recentLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-muted/10 transition-all whitespace-nowrap">
-                    <td className="px-5 py-3.5 font-semibold whitespace-nowrap">{new Date(log.date).toLocaleDateString()}</td>
-                    <td className="px-5 py-3.5 font-mono text-xs whitespace-nowrap">{new Date(log.clockIn).toLocaleTimeString()}</td>
+                    <td className="px-5 py-3.5 font-semibold whitespace-nowrap">{formatDateDDMMYYYY(log.date)}</td>
                     <td className="px-5 py-3.5 font-mono text-xs whitespace-nowrap">
-                      {log.clockOut ? new Date(log.clockOut).toLocaleTimeString() : 'Shift Active'}
+                      {log.status === 'LEAVE' || !log.clockIn ? '—' : new Date(log.clockIn).toLocaleTimeString()}
                     </td>
-                    <td className="px-5 py-3.5 whitespace-nowrap">{formatWorkingHours(log.workingHours)}</td>
+                    <td className="px-5 py-3.5 font-mono text-xs whitespace-nowrap">
+                      {log.status === 'LEAVE' ? '—' : log.clockOut ? new Date(log.clockOut).toLocaleTimeString() : 'Shift Active'}
+                    </td>
+                    <td className="px-5 py-3.5 whitespace-nowrap">{formatWorkingHours(log.workingHours, log.status)}</td>
                     <td className="px-5 py-3.5 text-right whitespace-nowrap">
                       <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-primary/10 text-primary' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : 'bg-red-500/10 text-red-500'}`}>
                         {log.status} {log.lateMinutes ? `(${log.lateMinutes}m late)` : ''}

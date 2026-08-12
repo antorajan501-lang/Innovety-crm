@@ -7,7 +7,7 @@ const { getIo, broadcastTeamPerformanceUpdate } = require('../socket');
 
 const createTask = async (req, res) => {
   try {
-    const { title, description, priority, deadline, assigneeId, type, storyPoints, sprintName, assignType, teamId, projectId, estimatedHours } = req.body;
+    const { title, description, priority, deadline, assigneeId, type, storyPoints, sprintName, assignType, teamId, projectId, estimatedHours, stageId } = req.body;
     let filePaths = [];
 
     if (req.files) {
@@ -146,13 +146,42 @@ const createTask = async (req, res) => {
         where: { id: projectId },
         include: { members: { select: { userId: true } } }
       });
-      if (project) {
+
+      if (!project || project.isDeleted) {
+        return res.status(404).json({ message: 'Project not found' });
+      }
+
+      const isPrivileged = ['ADMIN', 'SUPER_ADMIN'].includes(req.user.role);
+      if (!isPrivileged) {
         const isProjectMember = project.members.some(m => m.userId === assigneeId) ||
           project.leaderId === assigneeId ||
           project.creatorId === assigneeId;
         if (!isProjectMember) {
           return res.status(400).json({ message: 'Task assignee must be a member of the selected project.' });
         }
+      }
+    }
+
+    let targetStageId = stageId || null;
+    let initialTaskStatus = 'PENDING';
+
+    if (projectId && !targetStageId) {
+      const firstStage = await prisma.projectWorkflowStage.findFirst({
+        where: { projectId },
+        orderBy: { order: 'asc' }
+      });
+      if (firstStage) {
+        targetStageId = firstStage.id;
+        if (firstStage.isCompletedStage) {
+          initialTaskStatus = 'APPROVED';
+        }
+      }
+    } else if (targetStageId) {
+      const assignedStage = await prisma.projectWorkflowStage.findUnique({
+        where: { id: targetStageId }
+      });
+      if (assignedStage && assignedStage.isCompletedStage) {
+        initialTaskStatus = 'APPROVED';
       }
     }
 
@@ -166,8 +195,9 @@ const createTask = async (req, res) => {
         creatorId: req.user.id,
         teamId: assigneeTeam ? assigneeTeam.teamId : null,
         projectId: projectId || null,
+        stageId: targetStageId,
         attachments: filePaths,
-        status: 'PENDING',
+        status: initialTaskStatus,
         type: type || 'TASK',
         storyPoints: storyPoints ? parseInt(storyPoints, 10) : 0,
         sprintName: sprintName || null,
@@ -176,7 +206,8 @@ const createTask = async (req, res) => {
       include: {
         assignee: { select: { id: true, name: true, email: true } },
         creator: { select: { id: true, name: true, role: true } },
-        project: { select: { id: true, projectCode: true, name: true } }
+        project: { select: { id: true, projectCode: true, name: true } },
+        stage: true
       }
     });
 
@@ -222,7 +253,14 @@ const createTask = async (req, res) => {
 
     try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
-    res.status(201).json(task);
+    console.log('Creating task for project:', projectId);
+    console.log('Created task id:', task.id);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Task created successfully',
+      task
+    });
   } catch (error) {
     console.error('Create task error:', error);
     res.status(500).json({ message: 'Failed to create task.' });
@@ -243,6 +281,15 @@ const getTasks = async (req, res) => {
         { description: { contains: search, mode: 'insensitive' } }
       ];
     }
+
+    where.AND = [
+      {
+        OR: [
+          { projectId: null },
+          { project: { isDeleted: false } }
+        ]
+      }
+    ];
 
     // Role filters
     if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
@@ -265,8 +312,24 @@ const getTasks = async (req, res) => {
       include: {
         assignee: { select: { id: true, name: true, employeeId: true, profilePic: true } },
         creator: { select: { id: true, name: true, role: true } },
+        reviewedBy: { select: { id: true, name: true, role: true, profilePic: true } },
         submissions: { orderBy: { submittedAt: 'desc' } },
-        comments: { orderBy: { createdAt: 'asc' } }
+        comments: {
+          include: { user: { select: { id: true, name: true, profilePic: true, role: true } } },
+          orderBy: { createdAt: 'asc' }
+        },
+        stage: true,
+        reviewHistory: {
+          include: { createdBy: { select: { id: true, name: true, profilePic: true, role: true } } },
+          orderBy: { createdAt: 'desc' }
+        },
+        stageApprovalAudits: {
+          include: {
+            requestedBy: { select: { id: true, name: true } },
+            approvedBy: { select: { id: true, name: true } }
+          },
+          orderBy: { createdAt: 'desc' }
+        }
       },
       orderBy: { updatedAt: 'desc' }
     });
@@ -286,10 +349,26 @@ const getTaskById = async (req, res) => {
       include: {
         assignee: { select: { id: true, name: true, employeeId: true, profilePic: true } },
         creator: { select: { id: true, name: true, role: true } },
+        reviewedBy: { select: { id: true, name: true, role: true, profilePic: true } },
         submissions: { orderBy: { submittedAt: 'desc' } },
-        comments: { orderBy: { createdAt: 'asc' } },
+        comments: {
+          include: { user: { select: { id: true, name: true, profilePic: true, role: true } } },
+          orderBy: { createdAt: 'asc' }
+        },
         history: { orderBy: { createdAt: 'desc' } },
-        subtasks: { orderBy: { createdAt: 'asc' } }
+        reviewHistory: {
+          include: { createdBy: { select: { id: true, name: true, profilePic: true, role: true } } },
+          orderBy: { createdAt: 'desc' }
+        },
+        subtasks: { orderBy: { createdAt: 'asc' } },
+        stage: true,
+        stageApprovalAudits: {
+          include: {
+            requestedBy: { select: { id: true, name: true } },
+            approvedBy: { select: { id: true, name: true } }
+          },
+          orderBy: { createdAt: 'desc' }
+        }
       }
     });
 
@@ -312,15 +391,126 @@ const getTaskById = async (req, res) => {
 const updateTaskStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, stageId, comment } = req.body;
 
     const task = await prisma.task.findUnique({ where: { id } });
     if (!task) {
       return res.status(404).json({ message: 'Task not found.' });
     }
 
+    // Verify task move permission (ADMIN, SUPER_ADMIN, TEAM_LEADER, Assignee, Creator, Project Leader, Project Member)
+    const project = task.projectId ? await prisma.project.findUnique({
+      where: { id: task.projectId },
+      include: { members: true, team: true }
+    }) : null;
+
+    const canMoveTask =
+      ['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(req.user.role) ||
+      task.assigneeId === req.user.id ||
+      task.creatorId === req.user.id ||
+      (project && project.leaderId === req.user.id) ||
+      (project && project.team?.leaderId === req.user.id) ||
+      (project && project.members?.some(m => m.userId === req.user.id));
+
+    if (!canMoveTask) {
+      return res.status(403).json({ message: 'You do not have permission to move this task.' });
+    }
+
+    let nextStatus = status || task.status;
+    let nextStageId = stageId || task.stageId;
+    let nextStageApprovalStatus = task.stageApprovalStatus;
+    let targetStage = null;
+
+    if (stageId && stageId !== task.stageId) {
+      targetStage = await prisma.projectWorkflowStage.findUnique({
+        where: { id: stageId },
+        include: { project: true }
+      });
+
+      if (!targetStage) {
+        return res.status(404).json({ message: 'Target workflow stage not found.' });
+      }
+
+      if (task.projectId && targetStage.projectId !== task.projectId) {
+        return res.status(400).json({ message: 'Target workflow stage does not belong to this project.' });
+      }
+
+      // Enforce Step-by-Step Sequential Progression (+1 or -1 adjacent stage)
+      if (task.stageId) {
+        const allStages = await prisma.projectWorkflowStage.findMany({
+          where: { projectId: task.projectId },
+          orderBy: { order: 'asc' }
+        });
+
+        const currentIdx = allStages.findIndex(s => s.id === task.stageId);
+        const targetIdx = allStages.findIndex(s => s.id === targetStage.id);
+
+        const isAdjacent = currentIdx < 0 || targetIdx < 0 || Math.abs(targetIdx - currentIdx) === 1;
+        const isPrivilegedBypass = ['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(req.user.role);
+        if (!isAdjacent && !isPrivilegedBypass) {
+          return res.status(400).json({ message: 'Task must move step by step.' });
+        }
+      }
+
+      nextStageId = targetStage.id;
+
+      if (targetStage.isCompletedStage) {
+        nextStatus = 'COMPLETED';
+      } else if (targetStage.requiresApproval) {
+        nextStatus = 'WAITING_FOR_REVIEW';
+      } else {
+        nextStatus = 'IN_PROGRESS';
+      }
+
+      if (targetStage.requiresApproval) {
+        const isPrivilegedApprover =
+          ['ADMIN', 'SUPER_ADMIN'].includes(req.user.role) ||
+          targetStage.approverId === req.user.id ||
+          (targetStage.approverRole === 'PROJECT_LEADER' && targetStage.project?.leaderId === req.user.id);
+
+        if (isPrivilegedApprover) {
+          nextStageApprovalStatus = 'APPROVED';
+          await prisma.taskStageApprovalAudit.create({
+            data: {
+              taskId: id,
+              stageId: targetStage.id,
+              requestedById: req.user.id,
+              approvedById: req.user.id,
+              status: 'APPROVED',
+              approvedAt: new Date(),
+              comment: comment || 'Stage transition auto-approved by authorized role.'
+            }
+          });
+        } else {
+          nextStageApprovalStatus = 'PENDING';
+          await prisma.taskStageApprovalAudit.create({
+            data: {
+              taskId: id,
+              stageId: targetStage.id,
+              requestedById: req.user.id,
+              status: 'PENDING',
+              comment: comment || 'Stage transition requested requiring approval.'
+            }
+          });
+
+          // Notify approver
+          const notifyUserId = targetStage.approverId || targetStage.project?.leaderId;
+          if (notifyUserId && notifyUserId !== req.user.id) {
+            await createNotification({
+              userId: notifyUserId,
+              title: 'Stage Transition Approval Required',
+              message: `Task "${task.title}" requires your approval to move to stage "${targetStage.name}".`,
+              type: 'APPROVAL_REQUIRED'
+            });
+          }
+        }
+      } else {
+        nextStageApprovalStatus = 'NOT_REQUIRED';
+      }
+    }
+
     // Dependency Validation: Block moving to IN_PROGRESS, APPROVED, or COMPLETED if prerequisites are incomplete
-    if (['IN_PROGRESS', 'APPROVED', 'COMPLETED'].includes(status)) {
+    if (['IN_PROGRESS', 'APPROVED', 'COMPLETED'].includes(nextStatus)) {
       const incompletePrerequisites = await prisma.taskDependency.findMany({
         where: { taskId: id },
         include: {
@@ -340,36 +530,34 @@ const updateTaskStatus = async (req, res) => {
       }
     }
 
-    // Validate state transition by role
-    if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
-      if (task.assigneeId !== req.user.id) {
-        return res.status(403).json({ message: 'Unauthorized status transition.' });
-      }
-
-      // Intern/Employee can transition: PENDING -> IN_PROGRESS, or re-run
-      if (status !== 'IN_PROGRESS' && status !== 'WAITING_FOR_REVIEW') {
-        return res.status(400).json({ message: 'Interns/Employees can only update task to In Progress or Submit for Review.' });
-      }
-    } else if (req.user.role === 'TEAM_LEADER') {
-      // Team leader can approve, reject, or mark in progress
-      // Verify leader leads assignee's team
-      const assigneeTeam = await prisma.teamMember.findFirst({
-        where: { userId: task.assigneeId },
-        include: { team: true }
-      });
-
-      if (!assigneeTeam || assigneeTeam.team.leaderId !== req.user.id) {
-        return res.status(403).json({ message: 'You can only review tasks for your own team members.' });
-      }
-    }
+    const isChangingStage = Boolean(stageId && stageId !== task.stageId);
+    const nextReviewStatus = isChangingStage
+      ? (targetStage?.requiresApproval ? (nextStageApprovalStatus === 'APPROVED' ? 'APPROVED' : 'PENDING') : 'APPROVED')
+      : task.reviewStatus;
 
     const updatedTask = await prisma.task.update({
       where: { id },
       data: {
-        status,
-        approvalStatus: status === 'APPROVED' ? 'APPROVED' : status === 'REJECTED' ? 'REJECTED' : task.approvalStatus
+        status: nextStatus,
+        stageId: nextStageId,
+        stageApprovalStatus: nextStageApprovalStatus,
+        reviewStatus: nextReviewStatus,
+        reviewedById: (isChangingStage && !targetStage?.requiresApproval) ? null : task.reviewedById,
+        reviewedAt: (isChangingStage && !targetStage?.requiresApproval) ? null : task.reviewedAt,
+        approvalStatus: nextStatus === 'APPROVED' ? 'APPROVED' : nextStatus === 'REJECTED' ? 'REJECTED' : (task.approvalStatus || 'NOT_REQUIRED')
       },
-      include: { assignee: true, creator: true }
+      include: {
+        assignee: true,
+        creator: true,
+        stage: true,
+        stageApprovalAudits: {
+          include: {
+            requestedBy: { select: { id: true, name: true } },
+            approvedBy: { select: { id: true, name: true } }
+          },
+          orderBy: { createdAt: 'desc' }
+        }
+      }
     });
 
     // If task was completed, check if any dependent tasks are now fully unlocked
@@ -570,10 +758,10 @@ const submitTask = async (req, res) => {
 const addComment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { text } = req.body;
+    const { text, audioUrl, type } = req.body;
 
-    if (!text) {
-      return res.status(400).json({ message: 'Comment text is required.' });
+    if (!text && !audioUrl) {
+      return res.status(400).json({ message: 'Comment text or audio is required.' });
     }
 
     const task = await prisma.task.findUnique({ where: { id } });
@@ -585,7 +773,12 @@ const addComment = async (req, res) => {
       data: {
         taskId: id,
         userId: req.user.id,
-        text
+        text: text || (type === 'AUDIO' ? 'Voice Message' : ''),
+        audioUrl: audioUrl || null,
+        type: type || (audioUrl ? 'AUDIO' : 'TEXT')
+      },
+      include: {
+        user: { select: { id: true, name: true, profilePic: true, role: true } }
       }
     });
 
@@ -595,18 +788,31 @@ const addComment = async (req, res) => {
         taskId: id,
         userId: req.user.id,
         action: 'COMMENT',
-        detail: `Added comment: "${text.substring(0, 30)}..."`
+        detail: `Added ${type === 'AUDIO' ? 'voice audio' : 'text'} comment.`
       }
     });
 
     // Notify other party
     const targetUserId = req.user.id === task.assigneeId ? task.creatorId : task.assigneeId;
-    await createNotification({
-      userId: targetUserId,
-      title: 'New Comment on Task',
-      message: `${req.user.name} commented on "${task.title}": "${text.substring(0, 40)}"`,
-      type: 'TASK_UPDATED'
-    });
+    if (targetUserId) {
+      await createNotification({
+        userId: targetUserId,
+        title: 'New Comment on Task',
+        message: `${req.user.name} commented on "${task.title}".`,
+        type: 'TASK_UPDATED'
+      });
+    }
+
+    // Broadcast Socket.IO event
+    try {
+      const io = getIo();
+      if (io) {
+        io.emit('task_comment_created', comment);
+        io.to(`task:${id}`).emit('taskMessage:new', comment);
+      }
+    } catch (e) {
+      console.error('Socket comment emit error:', e);
+    }
 
     res.status(201).json(comment);
   } catch (error) {

@@ -62,6 +62,58 @@ const computeProjectHealth = (project, totalTasks, completedTasks) => {
   return 'On Track'; // 🟢 On Track
 };
 
+const DEFAULT_WORKFLOW_STAGES = [
+  { name: 'To Do', color: '#64748B', order: 0, requiresApproval: false, isCompletedStage: false },
+  { name: 'In Progress', color: '#EAB308', order: 1, requiresApproval: false, isCompletedStage: false },
+  { name: 'In Review', color: '#8B5CF6', order: 2, requiresApproval: true, approverRole: 'PROJECT_LEADER', isCompletedStage: false },
+  { name: 'Done', color: '#10B981', order: 3, requiresApproval: true, isCompletedStage: true }
+];
+
+const validateWorkflowStages = (stages) => {
+  if (!Array.isArray(stages)) {
+    return { valid: false, message: 'Workflow stages must be an array.' };
+  }
+  if (stages.length < 2) {
+    return { valid: false, message: 'Minimum 2 workflow stages are required per project.' };
+  }
+  if (stages.length > 10) {
+    return { valid: false, message: 'Maximum 10 workflow stages are allowed per project.' };
+  }
+
+  const names = new Set();
+  const orders = new Set();
+  let completedCount = 0;
+
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i];
+    const name = (stage.name || '').trim();
+    if (!name) {
+      return { valid: false, message: `Stage at index ${i + 1} must have a non-empty name.` };
+    }
+    const lowerName = name.toLowerCase();
+    if (names.has(lowerName)) {
+      return { valid: false, message: `Duplicate stage name "${name}". Stage names must be unique within a project.` };
+    }
+    names.add(lowerName);
+
+    const order = typeof stage.order === 'number' ? stage.order : i;
+    if (orders.has(order)) {
+      return { valid: false, message: `Duplicate stage order value (${order}). Order values must be unique.` };
+    }
+    orders.add(order);
+
+    if (stage.isCompletedStage === true || String(stage.isCompletedStage) === 'true') {
+      completedCount++;
+    }
+  }
+
+  if (completedCount !== 1) {
+    return { valid: false, message: 'Exactly 1 completed stage (isCompletedStage: true) must exist per project.' };
+  }
+
+  return { valid: true };
+};
+
 // 1. Create Project
 const createProject = async (req, res) => {
   try {
@@ -75,7 +127,8 @@ const createProject = async (req, res) => {
       status,
       teamId,
       leaderId,
-      memberIds
+      memberIds,
+      workflowStages
     } = req.body;
 
     if (!name || !estimatedStartDate || !estimatedEndDate) {
@@ -98,6 +151,20 @@ const createProject = async (req, res) => {
       return res.status(400).json({ message: 'Please select at least one project member.' });
     }
 
+    const rawStages = (Array.isArray(workflowStages) && workflowStages.length > 0) ? workflowStages : DEFAULT_WORKFLOW_STAGES;
+    const lastIndex = rawStages.length - 1;
+    const enforcedStages = rawStages.map((stage, index) => ({
+      ...stage,
+      order: index,
+      isCompletedStage: index === lastIndex,
+      requiresApproval: index === lastIndex ? true : !!stage.requiresApproval,
+    }));
+
+    const stageValidation = validateWorkflowStages(enforcedStages);
+    if (!stageValidation.valid) {
+      return res.status(400).json({ message: stageValidation.message });
+    }
+
     const projectCode = await generateProjectCode();
     const initialStatus = (status && String(status).trim() !== '') ? status : 'ACTIVE';
     const isNowActive = initialStatus === 'ACTIVE';
@@ -118,6 +185,17 @@ const createProject = async (req, res) => {
         creatorId: req.user.id,
         members: {
           create: finalMemberIds.map(userId => ({ userId }))
+        },
+        workflowStages: {
+          create: rawStages.map((stg, idx) => ({
+            name: stg.name.trim(),
+            color: stg.color || '#6366F1',
+            order: typeof stg.order === 'number' ? stg.order : idx,
+            requiresApproval: !!stg.requiresApproval,
+            approverRole: stg.approverRole || null,
+            approverId: stg.approverId || null,
+            isCompletedStage: !!stg.isCompletedStage
+          }))
         }
       },
       include: {
@@ -127,7 +205,8 @@ const createProject = async (req, res) => {
           include: {
             user: { select: { id: true, name: true, email: true, role: true, profilePic: true } }
           }
-        }
+        },
+        workflowStages: { orderBy: { order: 'asc' } }
       }
     });
 
@@ -224,7 +303,8 @@ const getProjects = async (req, res) => {
           }
         },
         chatRoom: { select: { id: true, status: true, isArchived: true } },
-        tasks: { select: { id: true, status: true } }
+        tasks: { select: { id: true, status: true, stageId: true } },
+        workflowStages: { orderBy: { order: 'asc' } }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -318,6 +398,12 @@ const getProjectById = async (req, res) => {
             changedBy: { select: { id: true, name: true, role: true, profilePic: true } }
           },
           orderBy: { createdAt: 'desc' }
+        },
+        workflowStages: {
+          orderBy: { order: 'asc' },
+          include: {
+            approver: { select: { id: true, name: true, role: true } }
+          }
         }
       }
     });
@@ -719,11 +805,75 @@ const deleteDocument = async (req, res) => {
   }
 };
 
+// Update Project Workflow Stages (Only ADMIN and SUPER_ADMIN)
+const updateProjectWorkflowStages = async (req, res) => {
+  try {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Only Administrators can modify project workflow stages.' });
+    }
+
+    const { id } = req.params;
+    const { workflowStages } = req.body;
+
+    const lastIndex = workflowStages.length - 1;
+    const enforcedStages = workflowStages.map((stage, index) => ({
+      ...stage,
+      order: index,
+      isCompletedStage: index === lastIndex,
+      requiresApproval: index === lastIndex ? true : !!stage.requiresApproval,
+    }));
+
+    const stageValidation = validateWorkflowStages(enforcedStages);
+    if (!stageValidation.valid) {
+      return res.status(400).json({ message: stageValidation.message });
+    }
+
+    const project = await prisma.project.findUnique({ where: { id } });
+    if (!project || project.isDeleted) {
+      return res.status(404).json({ message: 'Project not found.' });
+    }
+
+    // Delete existing stages and replace with new validated set inside transaction
+    await prisma.$transaction(async (tx) => {
+      await tx.projectWorkflowStage.deleteMany({ where: { projectId: id } });
+      await tx.projectWorkflowStage.createMany({
+        data: enforcedStages.map((stage, idx) => ({
+          projectId: id,
+          name: stage.name.trim(),
+          color: stage.color || '#6366F1',
+          order: idx,
+          requiresApproval: stage.requiresApproval,
+          approverRole: stage.approverRole || null,
+          approverId: stage.approverId || null,
+          isCompletedStage: stage.isCompletedStage
+        }))
+      });
+    });
+
+    const updatedProject = await prisma.project.findUnique({
+      where: { id },
+      include: {
+        workflowStages: { orderBy: { order: 'asc' } }
+      }
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Project workflow stages updated successfully.',
+      workflowStages: updatedProject.workflowStages
+    });
+  } catch (error) {
+    console.error('[updateProjectWorkflowStages Error]:', error);
+    return res.status(500).json({ message: 'Failed to update workflow stages.', error: error.message });
+  }
+};
+
 module.exports = {
   createProject,
   getProjects,
   getProjectById,
   updateProject,
+  updateProjectWorkflowStages,
   deleteProject,
   uploadDocument,
   deleteDocument

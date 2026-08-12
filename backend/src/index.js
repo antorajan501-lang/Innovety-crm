@@ -150,6 +150,12 @@ app.get('/api/platform/settings', async (req, res) => {
     res.json({ companyName: 'Innoviety Enterprise', selectedTheme: 'emerald', themeMode: 'light', companyLogo: null });
   }
 });
+const organizationRoutes = require('./routes/organizationRoutes');
+const positionRoutes = require('./routes/positionRoutes');
+
+app.use('/api/organization', organizationRoutes);
+app.use('/api/positions', positionRoutes);
+
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/teams', teamRoutes);
@@ -162,6 +168,9 @@ app.use('/api/logs', logRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/repositories', repositoryRoutes);
+const leavePolicyRoutes = require('./routes/leavePolicyRoutes');
+
+app.use('/api/leave-policy', leavePolicyRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/assets', assetRoutes);
 app.use('/api/chat', chatRoutes);

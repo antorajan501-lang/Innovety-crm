@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   ShieldCheck, Palette, Users, Briefcase, UserCheck, Activity,
-  ArrowUpRight, PlusCircle, Building2, Lock, CheckCircle2, RefreshCw
+  ArrowUpRight, PlusCircle, Building2, Lock, CheckCircle2, RefreshCw, Award
 } from 'lucide-react';
 import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
@@ -11,13 +11,18 @@ import { useAuth } from '../../../context/AuthContext';
 const SuperAdminDashboard = () => {
   const { user } = useAuth();
   const [data, setData] = useState(null);
+  const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const fetchDashboardStats = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/super-admin/stats');
-      setData(res.data);
+      const [statsRes, posRes] = await Promise.all([
+        api.get('/super-admin/stats'),
+        api.get('/positions').catch(() => ({ data: [] }))
+      ]);
+      setData(statsRes.data);
+      setPositions(posRes.data || []);
     } catch (err) {
       console.error('Failed to load Super Admin dashboard stats:', err);
     } finally {
@@ -192,6 +197,39 @@ const SuperAdminDashboard = () => {
           <div className="text-[11px] text-muted-foreground font-medium flex items-center gap-2 pt-1 border-t border-border/20">
             <span>Running client & R&D projects</span>
           </div>
+        </div>
+      </div>
+
+      {/* Enterprise Position Distribution Card */}
+      <div className="rounded-3xl border border-border/60 bg-card p-6 shadow-md space-y-4">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <div className="flex items-center gap-2">
+            <Award className="h-5 w-5 text-primary" />
+            <div>
+              <h3 className="text-base font-extrabold text-foreground">Career Rank Position Distribution</h3>
+              <p className="text-xs text-muted-foreground font-medium">Employee breakdown across hierarchical positions (Intern → Director)</p>
+            </div>
+          </div>
+          <Link to="/super-admin/organization" className="text-xs font-bold text-primary hover:underline flex items-center gap-1">
+            <span>Manage Positions</span>
+            <ArrowUpRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+          {positions.map(pos => (
+            <div key={pos.id} className="p-3 rounded-2xl border border-border/40 bg-muted/20 text-center space-y-1">
+              <span
+                className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-extrabold truncate max-w-full"
+                style={{ backgroundColor: pos.color, color: pos.textColor || '#FFFFFF' }}
+              >
+                Level {pos.level}
+              </span>
+              <p className="text-xs font-bold text-foreground truncate" title={pos.name}>{pos.name}</p>
+              <p className="text-lg font-black text-primary">{pos.totalEmployees || 0}</p>
+              <p className="text-[10px] text-muted-foreground font-mono">{pos.code}</p>
+            </div>
+          ))}
         </div>
       </div>
 

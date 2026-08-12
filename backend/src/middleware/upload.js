@@ -32,8 +32,15 @@ const storage = multer.diskStorage({
     cb(null, path.join(uploadDir, folder));
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, `${uniqueSuffix}-${file.originalname}`);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const timestamp = Date.now();
+    const randomHex = Math.round(Math.random() * 1e9).toString(16);
+    if (file.fieldname === 'resume') {
+      cb(null, `resume_${timestamp}_${randomHex}${ext}`);
+    } else {
+      const uniqueSuffix = timestamp + '-' + Math.round(Math.random() * 1e9);
+      cb(null, `${uniqueSuffix}-${file.originalname}`);
+    }
   }
 });
 

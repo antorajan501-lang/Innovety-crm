@@ -290,26 +290,128 @@ async function main() {
     }
   });
 
-  // 5. System Settings
-  await prisma.systemSettings.upsert({
-    where: { id: 'GLOBAL' },
-    update: {},
-    create: {
-      id: 'GLOBAL',
-      companyName: 'INNOVEITY CRM',
-      senderEmail: 'no-reply@enterprise-crm.com',
-      internShiftStart: '09:30',
-      internShiftEnd: '18:30',
-      tlShiftStart: '09:30',
-      tlShiftEnd: '18:30',
-      officeLatitude: 12.971598,
-      officeLongitude: 77.594562,
-      allowedRadiusMeters: 200.0,
-      officeLocationName: 'INNOVEITY Headquarters'
-    }
+  // 6. Global Leave Policy & System Leave Types Seeding
+  const globalPolicy = await prisma.leavePolicy.findFirst({
+    where: { isGlobal: true }
   });
 
-  console.log('Database seeding complete: All users restored with full integrity.');
+  if (!globalPolicy) {
+    await prisma.leavePolicy.create({
+      data: {
+        isGlobal: true,
+        allocationType: 'ANNUAL',
+        carryForwardEnabled: true,
+        maxCarryForwardDays: 5.0,
+        halfDayAllowed: true,
+        workingDaysOnly: true,
+        autoApproval: false
+      }
+    });
+  }
+
+  const defaultLeaveTypes = [
+    {
+      name: 'Casual Leave',
+      code: 'CL',
+      description: 'Paid casual leave for personal obligations',
+      color: '#10B981',
+      icon: 'Calendar',
+      displayOrder: 1,
+      isPaid: true,
+      annualDays: 12.0,
+      monthlyCreditDays: 1.0,
+      allowCarryForward: true,
+      isSystem: true,
+      isActive: true
+    },
+    {
+      name: 'Sick Leave',
+      code: 'SL',
+      description: 'Paid medical and sick leave',
+      color: '#EF4444',
+      icon: 'Stethoscope',
+      displayOrder: 2,
+      isPaid: true,
+      annualDays: 10.0,
+      monthlyCreditDays: 0.0,
+      allowCarryForward: false,
+      isSystem: true,
+      isActive: true
+    },
+    {
+      name: 'Emergency Leave',
+      code: 'EL',
+      description: 'Urgent emergency leave',
+      color: '#F59E0B',
+      icon: 'AlertCircle',
+      displayOrder: 3,
+      isPaid: true,
+      annualDays: 5.0,
+      monthlyCreditDays: 0.0,
+      allowCarryForward: false,
+      isSystem: true,
+      isActive: true
+    },
+    {
+      name: 'Loss Of Pay',
+      code: 'LOP',
+      description: 'Unpaid leave when balance is exhausted',
+      color: '#6B7280',
+      icon: 'Clock',
+      displayOrder: 4,
+      isPaid: false,
+      annualDays: 0.0,
+      monthlyCreditDays: 0.0,
+      allowCarryForward: false,
+      isSystem: true,
+      isActive: true
+    }
+  ];
+
+  for (const lt of defaultLeaveTypes) {
+    await prisma.leaveType.upsert({
+      where: { code: lt.code },
+      update: {
+        name: lt.name,
+        color: lt.color,
+        icon: lt.icon,
+        isSystem: true,
+        displayOrder: lt.displayOrder
+      },
+      create: lt
+    });
+  }
+
+  // Initialize Leave Balances for all users
+  const allUsers = await prisma.user.findMany({ select: { id: true } });
+  const allLeaveTypes = await prisma.leaveType.findMany({ where: { isActive: true } });
+
+  for (const u of allUsers) {
+    for (const lt of allLeaveTypes) {
+      await prisma.userLeaveBalance.upsert({
+        where: {
+          userId_leaveTypeId: {
+            userId: u.id,
+            leaveTypeId: lt.id
+          }
+        },
+        update: {},
+        create: {
+          userId: u.id,
+          leaveTypeId: lt.id,
+          allocated: lt.annualDays,
+          used: 0,
+          pending: 0,
+          available: lt.annualDays,
+          carryForward: 0,
+          expired: 0,
+          lastCreditedAt: new Date()
+        }
+      });
+    }
+  }
+
+  console.log('Database seeding complete: All users, leave policy & default leave types restored with full integrity.');
 }
 
 main()

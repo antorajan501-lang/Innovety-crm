@@ -25,12 +25,18 @@ import {
   Building2,
   Briefcase,
   RotateCcw,
-  FileText
+  FileText,
+  Award,
+  TrendingUp
 } from 'lucide-react';
+import UserWizardModal from '../components/common/UserWizardModal';
+import PromoteUserModal from '../components/common/PromoteUserModal';
+import { useAuth } from '../context/AuthContext';
 
 const Employees = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user: currentUser } = useAuth();
   const urlSearch = new URLSearchParams(location.search).get('search') || '';
 
   const [users, setUsers] = useState([]);
@@ -38,17 +44,34 @@ const Employees = () => {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState(urlSearch);
   const [statusFilter, setStatusFilter] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [departmentFilter, setDepartmentFilter] = useState('');
+
+  const [availableDepartments, setAvailableDepartments] = useState([]);
+  const [availableRoles, setAvailableRoles] = useState([]);
 
   useEffect(() => {
     const sParam = new URLSearchParams(location.search).get('search') || '';
     setSearch(sParam);
   }, [location.search]);
 
+  useEffect(() => {
+    api.get('/organization/tree')
+      .then((res) => {
+        const depts = (res.data?.departments || []).map(d => d.name).filter(Boolean);
+        const pos = (res.data?.positions || []).map(p => p.name).filter(Boolean);
+        if (depts.length > 0) setAvailableDepartments(prev => Array.from(new Set([...prev, ...depts])));
+        if (pos.length > 0) setAvailableRoles(prev => Array.from(new Set([...prev, ...pos])));
+      })
+      .catch((err) => console.error('Failed to fetch org tree for filters:', err));
+  }, []);
+
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
   const [detailsModalUser, setDetailsModalUser] = useState(null);
+  const [promoteModalUser, setPromoteModalUser] = useState(null);
 
   // Custom Confirmation Modal state
   const [confirmModal, setConfirmModal] = useState({
@@ -100,11 +123,21 @@ const Employees = () => {
           search,
           role: 'EMPLOYEE',
           status: statusFilter,
-          limit: 15
+          department: departmentFilter,
+          position: roleFilter,
+          limit: 50
         }
       });
-      setUsers(res.data.users || []);
+      const fetchedUsers = res.data.users || [];
+      setUsers(fetchedUsers);
       setTotalCount(res.data.meta?.totalCount || 0);
+
+      // Collect departments and roles dynamically
+      const deptsFromUsers = fetchedUsers.map(u => u.department || u.departmentRef?.name).filter(Boolean);
+      const rolesFromUsers = fetchedUsers.map(u => u.position?.name || (u.role === 'TEAM_LEADER' ? 'Lead' : u.role === 'INTERN' ? 'Intern' : 'Junior')).filter(Boolean);
+      if (deptsFromUsers.length > 0) setAvailableDepartments(prev => Array.from(new Set([...prev, ...deptsFromUsers])));
+      if (rolesFromUsers.length > 0) setAvailableRoles(prev => Array.from(new Set([...prev, ...rolesFromUsers])));
+
       setAlertMsg({ type: '', text: '' });
       setLoading(false);
     } catch (err) {
@@ -116,7 +149,47 @@ const Employees = () => {
 
   useEffect(() => {
     fetchUsers();
-  }, [page, statusFilter]);
+    const handleUserPromoted = () => {
+      fetchUsers();
+    };
+    window.addEventListener('crm-user-promoted', handleUserPromoted);
+    return () => window.removeEventListener('crm-user-promoted', handleUserPromoted);
+  }, [page, statusFilter, roleFilter, departmentFilter]);
+
+  const displayUsers = React.useMemo(() => {
+    return users.filter((u) => {
+      if (statusFilter && u.status !== statusFilter) return false;
+      if (departmentFilter) {
+        const userDept = u.department || u.departmentRef?.name || '';
+        if (userDept.toLowerCase() !== departmentFilter.toLowerCase() && u.departmentId !== departmentFilter) {
+          return false;
+        }
+      }
+      if (roleFilter) {
+        const userPosName = u.position?.name || (u.role === 'TEAM_LEADER' ? 'Lead' : u.role === 'INTERN' ? 'Intern' : u.role);
+        if (userPosName.toLowerCase() !== roleFilter.toLowerCase() && u.role !== roleFilter) {
+          return false;
+        }
+      }
+      if (search) {
+        const q = search.toLowerCase();
+        const matchesName = u.name?.toLowerCase().includes(q);
+        const matchesEmail = u.email?.toLowerCase().includes(q);
+        const matchesId = u.employeeId?.toLowerCase().includes(q);
+        const matchesDept = (u.department || u.departmentRef?.name || '').toLowerCase().includes(q);
+        if (!matchesName && !matchesEmail && !matchesId && !matchesDept) return false;
+      }
+      return true;
+    });
+  }, [users, statusFilter, departmentFilter, roleFilter, search]);
+
+  const handleClearFilters = () => {
+    setSearch('');
+    setStatusFilter('');
+    setRoleFilter('');
+    setDepartmentFilter('');
+    setPage(1);
+  };
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -285,15 +358,14 @@ const Employees = () => {
       });
       const exportList = res.data.users || users;
 
-      const headers = ['Employee ID', 'Full Name', 'Email', 'Phone', 'College', 'Department', 'Role', 'Status', 'Joining Date', 'Created At'];
+      const headers = ['Employee ID', 'Full Name', 'Role', 'Email', 'Phone', 'College', 'Status', 'Joining Date', 'Created At'];
       const csvRows = exportList.map(u => [
         `"${(u.employeeId || '').replace(/"/g, '""')}"`,
         `"${(u.name || '').replace(/"/g, '""')}"`,
+        `"${(u.position?.name || u.role || 'Junior').replace(/"/g, '""')}"`,
         `"${(u.email || '').replace(/"/g, '""')}"`,
         `"${(u.phone || '').replace(/"/g, '""')}"`,
         `"${(u.college || '').replace(/"/g, '""')}"`,
-        `"${(u.department || '').replace(/"/g, '""')}"`,
-        `"${(u.role || '').replace(/"/g, '""')}"`,
         `"${(u.status || '').replace(/"/g, '""')}"`,
         `"${u.joiningDate ? new Date(u.joiningDate).toLocaleDateString() : ''}"`,
         `"${u.createdAt ? new Date(u.createdAt).toLocaleDateString() : ''}"`
@@ -360,40 +432,96 @@ const Employees = () => {
       )}
 
       {/* Control Actions Bar */}
-      <div className="glass-card p-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border border-white/70 dark:border-white/10 shadow-lg">
-        {/* Search */}
-        <form onSubmit={handleSearchSubmit} className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search by ID, name, email..."
-            className="w-full pl-9 bg-white/50 dark:bg-slate-800/40 text-xs py-2 rounded-xl border border-white/80 dark:border-slate-700/60 focus:bg-white dark:focus:bg-slate-800 transition-all"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </form>
-
-        {/* Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Filters */}
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-muted/40 text-xs px-3 py-2 rounded-xl">
+      <div className="glass-card p-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between border border-white/70 dark:border-white/10 shadow-lg">
+        {/* Horizontal Filters Row */}
+        <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-0">
+          {/* Status Dropdown */}
+          <select
+            value={statusFilter}
+            onChange={(e) => {
+              setStatusFilter(e.target.value);
+              setPage(1);
+            }}
+            className="h-11 px-3.5 py-2 bg-white/80 dark:bg-slate-800/80 text-xs font-semibold rounded-xl border border-border/60 focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer shadow-xs"
+          >
             <option value="">All Statuses</option>
-            <option value="ACTIVE">Active</option>
-            <option value="INACTIVE">Inactive</option>
+            <option value="ACTIVE">ACTIVE</option>
+            <option value="INACTIVE">INACTIVE</option>
           </select>
 
-          <button onClick={triggerExport} className="flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold hover:bg-muted">
+          {/* Role Dropdown */}
+          <select
+            value={roleFilter}
+            onChange={(e) => {
+              setRoleFilter(e.target.value);
+              setPage(1);
+            }}
+            className="h-11 px-3.5 py-2 bg-white/80 dark:bg-slate-800/80 text-xs font-semibold rounded-xl border border-border/60 focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer shadow-xs"
+          >
+            <option value="">All Roles</option>
+            {availableRoles.map((r) => (
+              <option key={r} value={r}>{r}</option>
+            ))}
+          </select>
+
+          {/* Department Dropdown */}
+          <select
+            value={departmentFilter}
+            onChange={(e) => {
+              setDepartmentFilter(e.target.value);
+              setPage(1);
+            }}
+            className="h-11 px-3.5 py-2 bg-white/80 dark:bg-slate-800/80 text-xs font-semibold rounded-xl border border-border/60 focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer shadow-xs"
+          >
+            <option value="">All Departments</option>
+            {availableDepartments.map((d) => (
+              <option key={d} value={d}>{d}</option>
+            ))}
+          </select>
+
+          {/* Search Input */}
+          <div className="relative flex-1 min-w-[220px] max-w-xs sm:max-w-sm">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search by name / ID / email..."
+              className="w-full h-11 pl-10 pr-4 bg-white/80 dark:bg-slate-800/80 text-xs font-medium rounded-xl border border-border/60 focus:bg-white dark:focus:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all shadow-xs"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+            />
+          </div>
+
+          {/* Clear Filters Button */}
+          {(search || statusFilter || roleFilter || departmentFilter) && (
+            <button
+              type="button"
+              onClick={handleClearFilters}
+              className="h-11 px-3.5 inline-flex items-center gap-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/20 text-xs font-bold transition-all cursor-pointer shadow-xs"
+              title="Reset all filters"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span>Clear Filters</span>
+            </button>
+          )}
+        </div>
+
+        {/* Right Side Buttons */}
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={triggerExport} className="h-11 px-3.5 flex items-center gap-1.5 rounded-xl border border-border/60 bg-card text-xs font-semibold hover:bg-muted transition-all shadow-xs">
             <Download className="h-3.5 w-3.5" />
             <span>Export CSV</span>
           </button>
 
-          <button onClick={() => setCreateModalOpen(true)} className="flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-2 text-xs font-semibold text-primary-foreground shadow-md hover:bg-primary-hover">
+          <button onClick={() => setCreateModalOpen(true)} className="h-11 px-4 flex items-center gap-1.5 rounded-xl bg-primary text-xs font-semibold text-primary-foreground shadow-md hover:bg-primary-hover transition-all">
             <Plus className="h-3.5 w-3.5" />
             <span>Add Employee</span>
           </button>
 
           {selectedIds.length > 0 && (
-            <button onClick={handleBulkDelete} className="flex items-center gap-1.5 rounded-xl bg-danger px-3.5 py-2 text-xs font-semibold text-white shadow-md hover:bg-danger-hover">
+            <button onClick={handleBulkDelete} className="h-11 px-3.5 flex items-center gap-1.5 rounded-xl bg-danger text-xs font-semibold text-white shadow-md hover:bg-danger-hover transition-all">
               <Trash2 className="h-3.5 w-3.5" />
               <span>Delete Selected ({selectedIds.length})</span>
             </button>
@@ -403,16 +531,16 @@ const Employees = () => {
 
       {/* Main Registry Table */}
       <div className="w-full min-w-0 overflow-x-auto glass-card border border-white/70 dark:border-white/10 shadow-lg">
-        <table className="w-full min-w-[900px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[1000px] border-collapse text-left text-sm">
           <thead>
             <tr className="border-b border-border/40 bg-white/40 dark:bg-slate-800/40 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
-              <th className="px-6 py-4 whitespace-nowrap">
+              <th className="w-12 px-4 py-4 whitespace-nowrap">
                 <input
                   type="checkbox"
-                  checked={users.length > 0 && selectedIds.length === users.length}
+                  checked={displayUsers.length > 0 && selectedIds.length === displayUsers.length}
                   onChange={(e) => {
                     if (e.target.checked) {
-                      setSelectedIds(users.map(u => u.id));
+                      setSelectedIds(displayUsers.map(u => u.id));
                     } else {
                       setSelectedIds([]);
                     }
@@ -420,12 +548,12 @@ const Employees = () => {
                   className="rounded border-border text-primary focus:ring-primary"
                 />
               </th>
-              <th className="px-6 py-4 whitespace-nowrap">ID</th>
-              <th className="px-6 py-4 whitespace-nowrap">Employee Name</th>
-              <th className="px-6 py-4 whitespace-nowrap">Email</th>
-              <th className="px-6 py-4 whitespace-nowrap">Department</th>
-              <th className="px-6 py-4 whitespace-nowrap">Status</th>
-              <th className="px-6 py-4 text-right whitespace-nowrap">Actions</th>
+              <th className="w-[120px] px-4 py-4 whitespace-nowrap">ID</th>
+              <th className="px-4 py-4 whitespace-nowrap">Employee Name</th>
+              <th className="w-[140px] px-4 py-4 whitespace-nowrap">Role</th>
+              <th className="w-[200px] px-4 py-4 whitespace-nowrap">Department</th>
+              <th className="w-[120px] px-4 py-4 whitespace-nowrap">Status</th>
+              <th className="w-[200px] min-w-[200px] px-4 py-4 text-right whitespace-nowrap">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/30">
@@ -438,7 +566,7 @@ const Employees = () => {
                   </div>
                 </td>
               </tr>
-            ) : alertMsg.type === 'error' && users.length === 0 ? (
+            ) : alertMsg.type === 'error' && displayUsers.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-6 py-16 text-center whitespace-nowrap">
                   <div className="mx-auto flex max-w-sm flex-col items-center justify-center text-center">
@@ -459,35 +587,35 @@ const Employees = () => {
                   </div>
                 </td>
               </tr>
-            ) : users.length === 0 ? (
+            ) : displayUsers.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-6 py-16 text-center whitespace-nowrap">
                   <div className="mx-auto flex max-w-sm flex-col items-center justify-center text-center">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary mb-4 shadow-sm">
                       <Briefcase className="h-8 w-8" />
                     </div>
-                    <h3 className="text-base font-bold text-foreground">No Employees Registered</h3>
+                    <h3 className="text-base font-bold text-foreground">No Employees Found</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      The Employee Registry is currently empty. Click below to add a new employee.
+                      No employee records match the selected filter criteria.
                     </p>
                     <button
-                      onClick={() => setCreateModalOpen(true)}
+                      onClick={handleClearFilters}
                       className="mt-4 inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-md hover:bg-primary-hover transition-all"
                     >
-                      <Plus className="h-4 w-4" />
-                      <span>Add New Employee</span>
+                      <RotateCcw className="h-4 w-4" />
+                      <span>Clear Filters</span>
                     </button>
                   </div>
                 </td>
               </tr>
             ) : (
-              users.map((item) => (
+              displayUsers.map((item) => (
                 <tr
                   key={item.id}
                   className="hover:bg-muted/30 cursor-pointer transition-all h-16 whitespace-nowrap"
                   onClick={() => setDetailsModalUser(item)}
                 >
-                  <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                  <td className="w-12 px-4 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={selectedIds.includes(item.id)}
@@ -501,22 +629,44 @@ const Employees = () => {
                       className="rounded border-border text-primary focus:ring-primary"
                     />
                   </td>
-                  <td className="px-6 py-4 font-mono font-bold text-xs text-primary whitespace-nowrap">
+                  <td className="w-[120px] px-4 py-4 font-mono font-bold text-xs text-primary whitespace-nowrap">
                     {item.employeeId}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="px-4 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
                       <UserAvatar
                         src={item.profilePic}
                         name={item.name}
-                        className="h-9 w-9 rounded-xl object-cover ring-1 ring-border/40 shadow-sm"
+                        className="h-10 w-10 rounded-xl object-cover ring-1 ring-border/40 shadow-sm shrink-0"
                       />
-                      <span className="font-semibold text-foreground hover:text-primary transition-colors">{item.name}</span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="font-semibold text-foreground hover:text-primary transition-colors text-xs sm:text-sm truncate">
+                          {item.name}
+                        </span>
+                        <span className="text-[11px] font-medium text-muted-foreground truncate mt-0.5" title={item.email}>
+                          {item.email}
+                        </span>
+                      </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-xs text-muted-foreground max-w-[200px] truncate whitespace-nowrap" title={item.email}>{item.email}</td>
-                  <td className="px-6 py-4 text-xs font-medium text-foreground whitespace-nowrap">{item.department || 'Engineering'}</td>
-                  <td className="px-6 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                  <td className="w-[140px] px-4 py-4 whitespace-nowrap">
+                    {item.position ? (
+                      <span
+                        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold shadow-xs"
+                        style={{ backgroundColor: item.position.color || '#3B82F6', color: item.position.textColor || '#FFFFFF' }}
+                      >
+                        <Award className="h-3 w-3" />
+                        <span>{item.position.name}</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                        <Award className="h-3 w-3" />
+                        <span>Junior</span>
+                      </span>
+                    )}
+                  </td>
+                  <td className="w-[200px] px-4 py-4 text-xs font-medium text-foreground truncate whitespace-nowrap" title={item.department || item.departmentRef?.name || 'N/A'}>{item.department || item.departmentRef?.name || 'N/A'}</td>
+                  <td className="w-[120px] px-4 py-4 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => handleToggleStatus(item.id, item.status)}
                       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase transition-all ${item.status === 'ACTIVE' ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 text-red-500'}`}
@@ -525,8 +675,36 @@ const Employees = () => {
                       <span>{item.status}</span>
                     </button>
                   </td>
-                  <td className="px-6 py-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-1">
+                  <td className="w-[200px] min-w-[200px] px-4 py-4 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1 whitespace-nowrap">
+                      {['ADMIN', 'SUPER_ADMIN'].includes(currentUser?.role) && (
+                        <button
+                          onClick={() => setPromoteModalUser(item)}
+                          className="rounded-lg p-1.5 text-amber-600 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-colors"
+                          title="Promote User"
+                        >
+                          <TrendingUp className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (item.resume) {
+                            downloadFile(item.resume);
+                          } else {
+                            alert('No resume uploaded for this employee.');
+                          }
+                        }}
+                        className={`rounded-lg p-1.5 border transition-colors inline-flex items-center gap-1 cursor-pointer ${
+                          item.resume
+                            ? 'text-blue-600 bg-blue-500/10 hover:bg-blue-500/20 border-blue-500/30'
+                            : 'text-muted-foreground/40 bg-muted/10 border-border/20 cursor-not-allowed'
+                        }`}
+                        title={item.resume ? 'View Resume' : 'No resume uploaded'}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </button>
                       <button onClick={() => setDetailsModalUser(item)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-primary transition-colors" title="View Details Card">
                         <Eye className="h-4 w-4" />
                       </button>
@@ -569,125 +747,84 @@ const Employees = () => {
         </div>
       </div>
 
-      {/* Create Modal */}
-      {createModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg max-w-[95vw] max-h-[90vh] overflow-y-auto rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold">Add Employee Account</h3>
-              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => setCreateModalOpen(false)}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      {/* Onboard Create / Edit User Wizard Modal */}
+      <UserWizardModal
+        isOpen={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        targetRole="EMPLOYEE"
+        loading={loading}
+        onSubmit={async (wizardData) => {
+          try {
+            setLoading(true);
+            let payload = wizardData;
+            if (wizardData.resumeFile) {
+              const formData = new FormData();
+              Object.keys(wizardData).forEach(key => {
+                if (key === 'resumeFile') {
+                  formData.append('resume', wizardData[key]);
+                } else if (wizardData[key] !== null && wizardData[key] !== undefined) {
+                  formData.append(key, wizardData[key]);
+                }
+              });
+              payload = formData;
+            }
 
-            <form onSubmit={handleCreateSubmit} className="mt-4 space-y-4 max-h-[75vh] overflow-y-auto pr-1">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Full Name *</label>
-                  <input type="text" required name="name" value={formData.name} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Email Address *</label>
-                  <input type="email" required name="email" value={formData.email} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-              </div>
+            await api.post('/users', payload, payload instanceof FormData ? {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            } : undefined);
+            setAlertMsg({ type: 'success', text: 'Employee account created successfully.' });
+            setCreateModalOpen(false);
+            fetchUsers();
+          } catch (err) {
+            console.error('Employee creation error:', err);
+            throw err;
+          } finally {
+            setLoading(false);
+          }
+        }}
+      />
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Phone Number</label>
-                  <input type="text" name="phone" value={formData.phone} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Date of Birth (DOB) *</label>
-                  <input type="date" required name="dob" value={formData.dob} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-              </div>
+      <UserWizardModal
+        isOpen={editModalOpen}
+        onClose={() => {
+          setEditModalOpen(false);
+          setSelectedUser(null);
+        }}
+        isEdit={true}
+        initialData={selectedUser}
+        targetRole="EMPLOYEE"
+        loading={loading}
+        onSubmit={async (wizardData) => {
+          try {
+            setLoading(true);
+            let payload = wizardData;
+            if (wizardData.resumeFile) {
+              const formData = new FormData();
+              Object.keys(wizardData).forEach(key => {
+                if (key === 'resumeFile') {
+                  formData.append('resume', wizardData[key]);
+                } else if (wizardData[key] !== null && wizardData[key] !== undefined) {
+                  formData.append(key, wizardData[key]);
+                }
+              });
+              payload = formData;
+            }
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Department</label>
-                  <input type="text" name="department" value={formData.department} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Joining Date</label>
-                  <input type="date" name="joiningDate" value={formData.joiningDate} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-              </div>
-
-              <CandidateTypeFields
-                formData={formData}
-                onChange={handleInputChange}
-                onFileChange={handleFileChange}
-                isEdit={false}
-              />
-
-              <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
-                Create Employee
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Edit Modal */}
-      {editModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-lg max-w-[95vw] max-h-[90vh] overflow-y-auto rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200 text-left">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold">Edit Employee Details</h3>
-              <button className="rounded-lg p-1 hover:bg-muted" onClick={() => setEditModalOpen(false)}>
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleEditSubmit} className="mt-4 space-y-4 max-h-[75vh] overflow-y-auto pr-1">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Full Name *</label>
-                  <input type="text" required name="name" value={formData.name} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Email Address *</label>
-                  <input type="email" required name="email" value={formData.email} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Phone Number</label>
-                  <input type="text" name="phone" value={formData.phone} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Date of Birth (DOB) *</label>
-                  <input type="date" required name="dob" value={formData.dob} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Department</label>
-                  <input type="text" name="department" value={formData.department} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Joining Date</label>
-                  <input type="date" name="joiningDate" value={formData.joiningDate} onChange={handleInputChange} className="text-xs border px-3 py-2 rounded-xl bg-muted/30" />
-                </div>
-              </div>
-
-              <CandidateTypeFields
-                formData={formData}
-                onChange={handleInputChange}
-                onFileChange={handleFileChange}
-                isEdit={true}
-              />
-
-              <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
-                Save Changes
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
+            await api.put(`/users/${selectedUser.id}`, payload, payload instanceof FormData ? {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            } : undefined);
+            setAlertMsg({ type: 'success', text: 'Employee record updated successfully.' });
+            setEditModalOpen(false);
+            setSelectedUser(null);
+            fetchUsers();
+          } catch (err) {
+            console.error('Employee edit error:', err);
+            throw err;
+          } finally {
+            setLoading(false);
+          }
+        }}
+      />
 
       {/* Accessible Confirmation Modal */}
       <ConfirmModal
@@ -809,7 +946,7 @@ const Employees = () => {
                     <span className="text-[9px] font-bold text-muted-foreground uppercase flex items-center gap-1 mb-0.5">
                       <Building2 className="h-3 w-3 text-primary" /> Department
                     </span>
-                    <span className="font-semibold text-foreground text-xs">{detailsModalUser.department || 'Management'}</span>
+                    <span className="font-semibold text-foreground text-xs">{detailsModalUser.department || detailsModalUser.departmentRef?.name || 'N/A'}</span>
                   </div>
                 </div>
               </div>
@@ -850,6 +987,19 @@ const Employees = () => {
 
             {/* Footer Actions */}
             <div className="pt-3 mt-2 border-t border-border/40 flex items-center justify-end gap-2.5">
+              {['ADMIN', 'SUPER_ADMIN'].includes(currentUser?.role) && (
+                <button
+                  onClick={() => {
+                    const u = detailsModalUser;
+                    setDetailsModalUser(null);
+                    setPromoteModalUser(u);
+                  }}
+                  className="flex items-center gap-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-md transition-all cursor-pointer"
+                >
+                  <TrendingUp className="h-3.5 w-3.5" />
+                  <span>Promote User</span>
+                </button>
+              )}
               <button
                 onClick={() => {
                   const u = detailsModalUser;
@@ -876,6 +1026,20 @@ const Employees = () => {
           </div>
         </div>
       )}
+
+      {/* PROMOTE USER MODAL */}
+      <PromoteUserModal
+        isOpen={!!promoteModalUser}
+        onClose={() => setPromoteModalUser(null)}
+        user={promoteModalUser}
+        onSuccess={(updatedUser, msg) => {
+          const targetId = updatedUser?.id || promoteModalUser?.id;
+          setUsers(prev => prev.filter(u => u.id !== targetId));
+          setTotalCount(prev => Math.max(0, prev - 1));
+          setAlertMsg({ type: 'success', text: msg || 'User promoted successfully!' });
+          fetchUsers();
+        }}
+      />
     </div>
   );
 };

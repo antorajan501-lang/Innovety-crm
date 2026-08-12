@@ -29,7 +29,8 @@ import {
   ArrowRight,
   X,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  GripVertical
 } from 'lucide-react';
 import UserAvatar from '../components/common/UserAvatar';
 import {
@@ -43,6 +44,7 @@ import {
   MilestoneCard,
   ActivityItem
 } from '../components/project';
+import ConfirmModal from '../components/ConfirmModal';
 
 const Projects = () => {
   const { user } = useAuth();
@@ -78,6 +80,8 @@ const Projects = () => {
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
   const [drawerTab, setDrawerTab] = useState('Overview'); // Overview, Kanban Board, Milestones, Project Calendar, Documents, Audit History
+  const [deleteConfirmModalOpen, setDeleteConfirmModalOpen] = useState(false);
+  const [projectToDeleteId, setProjectToDeleteId] = useState(null);
 
   // Users & Teams for dropdown selectors
   const [teamLeaders, setTeamLeaders] = useState([]);
@@ -94,17 +98,26 @@ const Projects = () => {
   });
 
   // Form State
+  const [wizardStep, setWizardStep] = useState(1);
+  const [draggedStageIndex, setDraggedStageIndex] = useState(null);
+  const [dragOverStageIndex, setDragOverStageIndex] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     type: 'CLIENT',
     priority: 'MEDIUM',
-    status: 'DRAFT',
+    status: 'ACTIVE',
     estimatedStartDate: '',
     estimatedEndDate: '',
     teamId: '',
     leaderId: '',
-    memberIds: []
+    memberIds: [],
+    workflowStages: [
+      { name: 'To Do', color: '#64748B', order: 0, requiresApproval: false, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: false },
+      { name: 'In Progress', color: '#EAB308', order: 1, requiresApproval: false, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: false },
+      { name: 'In Review', color: '#8B5CF6', order: 2, requiresApproval: true, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: false },
+      { name: 'Done', color: '#10B981', order: 3, requiresApproval: true, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: true }
+    ]
   });
 
   const [fileUpload, setFileUpload] = useState(null);
@@ -206,6 +219,100 @@ const Projects = () => {
     });
   };
 
+  const getStepValidation = (step) => {
+    if (step === 1) {
+      if (!formData.name.trim()) return { valid: false, error: 'Project Name is required.' };
+      if (!formData.estimatedStartDate) return { valid: false, error: 'Start Date is required.' };
+      if (!formData.estimatedEndDate) return { valid: false, error: 'End Date is required.' };
+      if (new Date(formData.estimatedEndDate) < new Date(formData.estimatedStartDate)) {
+        return { valid: false, error: 'End Date must be greater than or equal to Start Date.' };
+      }
+      if (!formData.leaderId) return { valid: false, error: 'Project Leader selection is required.' };
+      return { valid: true };
+    }
+
+    if (step === 2) {
+      if (formData.memberIds.length === 0) {
+        return { valid: false, error: 'At least one project member or leader must be assigned.' };
+      }
+      return { valid: true };
+    }
+
+    if (step === 3) {
+      const stages = formData.workflowStages || [];
+      if (stages.length < 2 || stages.length > 10) {
+        return { valid: false, error: 'Workflow must contain between 2 and 10 stages.' };
+      }
+      const names = new Set();
+      let completedCount = 0;
+      for (const stg of stages) {
+        const name = (stg.name || '').trim();
+        if (!name) return { valid: false, error: 'All workflow stage names must be non-empty.' };
+        if (names.has(name.toLowerCase())) return { valid: false, error: `Duplicate stage name "${name}".` };
+        names.add(name.toLowerCase());
+        if (stg.isCompletedStage) completedCount++;
+      }
+      if (completedCount !== 1) {
+        return { valid: false, error: 'Select exactly one completed stage.' };
+      }
+      return { valid: true };
+    }
+
+    if (step === 4) {
+      for (const stg of formData.workflowStages || []) {
+        if (stg.requiresApproval && !stg.approverRole && !stg.approverId) {
+          return { valid: false, error: `Select an approver for approval-required stage "${stg.name}".` };
+        }
+      }
+      return { valid: true };
+    }
+
+    return { valid: true };
+  };
+
+  const handleStageDragStart = (e, index) => {
+    e.dataTransfer.setData('text/plain', index.toString());
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedStageIndex(index);
+  };
+
+  const handleStageDragOver = (e, index) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverStageIndex !== index) {
+      setDragOverStageIndex(index);
+    }
+  };
+
+  const handleStageDrop = (e, dropIndex) => {
+    e.preventDefault();
+    const dragIndexStr = e.dataTransfer.getData('text/plain');
+    const dragIndex = draggedStageIndex !== null ? draggedStageIndex : parseInt(dragIndexStr, 10);
+
+    if (isNaN(dragIndex) || dragIndex === dropIndex) {
+      setDraggedStageIndex(null);
+      setDragOverStageIndex(null);
+      return;
+    }
+
+    const updatedStages = [...formData.workflowStages];
+    const [draggedItem] = updatedStages.splice(dragIndex, 1);
+    updatedStages.splice(dropIndex, 0, draggedItem);
+
+    const reorderedStages = updatedStages.map((stg, idx) => ({
+      ...stg,
+      order: idx
+    }));
+
+    setFormData(prev => ({
+      ...prev,
+      workflowStages: reorderedStages
+    }));
+
+    setDraggedStageIndex(null);
+    setDragOverStageIndex(null);
+  };
+
   const openCreateModal = () => {
     const today = new Date().toISOString().split('T')[0];
     const nextMonth = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().split('T')[0];
@@ -221,19 +328,36 @@ const Projects = () => {
       estimatedEndDate: nextMonth,
       teamId: '',
       leaderId: defaultLeaderId,
-      memberIds: defaultLeaderId ? [defaultLeaderId] : []
+      memberIds: defaultLeaderId ? [defaultLeaderId] : [],
+      workflowStages: [
+        { name: 'To Do', color: '#64748B', order: 0, requiresApproval: false, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: false },
+        { name: 'In Progress', color: '#EAB308', order: 1, requiresApproval: false, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: false },
+        { name: 'In Review', color: '#8B5CF6', order: 2, requiresApproval: true, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: false },
+        { name: 'Done', color: '#10B981', order: 3, requiresApproval: true, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: true }
+      ]
     });
+    setWizardStep(1);
     setCreateModalOpen(true);
   };
 
   const handleCreateSubmit = async (e) => {
-    e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
+    if (!formData.name) {
+      setAlertMsg('Project Name is required.');
+      return;
+    }
     if (new Date(formData.estimatedEndDate) <= new Date(formData.estimatedStartDate)) {
       setAlertMsg('Estimated End Date must be after Estimated Start Date.');
       return;
     }
     if (formData.teamId && formData.memberIds.length === 0) {
       setAlertMsg('Please select at least one project member.');
+      return;
+    }
+
+    const stageValidation = getStepValidation(3);
+    if (!stageValidation.valid) {
+      setAlertMsg(stageValidation.error);
       return;
     }
 
@@ -302,8 +426,16 @@ const Projects = () => {
     }
   };
 
-  const handleDeleteProject = async (projId) => {
-    if (!window.confirm('Are you sure you want to delete this project? The chat group will be archived and saved.')) return;
+  const confirmDeleteProject = (projId) => {
+    setProjectToDeleteId(projId);
+    setDeleteConfirmModalOpen(true);
+  };
+
+  const executeDeleteProject = async () => {
+    if (!projectToDeleteId) return;
+    const projId = projectToDeleteId;
+    setDeleteConfirmModalOpen(false);
+    setProjectToDeleteId(null);
     try {
       await api.delete(`/projects/${projId}`);
       setAlertMsg('Project deleted and archived successfully.');
@@ -544,19 +676,24 @@ const Projects = () => {
         </div>
       )}
 
-      {/* Create Project Modal */}
+      {/* Create Project Wizard Modal */}
       {createModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-card w-full max-w-2xl rounded-3xl border border-white/80 dark:border-white/10 shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+          <div className="bg-card w-full max-w-3xl rounded-3xl border border-white/80 dark:border-white/10 shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
             {/* Modal Header */}
-            <div className="px-6 py-5 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-b border-border/40 flex items-center justify-between shrink-0">
+            <div className="px-6 py-4 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-b border-border/40 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-2xl bg-primary/15 border border-primary/20 text-primary">
-                  <FolderOpen className="w-5 h-5" />
+                  <Sparkles className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black tracking-tight text-foreground">Create New Project</h2>
-                  <p className="text-xs text-muted-foreground">Setup project schedule, priority, team leader & member permissions</p>
+                  <h2 className="text-lg font-black tracking-tight text-foreground">Project & Workflow Setup Wizard</h2>
+                  <p className="text-xs text-muted-foreground">Step {wizardStep} of 5 — {
+                    wizardStep === 1 ? 'Basic Info' :
+                    wizardStep === 2 ? 'Team Members' :
+                    wizardStep === 3 ? 'Workflow Stages' :
+                    wizardStep === 4 ? 'Approval Rules' : 'Preview & Create'
+                  }</p>
                 </div>
               </div>
               <button
@@ -567,189 +704,674 @@ const Projects = () => {
               </button>
             </div>
 
-            {/* Modal Body */}
-            <form onSubmit={handleCreateSubmit} className="p-6 overflow-y-auto space-y-5 text-left flex-1">
-              {/* Project Name */}
-              <div>
-                <label className="text-xs font-bold text-foreground block mb-1.5 flex items-center justify-between">
-                  <span>Project Name <span className="text-rose-500">*</span></span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Enterprise Website Redesign"
-                  value={formData.name}
-                  onChange={e => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-sm text-foreground placeholder:text-muted-foreground/50 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                />
-              </div>
+            {/* Stepper Navigation Bar */}
+            <div className="px-6 py-2.5 bg-muted/20 border-b border-border/40 flex items-center justify-between gap-1 overflow-x-auto text-xs shrink-0">
+              {[
+                { step: 1, label: '1. Basic Info' },
+                { step: 2, label: '2. Team Members' },
+                { step: 3, label: '3. Workflow Stages' },
+                { step: 4, label: '4. Approval Rules' },
+                { step: 5, label: '5. Preview & Create' }
+              ].map(s => (
+                <button
+                  key={s.step}
+                  onClick={() => {
+                    if (s.step < wizardStep) setWizardStep(s.step);
+                  }}
+                  disabled={s.step > wizardStep}
+                  className={`px-3 py-1.5 rounded-xl font-bold transition-all whitespace-nowrap cursor-pointer ${
+                    wizardStep === s.step
+                      ? 'bg-primary text-white shadow-sm'
+                      : s.step < wizardStep
+                      ? 'bg-primary/15 text-primary hover:bg-primary/25'
+                      : 'text-muted-foreground opacity-60 cursor-not-allowed'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
 
-              {/* Description */}
-              <div>
-                <label className="text-xs font-bold text-foreground block mb-1.5">Description</label>
-                <textarea
-                  rows={3}
-                  placeholder="Brief summary of goals, scope, and target deliverables..."
-                  value={formData.description}
-                  onChange={e => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-4 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-sm text-foreground placeholder:text-muted-foreground/50 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
-                />
-              </div>
+            {/* Modal Body (Step Specific Content) */}
+            <div className="p-6 overflow-y-auto space-y-5 text-left flex-1">
+              {/* STEP 1: BASIC INFO */}
+              {wizardStep === 1 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-foreground block mb-1.5">Project Name <span className="text-rose-500">*</span></label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Enterprise Website Redesign"
+                      value={formData.name}
+                      onChange={e => setFormData({ ...formData, name: e.target.value })}
+                      className="w-full px-4 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-sm text-foreground placeholder:text-muted-foreground/50 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                    />
+                  </div>
 
-              {/* Type, Priority, Status Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div>
-                  <label className="text-xs font-bold text-foreground block mb-1.5">Project Type</label>
-                  <select
-                    value={formData.type}
-                    onChange={e => setFormData({ ...formData, type: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-semibold text-foreground focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
-                  >
-                    <option value="CLIENT">Client Project</option>
-                    <option value="INTERNAL">Internal Improvement</option>
-                    <option value="MAINTENANCE">Maintenance</option>
-                    <option value="RND">R&D / Research</option>
-                    <option value="TRAINING">Intern Training</option>
-                  </select>
+                  <div>
+                    <label className="text-xs font-bold text-foreground block mb-1.5">Description</label>
+                    <textarea
+                      rows={3}
+                      placeholder="Brief summary of goals, scope, and target deliverables..."
+                      value={formData.description}
+                      onChange={e => setFormData({ ...formData, description: e.target.value })}
+                      className="w-full px-4 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-sm text-foreground placeholder:text-muted-foreground/50 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1.5">Project Type</label>
+                      <select
+                        value={formData.type}
+                        onChange={e => setFormData({ ...formData, type: e.target.value })}
+                        className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-semibold text-foreground focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+                      >
+                        <option value="CLIENT">Client Project</option>
+                        <option value="INTERNAL">Internal Improvement</option>
+                        <option value="MAINTENANCE">Maintenance</option>
+                        <option value="RND">R&D / Research</option>
+                        <option value="TRAINING">Intern Training</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1.5">Priority</label>
+                      <select
+                        value={formData.priority}
+                        onChange={e => setFormData({ ...formData, priority: e.target.value })}
+                        className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-semibold text-foreground focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+                      >
+                        <option value="LOW">🟢 Low</option>
+                        <option value="MEDIUM">🟡 Medium</option>
+                        <option value="HIGH">🟠 High</option>
+                        <option value="CRITICAL">🔴 Critical</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1.5">Initial Status</label>
+                      <select
+                        value={formData.status}
+                        onChange={e => setFormData({ ...formData, status: e.target.value })}
+                        className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-bold text-primary focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+                      >
+                        <option value="DRAFT">Draft</option>
+                        <option value="SCHEDULED">Scheduled</option>
+                        <option value="ACTIVE">Active</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40">
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1.5">Estimated Start Date <span className="text-rose-500">*</span></label>
+                      <input
+                        type="date"
+                        required
+                        value={formData.estimatedStartDate}
+                        onChange={e => setFormData({ ...formData, estimatedStartDate: e.target.value })}
+                        className="w-full px-3.5 py-2 rounded-xl bg-background border border-border/80 text-xs font-medium text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-foreground block mb-1.5">Estimated End Date <span className="text-rose-500">*</span></label>
+                      <input
+                        type="date"
+                        required
+                        value={formData.estimatedEndDate}
+                        onChange={e => setFormData({ ...formData, estimatedEndDate: e.target.value })}
+                        className="w-full px-3.5 py-2 rounded-xl bg-background border border-border/80 text-xs font-medium text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-foreground block mb-1.5">Project Leader</label>
+                    <select
+                      value={formData.leaderId}
+                      onChange={e => handleLeaderSelect(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-medium text-foreground focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+                    >
+                      <option value="">-- Unassigned --</option>
+                      {teamLeaders.map(u => (
+                        <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
+              )}
 
-                <div>
-                  <label className="text-xs font-bold text-foreground block mb-1.5">Priority</label>
-                  <select
-                    value={formData.priority}
-                    onChange={e => setFormData({ ...formData, priority: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-semibold text-foreground focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
-                  >
-                    <option value="LOW">🟢 Low</option>
-                    <option value="MEDIUM">🟡 Medium</option>
-                    <option value="HIGH">🟠 High</option>
-                    <option value="CRITICAL">🔴 Critical</option>
-                  </select>
+              {/* STEP 2: TEAM MEMBERS */}
+              {wizardStep === 2 && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-foreground block mb-1.5">Assigned Team (Optional)</label>
+                    <select
+                      value={formData.teamId}
+                      onChange={e => handleTeamSelect(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-medium text-foreground focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
+                    >
+                      <option value="">-- No Team --</option>
+                      {teams.map(t => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-foreground block mb-1.5">
+                      Select Project Members ({formData.memberIds.length} selected)
+                    </label>
+
+                    {(() => {
+                      const selectedTeamObj = teams.find(t => t.id === formData.teamId);
+                      const teamMemberUserIds = new Set();
+                      if (selectedTeamObj) {
+                        if (selectedTeamObj.leaderId) teamMemberUserIds.add(selectedTeamObj.leaderId);
+                        if (selectedTeamObj.members) {
+                          selectedTeamObj.members.forEach(m => teamMemberUserIds.add(m.userId || m.user?.id));
+                        }
+                      }
+                      const activeUsers = allUsers.filter(u => u.status !== 'INACTIVE');
+
+                      return (
+                        <div className="max-h-64 overflow-y-auto p-3 rounded-2xl bg-muted/30 border border-border/80 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {activeUsers.map(u => {
+                            const isSelected = formData.memberIds.includes(u.id);
+                            const isLeader = formData.leaderId && u.id === formData.leaderId;
+                            const isExternal = formData.teamId && isSelected && !teamMemberUserIds.has(u.id);
+
+                            return (
+                              <label
+                                key={u.id}
+                                className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs cursor-pointer border transition-all ${
+                                  isSelected
+                                    ? 'bg-primary/10 border-primary/40 text-foreground font-bold shadow-2xs'
+                                    : 'bg-background/60 border-border/40 text-muted-foreground hover:text-foreground hover:bg-background'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected || isLeader}
+                                  disabled={isLeader}
+                                  onChange={e => {
+                                    if (isLeader) return;
+                                    if (e.target.checked) {
+                                      setFormData(prev => ({ ...prev, memberIds: Array.from(new Set([...prev.memberIds, u.id])) }));
+                                    } else {
+                                      setFormData(prev => ({ ...prev, memberIds: prev.memberIds.filter(id => id !== u.id) }));
+                                    }
+                                  }}
+                                  className="rounded border-border text-primary focus:ring-primary/20 h-4 w-4 disabled:opacity-70"
+                                />
+                                <div className="flex-1 truncate">
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <span className="truncate block font-semibold">{u.name}</span>
+                                    {isLeader && (
+                                      <span className="bg-primary/15 text-primary text-[9px] px-1.5 py-0.2 rounded-md font-bold shrink-0">
+                                        Project Leader
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-muted-foreground font-mono uppercase block">{u.role}</span>
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 </div>
+              )}
 
-                <div>
-                  <label className="text-xs font-bold text-foreground block mb-1.5">Initial Status</label>
-                  <select
-                    value={formData.status}
-                    onChange={e => setFormData({ ...formData, status: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-bold text-primary focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
-                  >
-                    <option value="DRAFT">Draft (No Chat)</option>
-                    <option value="SCHEDULED">Scheduled (No Chat)</option>
-                    <option value="ACTIVE">Active (Creates Chat)</option>
-                  </select>
+              {/* STEP 3: WORKFLOW STAGES */}
+              {wizardStep === 3 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-foreground">Configure Project Workflow Stages</h4>
+                      <p className="text-[11px] text-muted-foreground">Min 2, Max 10 stages. Check "Approval" for review stages, and select exactly 1 Completed stage.</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={formData.workflowStages.length >= 10}
+                      onClick={() => {
+                        if (formData.workflowStages.length >= 10) return;
+                        const newOrder = formData.workflowStages.length;
+                        setFormData(prev => ({
+                          ...prev,
+                          workflowStages: [
+                            ...prev.workflowStages,
+                            { name: `Stage ${newOrder + 1}`, color: '#0EA5E9', order: newOrder, requiresApproval: false, approverRole: 'PROJECT_LEADER', approverId: '', isCompletedStage: false }
+                          ]
+                        }));
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-primary/15 hover:bg-primary/25 text-primary text-xs font-bold transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Stage
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {formData.workflowStages.map((stg, index) => {
+                      const isDragging = draggedStageIndex === index;
+                      const isDragOver = dragOverStageIndex === index;
+
+                      return (
+                        <div
+                          key={index}
+                          draggable
+                          onDragStart={e => handleStageDragStart(e, index)}
+                          onDragOver={e => handleStageDragOver(e, index)}
+                          onDrop={e => handleStageDrop(e, index)}
+                          onDragEnd={() => {
+                            setDraggedStageIndex(null);
+                            setDragOverStageIndex(null);
+                          }}
+                          className={`p-3.5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-all duration-150 ${
+                            isDragging
+                              ? 'opacity-40 border-2 border-dashed border-primary/60 bg-primary/5 shadow-none'
+                              : isDragOver
+                              ? 'border-2 border-primary bg-primary/10 ring-2 ring-primary/20 scale-[1.01] shadow-lg'
+                              : 'bg-muted/20 border border-border/40 hover:border-border/80 shadow-2xs'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 w-full sm:w-auto flex-1">
+                            <div
+                              className="p-1 rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-muted/60 cursor-grab active:cursor-grabbing shrink-0 transition-colors"
+                              title="Drag to reorder stage"
+                            >
+                              <GripVertical className="w-4 h-4" />
+                            </div>
+                            <span className="text-xs font-bold text-muted-foreground font-mono w-6 text-center">#{index + 1}</span>
+                            <input
+                              type="color"
+                              value={stg.color}
+                              onChange={e => {
+                                const updated = [...formData.workflowStages];
+                                updated[index].color = e.target.value;
+                                setFormData({ ...formData, workflowStages: updated });
+                              }}
+                              className="w-8 h-8 rounded-lg cursor-pointer border border-border bg-transparent shrink-0"
+                            />
+                            <input
+                              type="text"
+                              value={stg.name}
+                              onChange={e => {
+                                const updated = [...formData.workflowStages];
+                                updated[index].name = e.target.value;
+                                setFormData({ ...formData, workflowStages: updated });
+                              }}
+                              placeholder="Stage Name"
+                              className="flex-1 px-3 py-1.5 rounded-xl bg-background border border-border/80 text-xs font-bold text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                            />
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+                            {index === formData.workflowStages.length - 1 ? (
+                              <span className="px-2.5 py-1 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-extrabold text-[10px] uppercase border border-emerald-500/20">
+                                Final Approval Stage – Auto Completed
+                              </span>
+                            ) : (
+                              <label className="flex items-center gap-1.5 text-xs font-bold text-foreground cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={!!stg.requiresApproval}
+                                  onChange={e => {
+                                    const updated = [...formData.workflowStages];
+                                    updated[index].requiresApproval = e.target.checked;
+                                    setFormData({ ...formData, workflowStages: updated });
+                                  }}
+                                  className="rounded border-border text-primary focus:ring-primary/20 h-4 w-4"
+                                />
+                                <span className={stg.requiresApproval ? 'text-primary font-bold' : 'text-muted-foreground font-normal'}>
+                                  {stg.requiresApproval ? '✓ Approval' : 'Approval'}
+                                </span>
+                              </label>
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={formData.workflowStages.length <= 2}
+                              onClick={() => {
+                                if (formData.workflowStages.length <= 2) return;
+                                const updated = formData.workflowStages.filter((_, idx) => idx !== index).map((s, idx) => ({ ...s, order: idx }));
+                                setFormData({ ...formData, workflowStages: updated });
+                              }}
+                              className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/10 disabled:opacity-30 cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* Timeline Dates */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-muted/20 border border-border/40">
-                <div>
-                  <label className="text-xs font-bold text-foreground block mb-1.5">Estimated Start Date <span className="text-rose-500">*</span></label>
-                  <input
-                    type="date"
-                    required
-                    value={formData.estimatedStartDate}
-                    onChange={e => setFormData({ ...formData, estimatedStartDate: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl bg-background border border-border/80 text-xs font-medium text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                  />
-                </div>
+              {/* STEP 4: APPROVAL RULES */}
+              {wizardStep === 4 && (
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-xs font-bold text-foreground mb-1">Workflow Approval Configuration</h4>
+                    <p className="text-[11px] text-muted-foreground">Define which stages require approval before tasks can move forward, and who evaluates them.</p>
+                  </div>
 
-                <div>
-                  <label className="text-xs font-bold text-foreground block mb-1.5">Estimated End Date <span className="text-rose-500">*</span></label>
-                  <input
-                    type="date"
-                    required
-                    value={formData.estimatedEndDate}
-                    onChange={e => setFormData({ ...formData, estimatedEndDate: e.target.value })}
-                    className="w-full px-3.5 py-2 rounded-xl bg-background border border-border/80 text-xs font-medium text-foreground focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                  />
-                </div>
-              </div>
+                  <div className="space-y-3">
+                    {formData.workflowStages.map((stg, index) => (
+                      <div key={index} className="p-4 rounded-2xl bg-muted/20 border border-border/40 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="w-3 h-3 rounded-full" style={{ backgroundColor: stg.color }} />
+                            <span className="text-xs font-bold text-foreground">{stg.name}</span>
+                            {stg.isCompletedStage && (
+                              <span className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-bold px-2 py-0.5 rounded-md">
+                                Completed Stage
+                              </span>
+                            )}
+                          </div>
 
-              {/* Leader & Team Selection */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold text-foreground block mb-1.5">Project Leader</label>
-                  <select
-                    value={formData.leaderId}
-                    onChange={e => handleLeaderSelect(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-medium text-foreground focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
-                  >
-                    <option value="">-- Unassigned --</option>
-                    {teamLeaders.map(u => (
-                      <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-xs font-bold text-foreground block mb-1.5">Assigned Team (Optional)</label>
-                  <select
-                    value={formData.teamId}
-                    onChange={e => handleTeamSelect(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-xs font-medium text-foreground focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all cursor-pointer"
-                  >
-                    <option value="">-- No Team --</option>
-                    {teams.map(t => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Member Selection */}
-              <div>
-                <label className="text-xs font-bold text-foreground block mb-1.5">
-                  Select Project Members ({formData.memberIds.length} selected)
-                </label>
-                
-                {(() => {
-                  const selectedTeamObj = teams.find(t => t.id === formData.teamId);
-                  const teamMemberUserIds = new Set();
-                  if (selectedTeamObj) {
-                    if (selectedTeamObj.leaderId) teamMemberUserIds.add(selectedTeamObj.leaderId);
-                    if (selectedTeamObj.members) {
-                      selectedTeamObj.members.forEach(m => teamMemberUserIds.add(m.userId || m.user?.id));
-                    }
-                  }
-                  const activeUsers = allUsers.filter(u => u.status !== 'INACTIVE');
-
-                  return (
-                    <div className="max-h-48 overflow-y-auto p-3 rounded-2xl bg-muted/30 border border-border/80 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {activeUsers.map(u => {
-                        const isSelected = formData.memberIds.includes(u.id);
-                        const isLeader = formData.leaderId && u.id === formData.leaderId;
-                        const isExternal = formData.teamId && isSelected && !teamMemberUserIds.has(u.id);
-
-                        return (
-                          <label
-                            key={u.id}
-                            className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs cursor-pointer border transition-all ${
-                              isSelected
-                                ? 'bg-primary/10 border-primary/40 text-foreground font-bold shadow-2xs'
-                                : 'bg-background/60 border-border/40 text-muted-foreground hover:text-foreground hover:bg-background'
-                            }`}
-                          >
+                          <label className="flex items-center gap-2 text-xs font-bold cursor-pointer">
                             <input
                               type="checkbox"
-                              checked={isSelected || isLeader}
-                              disabled={isLeader}
+                              checked={!!stg.requiresApproval}
                               onChange={e => {
-                                if (isLeader) return;
-                                if (e.target.checked) {
-                                  setFormData(prev => ({ ...prev, memberIds: Array.from(new Set([...prev.memberIds, u.id])) }));
-                                } else {
-                                  setFormData(prev => ({ ...prev, memberIds: prev.memberIds.filter(id => id !== u.id) }));
-                                }
+                                const updated = [...formData.workflowStages];
+                                updated[index].requiresApproval = e.target.checked;
+                                setFormData({ ...formData, workflowStages: updated });
                               }}
-                              className="rounded border-border text-primary focus:ring-primary/20 h-4 w-4 disabled:opacity-70"
+                              className="rounded border-border text-primary focus:ring-primary/20 h-4 w-4"
                             />
-                            <div className="flex-1 truncate">
+                            <span className={stg.requiresApproval ? 'text-primary' : 'text-muted-foreground'}>Requires Approval</span>
+                          </label>
+                        </div>
+
+                        {stg.requiresApproval && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-border/30 animate-in fade-in duration-150">
+                            <div>
+                              <label className="text-[11px] font-bold text-muted-foreground block mb-1">Approver Role</label>
+                              <select
+                                value={stg.approverRole || 'PROJECT_LEADER'}
+                                onChange={e => {
+                                  const updated = [...formData.workflowStages];
+                                  updated[index].approverRole = e.target.value;
+                                  setFormData({ ...formData, workflowStages: updated });
+                                }}
+                                className="w-full px-3 py-1.5 rounded-xl bg-background border border-border/80 text-xs font-semibold text-foreground"
+                              >
+                                <option value="PROJECT_LEADER">Project Leader</option>
+                                <option value="ADMIN">System Administrator</option>
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-bold text-muted-foreground block mb-1">Specific Approver (Optional)</label>
+                              <select
+                                value={stg.approverId || ''}
+                                onChange={e => {
+                                  const updated = [...formData.workflowStages];
+                                  updated[index].approverId = e.target.value;
+                                  setFormData({ ...formData, workflowStages: updated });
+                                }}
+                                className="w-full px-3 py-1.5 rounded-xl bg-background border border-border/80 text-xs font-medium text-foreground"
+                              >
+                                <option value="">-- Use Approver Role Default --</option>
+                                {teamLeaders.map(u => (
+                                  <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* STEP 5: PREVIEW & CREATE */}
+              {wizardStep === 5 && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-2xl bg-primary/10 border border-primary/20 space-y-2">
+                    <h4 className="text-sm font-black text-primary">Project Configuration Summary</h4>
+                    <p className="text-xs text-muted-foreground">Review your project settings before launching the workflow.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                    <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/40 space-y-1">
+                      <span className="text-muted-foreground font-bold block">Project Name & Code</span>
+                      <span className="font-extrabold text-foreground block text-sm">{formData.name}</span>
+                      <span className="text-[11px] text-muted-foreground uppercase">{formData.type} • {formData.priority} Priority</span>
+                    </div>
+
+                    <div className="p-3.5 rounded-2xl bg-muted/20 border border-border/40 space-y-1">
+                      <span className="text-muted-foreground font-bold block">Timeline & Leader</span>
+                      <span className="font-semibold text-foreground block">{formData.estimatedStartDate} → {formData.estimatedEndDate}</span>
+                      <span className="text-muted-foreground block">
+                        Leader: {teamLeaders.find(u => u.id === formData.leaderId)?.name || 'Unassigned'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <h5 className="text-xs font-bold text-foreground mb-2">Configured Workflow Pipeline ({formData.workflowStages.length} Stages)</h5>
+                    <div className="flex items-center gap-2 overflow-x-auto p-3 rounded-2xl bg-muted/20 border border-border/40">
+                      {formData.workflowStages.map((stg, idx) => (
+                        <div key={idx} className="flex items-center gap-2 shrink-0">
+                          <div className="px-3 py-2 rounded-xl bg-background border border-border/80 shadow-2xs text-center space-y-1 min-w-[110px]">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: stg.color }} />
+                              <span className="font-bold text-xs text-foreground truncate">{stg.name}</span>
+                            </div>
+                            <div className="flex items-center justify-center gap-1 text-[9px] font-bold">
+                              {stg.isCompletedStage ? (
+                                <span className="text-emerald-500">Completed</span>
+                              ) : stg.requiresApproval ? (
+                                <span className="text-purple-500">Approval Req</span>
+                              ) : (
+                                <span className="text-muted-foreground">Standard</span>
+                              )}
+                            </div>
+                          </div>
+                          {idx < formData.workflowStages.length - 1 && (
+                            <ChevronRight className="w-4 h-4 text-muted-foreground/40 shrink-0" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="px-6 py-4 border-t border-border/40 bg-muted/10 shrink-0 space-y-3">
+              {/* Step Inline Validation Error Banner */}
+              {(() => {
+                const stepCheck = getStepValidation(wizardStep);
+                if (!stepCheck.valid) {
+                  return (
+                    <div className="px-4 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{stepCheck.error}</span>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (wizardStep > 1) setWizardStep(wizardStep - 1);
+                    else setCreateModalOpen(false);
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-border/80 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all cursor-pointer"
+                >
+                  {wizardStep === 1 ? 'Cancel' : '← Back'}
+                </button>
+
+                {wizardStep < 5 ? (
+                  <button
+                    type="button"
+                    disabled={!getStepValidation(wizardStep).valid}
+                    onClick={() => {
+                      const check = getStepValidation(wizardStep);
+                      if (!check.valid) {
+                        setAlertMsg(check.error);
+                        return;
+                      }
+                      setWizardStep(wizardStep + 1);
+                    }}
+                    className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover disabled:opacity-40 text-primary-foreground text-xs font-extrabold shadow-md shadow-primary/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Next Step</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!getStepValidation(1).valid || !getStepValidation(2).valid || !getStepValidation(3).valid || !getStepValidation(4).valid}
+                    onClick={handleCreateSubmit}
+                    className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-extrabold shadow-md shadow-emerald-600/20 hover:scale-[1.01] transition-all flex items-center gap-2 cursor-pointer"
+                  >
+                    <Sparkles className="w-4 h-4 text-white" /> Launch Project & Workflow
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Compact Single-Card Dashboard Layout Modal */}
+      {detailDrawerOpen && selectedProject && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200 outline-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setDetailDrawerOpen(false);
+          }}
+        >
+          <div className="relative w-full max-w-[820px] max-h-[90vh] bg-white dark:bg-card border border-[#E5E7EB] dark:border-border/50 rounded-[24px] p-6 shadow-2xl flex flex-col space-y-5 animate-in zoom-in-95 duration-200 overflow-y-auto text-left">
+            {/* Top Header Section */}
+            <div className="pb-4 border-b border-[#EEF2F7] dark:border-border/40 flex items-start justify-between gap-4">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 text-xs font-mono font-extrabold border border-emerald-500/20">
+                    {selectedProject.projectCode || `PRJ-${selectedProject.id.slice(0, 4).toUpperCase()}`}
+                  </span>
+                </div>
+                <h2 className="text-xl font-bold text-[#0F172A] dark:text-foreground tracking-tight leading-snug">
+                  {selectedProject.name}
+                </h2>
+                <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                  <ProjectStatusBadge status={selectedProject.status} isOverdue={selectedProject.isOverdue} health={selectedProject.health} />
+                  <PriorityBadge priority={selectedProject.priority} />
+                </div>
+              </div>
+
+              {/* Delete & Close Buttons */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {user?.role === 'ADMIN' && (
+                  <button
+                    onClick={() => confirmDeleteProject(selectedProject.id)}
+                    className="p-2 rounded-xl text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                    title="Delete Project"
+                  >
+                    <Trash2 className="w-4.5 h-4.5" />
+                  </button>
+                )}
+                <button
+                  onClick={() => setDetailDrawerOpen(false)}
+                  className="p-2 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors cursor-pointer"
+                  aria-label="Close"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Main Content 2-Column Grid (Desktop 60% / 40%, Mobile 1-Column) */}
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              {/* Left Card — Project Overview (60% width on Desktop) */}
+              <div className="md:col-span-3 rounded-[20px] border border-[#E5E7EB] dark:border-border/50 bg-[#F8FAFC]/50 dark:bg-muted/20 p-5 space-y-4 shadow-2xs">
+                <div>
+                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-1.5">
+                    Description
+                  </h4>
+                  <p className="text-xs text-foreground leading-relaxed bg-white dark:bg-card p-3 rounded-xl border border-[#E5E7EB] dark:border-border/40">
+                    {selectedProject.description || 'No description provided.'}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-xl bg-white dark:bg-card border border-[#E5E7EB] dark:border-border/40 space-y-0.5">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">Start Date</span>
+                    <div className="text-xs font-bold text-foreground">
+                      {new Date(selectedProject.estimatedStartDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-xl bg-white dark:bg-card border border-[#E5E7EB] dark:border-border/40 space-y-0.5">
+                    <span className="text-[10px] font-bold text-muted-foreground uppercase">End Date</span>
+                    <div className={`text-xs font-bold ${selectedProject.isOverdue ? 'text-rose-500 font-extrabold' : 'text-foreground'}`}>
+                      {new Date(selectedProject.estimatedEndDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Progress Bar */}
+                <div className="p-3 rounded-xl bg-white dark:bg-card border border-[#E5E7EB] dark:border-border/40 space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="text-muted-foreground uppercase text-[10px]">Overall Progress</span>
+                    <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">{selectedProject.progressPercent || 0}%</span>
+                  </div>
+                  <div className="w-full bg-emerald-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                      style={{ width: `${selectedProject.progressPercent || 0}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    {selectedProject.tasks?.filter(t => t.status === 'APPROVED' || t.status === 'COMPLETED').length || 0} of {selectedProject.tasks?.length || 0} tasks finished
+                  </p>
+                </div>
+              </div>
+
+              {/* Right Card — Team Members (40% width on Desktop) */}
+              <div className="md:col-span-2 rounded-[20px] border border-[#E5E7EB] dark:border-border/50 bg-[#F8FAFC]/50 dark:bg-muted/20 p-5 space-y-3 shadow-2xs">
+                <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                  Team Members ({selectedProject.members?.length || 0})
+                </h4>
+
+                {(() => {
+                  const projTeamObj = teams.find(t => t.id === selectedProject.teamId);
+                  const projTeamMembers = new Set();
+                  if (projTeamObj) {
+                    if (projTeamObj.leaderId) projTeamMembers.add(projTeamObj.leaderId);
+                    if (projTeamObj.members) projTeamObj.members.forEach(tm => projTeamMembers.add(tm.userId || tm.user?.id));
+                  }
+
+                  return (
+                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-0.5 scrollbar-thin">
+                      {selectedProject.members?.map(m => {
+                        const isLeader = selectedProject.leaderId === m.userId;
+                        const isExternal = selectedProject.teamId && !projTeamMembers.has(m.userId);
+
+                        return (
+                          <div key={m.userId} className="flex items-center gap-2.5 p-2 rounded-xl bg-white dark:bg-card border border-[#E5E7EB] dark:border-border/40">
+                            <UserAvatar user={m.user} size="sm" />
+                            <div className="truncate flex-1">
                               <div className="flex items-center gap-1.5 truncate">
-                                <span className="truncate block font-semibold">{u.name}</span>
+                                <span className="text-xs font-bold text-foreground truncate">{m.user?.name}</span>
                                 {isLeader && (
-                                  <span className="bg-primary/15 text-primary text-[9px] px-1.5 py-0.2 rounded-md font-bold shrink-0">
-                                    Project Leader
+                                  <span className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[9px] px-1.5 py-0.2 rounded-md font-bold shrink-0">
+                                    Leader
                                   </span>
                                 )}
                                 {isExternal && !isLeader && (
@@ -758,318 +1380,32 @@ const Projects = () => {
                                   </span>
                                 )}
                               </div>
-                              <span className="text-[10px] text-muted-foreground font-mono uppercase block">{u.role}</span>
+                              <div className="text-[10px] text-muted-foreground">{m.role || m.user?.role || 'Member'}</div>
                             </div>
-                          </label>
+                          </div>
                         );
                       })}
                     </div>
                   );
                 })()}
-                
-                <p className="text-[11px] text-muted-foreground mt-1.5 font-medium">
-                  Team members are automatically selected. Uncheck members who should not participate in this project.
-                </p>
-              </div>
-
-              {/* Modal Footer Actions */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/40 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setCreateModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-border/80 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold shadow-md shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center gap-2 cursor-pointer"
-                >
-                  <Plus className="w-4 h-4 text-white" /> Create Project & Initialize Chat
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Detail Drawer */}
-      {detailDrawerOpen && selectedProject && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex justify-end">
-          <div className="bg-card w-full max-w-3xl max-w-[95vw] min-w-0 h-full shadow-2xl flex flex-col justify-between border-l border-border/80 text-left">
-            {/* Drawer Header */}
-            <div className="p-6 border-b border-border/40 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="px-3 py-1 rounded-md bg-muted text-primary text-xs font-mono font-black tracking-wider border">
-                  {selectedProject.projectCode}
-                </span>
-                <div className="flex items-center gap-2">
-                  {user?.role === 'ADMIN' && (
-                    <button
-                      onClick={() => handleDeleteProject(selectedProject.id)}
-                      className="p-2 rounded-xl text-rose-500 hover:bg-rose-500/10"
-                      title="Soft Delete Project"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  )}
-                  <button onClick={() => setDetailDrawerOpen(false)} className="text-muted-foreground hover:text-foreground">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <h2 className="text-xl font-black text-foreground">{selectedProject.name}</h2>
-                <div className="flex items-center gap-2 mt-2">
-                  <ProjectStatusBadge status={selectedProject.status} isOverdue={selectedProject.isOverdue} health={selectedProject.health} />
-                  <PriorityBadge priority={selectedProject.priority} />
-                </div>
               </div>
             </div>
 
-            {/* Drawer Sub Navigation Tabs */}
-            <div className="px-6 pt-4 border-b border-border/40">
-              <div className="flex items-center gap-2 overflow-x-auto pb-3 scrollbar-none">
-                {['Overview', 'Team Members', 'Kanban Board', 'Milestones', 'Documents', 'Audit History'].map(t => (
-                  <button
-                    key={t}
-                    onClick={() => setDrawerTab(t)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-                      drawerTab === t
-                        ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Drawer Content */}
-            <div className="p-6 flex-1 overflow-y-auto space-y-6">
-              {drawerTab === 'Overview' && (
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between p-4 rounded-2xl bg-muted/20 border border-border/30">
-                    <div className="space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Project Progress</span>
-                      <div className="text-lg font-black text-foreground">{selectedProject.progressPercent || 0}% Completed</div>
-                      <p className="text-xs text-muted-foreground">{selectedProject.tasks?.filter(t => t.status === 'APPROVED' || t.status === 'COMPLETED').length || 0} of {selectedProject.tasks?.length || 0} tasks finished</p>
-                    </div>
-                    <ProgressRing progress={selectedProject.progressPercent || 0} size={64} strokeWidth={6} />
-                  </div>
-
-                  <div>
-                    <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Description</h4>
-                    <p className="text-sm text-foreground bg-muted/30 p-4 rounded-2xl border border-border/40">
-                      {selectedProject.description || 'No description provided.'}
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="p-4 rounded-2xl bg-muted/30 border border-border/40 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Est. Start Date</span>
-                      <div className="text-sm font-bold text-foreground">
-                        {new Date(selectedProject.estimatedStartDate).toLocaleDateString()}
-                      </div>
-                    </div>
-                    <div className="p-4 rounded-2xl bg-muted/30 border border-border/40 space-y-1">
-                      <span className="text-[10px] font-bold text-muted-foreground uppercase">Est. End Date</span>
-                      <div className={`text-sm font-bold ${selectedProject.isOverdue ? 'text-rose-500 font-black' : 'text-foreground'}`}>
-                        {new Date(selectedProject.estimatedEndDate).toLocaleDateString()}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Team Members Tab */}
-              {drawerTab === 'Team Members' && (
-                <div className="space-y-4">
-                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                    Assigned Members ({selectedProject.members?.length || 0})
-                  </h4>
-
-                  {(() => {
-                    const projTeamObj = teams.find(t => t.id === selectedProject.teamId);
-                    const projTeamMembers = new Set();
-                    if (projTeamObj) {
-                      if (projTeamObj.leaderId) projTeamMembers.add(projTeamObj.leaderId);
-                      if (projTeamObj.members) projTeamObj.members.forEach(tm => projTeamMembers.add(tm.userId || tm.user?.id));
-                    }
-
-                    return (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {selectedProject.members?.map(m => {
-                          const isLeader = selectedProject.leaderId === m.userId;
-                          const isExternal = selectedProject.teamId && !projTeamMembers.has(m.userId);
-
-                          return (
-                            <div key={m.userId} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-card border border-border/40">
-                              <UserAvatar user={m.user} size="sm" />
-                              <div className="truncate flex-1">
-                                <div className="flex items-center gap-1.5 truncate">
-                                  <span className="text-xs font-bold text-foreground truncate">{m.user?.name}</span>
-                                  {isLeader && (
-                                    <span className="bg-primary/15 text-primary text-[9px] px-1.5 py-0.2 rounded font-bold shrink-0">
-                                      Leader
-                                    </span>
-                                  )}
-                                  {isExternal && !isLeader && (
-                                    <span className="bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[9px] px-1.5 py-0.2 rounded font-bold shrink-0">
-                                      External
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-[10px] text-muted-foreground">{m.role || m.user?.role}</div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-
-              {/* Kanban Board Tab */}
-              {drawerTab === 'Kanban Board' && (
-                <div className="flex overflow-x-auto gap-3 pb-2 w-full max-w-full min-w-0 scrollbar-thin">
-                  {[
-                    { title: 'TO DO', status: 'PENDING', color: 'bg-slate-500' },
-                    { title: 'IN PROGRESS', status: 'IN_PROGRESS', color: 'bg-sky-500' },
-                    { title: 'UNDER REVIEW', status: 'WAITING_FOR_REVIEW', color: 'bg-amber-500' },
-                    { title: 'DONE', status: 'APPROVED', color: 'bg-primary' }
-                  ].map(col => {
-                    const colTasks = selectedProject.tasks?.filter(t => t.status === col.status) || [];
-                    return (
-                      <KanbanColumn
-                        key={col.title}
-                        title={col.title}
-                        count={colTasks.length}
-                        color={col.color}
-                        onDrop={(e) => handleTaskDrop(e, col.status)}
-                      >
-                        {colTasks.length === 0 ? (
-                          <div className="text-[10px] text-muted-foreground py-8 text-center italic border border-dashed rounded-xl">
-                            No tasks
-                          </div>
-                        ) : (
-                          colTasks.map(t => (
-                            <TaskCard key={t.id} task={t} />
-                          ))
-                        )}
-                      </KanbanColumn>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Milestones Tab */}
-              {drawerTab === 'Milestones' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                      Milestones ({selectedProject.milestones?.length || 0})
-                    </h4>
-                    {(user?.role === 'ADMIN' || user?.role === 'TEAM_LEADER') && (
-                      <button
-                        onClick={() => setCreateMilestoneModal(true)}
-                        className="px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold shadow-xs hover:bg-primary-hover flex items-center gap-1"
-                      >
-                        <Plus className="h-3.5 w-3.5" /> Add Milestone
-                      </button>
-                    )}
-                  </div>
-
-                  {selectedProject.milestones?.length === 0 ? (
-                    <div className="text-center py-10 border border-dashed rounded-2xl p-6 text-muted-foreground text-xs italic">
-                      No milestones set for this project.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {selectedProject.milestones?.map(m => (
-                        <MilestoneCard key={m.id} milestone={m} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Project Calendar Tab */}
-              {drawerTab === 'Project Calendar' && (
-                <div className="space-y-4 p-4 rounded-2xl bg-card border border-border/40">
-                  <h4 className="text-xs font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
-                    <CalendarIcon className="h-4 w-4 text-primary" /> Key Project Dates & Deadlines
-                  </h4>
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-muted/20 border border-border/30 text-xs">
-                      <span className="font-bold">Project Start Date</span>
-                      <span className="font-mono text-muted-foreground">{new Date(selectedProject.estimatedStartDate).toLocaleDateString()}</span>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-xl bg-muted/20 border border-border/30 text-xs">
-                      <span className="font-bold">Project End Date</span>
-                      <span className="font-mono text-muted-foreground">{new Date(selectedProject.estimatedEndDate).toLocaleDateString()}</span>
-                    </div>
-                    {selectedProject.milestones?.map(m => (
-                      <div key={m.id} className="flex items-center justify-between p-3 rounded-xl bg-primary/5 border border-primary/20 text-xs">
-                        <span className="font-bold text-primary">Milestone: {m.title}</span>
-                        <span className="font-mono text-muted-foreground">{new Date(m.dueDate).toLocaleDateString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Documents Tab */}
-              {drawerTab === 'Documents' && (
-                <div className="space-y-4">
-                  <form onSubmit={handleUploadDocument} className="p-4 rounded-2xl bg-muted/30 border border-border/40 space-y-3">
-                    <h4 className="text-xs font-bold text-foreground uppercase tracking-wider">Upload Project Document</h4>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="file"
-                        onChange={e => setFileUpload(e.target.files[0])}
-                        className="text-xs text-muted-foreground file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-primary file:text-primary-foreground hover:file:bg-primary-hover"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!fileUpload || uploadingDoc}
-                        className="px-4 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-bold disabled:opacity-50"
-                      >
-                        {uploadingDoc ? 'Uploading...' : 'Upload'}
-                      </button>
-                    </div>
-                  </form>
-
-                  <div className="space-y-2">
-                    {selectedProject.documents?.map(doc => (
-                      <div key={doc.id} className="flex items-center justify-between p-3 rounded-xl bg-card border border-border/40">
-                        <div className="flex items-center gap-3">
-                          <FileText className="w-5 h-5 text-primary" />
-                          <div>
-                            <div className="text-xs font-bold text-foreground">{doc.name}</div>
-                            <div className="text-[10px] text-muted-foreground">Uploaded by {doc.uploader?.name}</div>
-                          </div>
-                        </div>
-                        <button onClick={() => downloadFile(doc.fileUrl)} className="p-2 rounded-xl text-primary hover:bg-primary/10">
-                          <Download className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Audit History Tab */}
-              {drawerTab === 'Audit History' && (
-                <div className="space-y-3">
-                  {selectedProject.history?.map(item => (
-                    <ActivityItem key={item.id} item={item} />
-                  ))}
-                </div>
-              )}
+            {/* Footer / Open Board Button */}
+            <div className="pt-3 border-t border-[#EEF2F7] dark:border-border/40 flex items-center justify-between">
+              <span className="text-[11px] text-muted-foreground font-medium">
+                Created {new Date(selectedProject.createdAt).toLocaleDateString()}
+              </span>
+              <button
+                onClick={() => {
+                  setDetailDrawerOpen(false);
+                  navigate(`/tasks?tab=Board&projectId=${selectedProject.id}`);
+                }}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-md hover:shadow-lg transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>Open Board</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
             </div>
           </div>
         </div>
@@ -1158,6 +1494,21 @@ const Projects = () => {
           </div>
         </div>
       )}
+
+      {/* Project Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={deleteConfirmModalOpen}
+        onClose={() => {
+          setDeleteConfirmModalOpen(false);
+          setProjectToDeleteId(null);
+        }}
+        onConfirm={executeDeleteProject}
+        title="Are you sure?"
+        message="This project will be deleted permanently."
+        confirmText="Yes"
+        cancelText="No"
+        variant="danger"
+      />
     </div>
   );
 };

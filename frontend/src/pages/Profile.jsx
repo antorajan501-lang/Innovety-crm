@@ -13,7 +13,13 @@ import {
   CheckCircle,
   AlertTriangle,
   History,
-  Laptop
+  Laptop,
+  Award,
+  Building2,
+  Briefcase,
+  Shield,
+  Zap,
+  TrendingUp
 } from 'lucide-react';
 
 const Profile = () => {
@@ -41,6 +47,9 @@ const Profile = () => {
   const [tempPassWarning, setTempPassWarning] = useState(false);
   const [userLogs, setUserLogs] = useState([]);
   const [assignedAssets, setAssignedAssets] = useState([]);
+  const [positionHistory, setPositionHistory] = useState([]);
+  const [promotionHistory, setPromotionHistory] = useState([]);
+  const [fullUserDetails, setFullUserDetails] = useState(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -50,12 +59,19 @@ const Profile = () => {
       setTempPassWarning(true);
     }
 
-    // Fetch user details including assigned assets
+    // Fetch user details including assigned assets, position history & promotion history
     const fetchUserDetails = async () => {
       try {
         if (user?.id) {
-          const res = await api.get(`/users/${user.id}`);
-          setAssignedAssets(res.data.assignedAssets || []);
+          const [uRes, hRes, promoRes] = await Promise.all([
+            api.get(`/users/${user.id}`),
+            api.get(`/positions/history/${user.id}`).catch(() => ({ data: [] })),
+            api.get(`/users/${user.id}/promotion-history`).catch(() => ({ data: [] }))
+          ]);
+          setFullUserDetails(uRes.data);
+          setAssignedAssets(uRes.data.assignedAssets || []);
+          setPositionHistory(hRes.data || []);
+          setPromotionHistory(promoRes.data || []);
         }
       } catch (err) {
         console.error(err);
@@ -222,14 +238,39 @@ const Profile = () => {
             {user?.employeeId || 'ID-001'} • <span className="capitalize text-primary font-bold">{user?.role === 'ADMIN' ? 'Admin' : user?.role?.toLowerCase().replace('_', ' ')}</span>
           </p>
 
+          {/* Position Badge */}
+          {fullUserDetails?.position && (
+            <div className="mt-2.5">
+              <span
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold shadow-xs"
+                style={{ backgroundColor: fullUserDetails.position.color || '#4F46E5', color: fullUserDetails.position.textColor || '#FFFFFF' }}
+              >
+                <Award className="h-3.5 w-3.5" />
+                <span>{fullUserDetails.position.name} (Level {fullUserDetails.position.level})</span>
+              </span>
+            </div>
+          )}
+
           <div className="mt-6 border-t border-border/40 pt-4 w-full text-xs space-y-3 text-left text-muted-foreground font-medium">
             <div className="flex items-center justify-between">
               <span className="font-bold text-muted-foreground">Email</span>
               <span className="text-foreground font-semibold truncate max-w-[170px]">{user?.email}</span>
             </div>
             <div className="flex items-center justify-between">
+              <span className="font-bold text-muted-foreground">Branch</span>
+              <span className="text-foreground font-semibold">{fullUserDetails?.branch?.name || 'Headquarters'}</span>
+            </div>
+            <div className="flex items-center justify-between">
               <span className="font-bold text-muted-foreground">Department</span>
-              <span className="text-foreground font-semibold">{user?.department || 'Management'}</span>
+              <span className="text-foreground font-semibold">{fullUserDetails?.departmentRef?.name || user?.department || 'Software Development'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-muted-foreground">Reporting Manager</span>
+              <span className="text-foreground font-semibold">{fullUserDetails?.reportingManager?.name || 'Self'}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-muted-foreground">Employment Type</span>
+              <span className="text-foreground font-semibold">{fullUserDetails?.employmentType || 'Full-time'}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="font-bold text-muted-foreground">Joining Date</span>
@@ -407,8 +448,83 @@ const Profile = () => {
         </div>
 
         {/* Activity history logs summary */}
-        <div className="rounded-3xl border border-border/60 bg-card p-6 sm:p-8 shadow-md text-left">
-          <h3 className="text-sm font-extrabold uppercase tracking-wide text-foreground mb-5 border-b border-border/40 pb-3 flex items-center gap-2">
+        <div className="rounded-3xl border border-border/60 bg-card p-6 sm:p-8 shadow-md text-left space-y-4">
+          <h3 className="text-sm font-extrabold uppercase tracking-wide text-foreground border-b border-border/40 pb-3 flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-amber-500" />
+            <span>Promotion Timeline & Career Progression</span>
+          </h3>
+
+          {promotionHistory.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic font-semibold py-3 text-center">
+              No historical role promotions recorded. Current role is active.
+            </p>
+          ) : (
+            <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+              {promotionHistory.map((item) => (
+                <div key={item.id} className="p-3.5 rounded-2xl border border-amber-500/30 bg-amber-500/5 space-y-2 text-xs">
+                  <div className="flex items-center justify-between font-bold">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full bg-muted text-muted-foreground text-[10px] uppercase font-bold">{item.previousRole}</span>
+                      <span className="text-amber-500 font-bold">➔</span>
+                      <span className="px-2.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] uppercase font-black">{item.newRole}</span>
+                    </div>
+                    <span className="text-[10px] text-muted-foreground font-mono">{new Date(item.effectiveDate).toLocaleDateString()}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground font-medium pt-1 border-t border-amber-500/20">
+                    <div>
+                      <span className="font-mono text-primary font-bold">{item.previousEmployeeId}</span> ➔ <span className="font-mono text-amber-600 font-black">{item.newEmployeeId}</span>
+                    </div>
+                    {item.newPosition && (
+                      <span className="font-bold text-foreground bg-card px-2.5 py-0.5 rounded-full border border-border/40">
+                        {item.newPosition.name}
+                      </span>
+                    )}
+                  </div>
+
+                  {item.promotionReason && (
+                    <p className="text-[11px] text-muted-foreground italic">
+                      "{item.promotionReason}"
+                    </p>
+                  )}
+
+                  {item.promotedBy && (
+                    <div className="text-[10px] text-muted-foreground font-semibold flex items-center justify-end gap-1">
+                      <span>Promoted by:</span>
+                      <span className="text-foreground font-bold">{item.promotedBy.name}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          <h3 className="text-sm font-extrabold uppercase tracking-wide text-foreground pt-4 border-t border-border/40 pb-3 flex items-center gap-2">
+            <Award className="h-4 w-4 text-primary" />
+            <span>Position Rank History</span>
+          </h3>
+
+          {positionHistory.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic font-semibold py-4 text-center">
+              No previous rank promotions recorded. Current position is active.
+            </p>
+          ) : (
+            <div className="space-y-3 max-h-[260px] overflow-y-auto pr-1">
+              {positionHistory.map((item) => (
+                <div key={item.id} className="p-3 rounded-2xl border border-border/40 bg-muted/20 space-y-1">
+                  <div className="flex items-center justify-between text-xs font-bold">
+                    <span className="text-muted-foreground">
+                      {item.oldPosition?.name || 'Initial Rank'} → <span className="text-primary font-black">{item.newPosition?.name || 'Updated Position'}</span>
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">{new Date(item.effectiveDate).toLocaleDateString()}</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground font-medium">Reason: {item.reason || 'Career advancement'}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <h3 className="text-sm font-extrabold uppercase tracking-wide text-foreground pt-4 border-t border-border/40 pb-2 flex items-center gap-2">
             <History className="h-4 w-4 text-primary" />
             <span>Recent Account Actions</span>
           </h3>

@@ -67,17 +67,58 @@ const createUser = async (req, res) => {
       keySkills,
       companyName,
       designation,
-      totalExperience
+      totalExperience,
+      cgpa,
+      noticePeriod,
+      careerBreakDuration,
+      careerBreakReason,
+      // Enterprise Organization & Position fields
+      positionId,
+      branchId,
+      departmentId,
+      designationId,
+      reportingManagerId,
+      gender,
+      shiftId,
+      employmentType,
+      probationPeriod,
+      grade,
+      jobLevel,
+      costCenter,
+      businessUnit,
+      workLocation
     } = req.body;
 
-    if (!name || !email || !dob || !role) {
-      return res.status(400).json({ message: 'Name, email, date of birth, and role are required.' });
+    // Security & Business Rule Enforcement:
+    // Determine strict user role based on targetRole or registry module
+    let finalRole = req.body.targetRole;
+    if (req.body.targetRole === 'INTERN' || role === 'INTERN') {
+      finalRole = 'INTERN';
+    } else if (req.body.targetRole === 'TEAM_LEADER' || role === 'TEAM_LEADER') {
+      finalRole = 'TEAM_LEADER';
+    } else if (req.body.targetRole === 'EMPLOYEE' || role === 'EMPLOYEE') {
+      finalRole = 'EMPLOYEE';
+    } else {
+      // Force default to EMPLOYEE if role is unspecified or if ADMIN / SUPER_ADMIN creation is attempted
+      finalRole = 'EMPLOYEE';
     }
 
-    // Check candidate type dynamic mandatory fields if candidateType is provided
+    if (!name || !email || !dob) {
+      return res.status(400).json({ message: 'Name, email, and date of birth are required.' });
+    }
+
     let resumePath = null;
+    let resumeDetails = {};
     if (req.files?.resume?.[0]) {
-      resumePath = `/uploads/resumes/${req.files.resume[0].filename}`;
+      const file = req.files.resume[0];
+      resumePath = `/uploads/resumes/${file.filename}`;
+      resumeDetails = {
+        resumeFileName: file.filename,
+        resumeOriginalName: file.originalname,
+        resumePath: resumePath,
+        resumeMimeType: file.mimetype,
+        resumeSize: file.size
+      };
     } else if (req.body.resume) {
       resumePath = req.body.resume;
     }
@@ -87,7 +128,17 @@ const createUser = async (req, res) => {
       profilePicPath = `/uploads/profile-pics/${req.files.profilePic[0].filename}`;
     }
 
-    if (candidateType) {
+    const customData = {
+      ...(cgpa ? { cgpa } : {}),
+      ...(noticePeriod ? { noticePeriod } : {}),
+      ...(careerBreakDuration ? { careerBreakDuration } : {}),
+      ...(careerBreakReason ? { careerBreakReason } : {}),
+      ...resumeDetails
+    };
+
+    let finalInternshipRole = internshipRole || (finalRole === 'INTERN' ? 'INTERN' : null);
+
+    if (candidateType && finalRole !== 'INTERN') {
       if (candidateType === 'Student') {
         if (!college && !companyName) return res.status(400).json({ message: 'College/University Name is required for Student.' });
         if (!degree) return res.status(400).json({ message: 'Degree is required for Student.' });
@@ -99,10 +150,7 @@ const createUser = async (req, res) => {
         if (!graduationYear) return res.status(400).json({ message: 'Graduation Year is required for Graduate.' });
         if (!resumePath) return res.status(400).json({ message: 'Resume (PDF/DOC) is required for Graduate.' });
       } else if (candidateType === 'Intern') {
-        if (!college && !companyName) return res.status(400).json({ message: 'College / Company Name is required for Intern.' });
-        if (!internshipRole) return res.status(400).json({ message: 'Internship Role is required for Intern.' });
-        if (!internshipDuration) return res.status(400).json({ message: 'Internship Duration is required for Intern.' });
-        if (!resumePath) return res.status(400).json({ message: 'Resume (PDF/DOC) is required for Intern.' });
+        // Auto-assign internshipRole fallback without blocking onboarding
       } else if (candidateType === 'Fresher') {
         if (!highestQualification) return res.status(400).json({ message: 'Highest Qualification is required for Fresher.' });
         if (!graduationYear) return res.status(400).json({ message: 'Graduation Year is required for Fresher.' });
@@ -113,6 +161,32 @@ const createUser = async (req, res) => {
         if (!designation) return res.status(400).json({ message: 'Designation is required for Professional.' });
         if (!totalExperience) return res.status(400).json({ message: 'Total Experience is required for Professional.' });
         if (!resumePath) return res.status(400).json({ message: 'Resume (PDF/DOC) is required for Professional.' });
+      }
+    }
+
+    // Set intern default values automatically for intern onboarding
+    let finalEmploymentType = employmentType || null;
+    let finalStatus = req.body.status || 'ACTIVE';
+    let finalJoiningDate = joiningDate ? new Date(joiningDate) : new Date();
+    let finalProbationPeriod = probationPeriod || null;
+    let finalShiftId = shiftId || null;
+
+    if (finalRole === 'INTERN') {
+      finalEmploymentType = 'Internship';
+      finalStatus = 'ACTIVE';
+      finalJoiningDate = joiningDate ? new Date(joiningDate) : new Date();
+      finalProbationPeriod = null;
+      if (!finalShiftId) {
+        const defaultShift = await prisma.shiftMaster.findFirst({ where: { status: 'ACTIVE' } });
+        if (defaultShift) finalShiftId = defaultShift.id;
+      }
+    }
+
+    let finalDepartmentName = department || null;
+    if (!finalDepartmentName && departmentId) {
+      const deptObj = await prisma.department.findUnique({ where: { id: departmentId } });
+      if (deptObj) {
+        finalDepartmentName = deptObj.name;
       }
     }
 
@@ -130,7 +204,7 @@ const createUser = async (req, res) => {
 
     while (!newUser && attempts < maxAttempts) {
       attempts++;
-      const employeeId = await generateEmployeeId(role);
+      const employeeId = await generateEmployeeId(finalRole);
       try {
         newUser = await prisma.user.create({
           data: {
@@ -141,23 +215,38 @@ const createUser = async (req, res) => {
             phone,
             dob: new Date(dob),
             college: college || companyName || null,
-            department,
-            joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
-            role,
-            status: 'ACTIVE',
+            department: finalDepartmentName,
+            joiningDate: finalJoiningDate,
+            role: finalRole,
+            status: finalStatus,
             profilePic: profilePicPath,
             candidateType: candidateType || null,
             resume: resumePath || null,
             degree: degree || null,
             currentYearSemester: currentYearSemester || null,
             graduationYear: graduationYear || null,
-            internshipRole: internshipRole || null,
+            internshipRole: finalInternshipRole,
             internshipDuration: internshipDuration || null,
             highestQualification: highestQualification || null,
             keySkills: keySkills || null,
             companyName: companyName || college || null,
             designation: designation || null,
-            totalExperience: totalExperience || null
+            totalExperience: totalExperience || null,
+            positionId: positionId || null,
+            branchId: branchId || null,
+            departmentId: departmentId || null,
+            designationId: designationId || null,
+            reportingManagerId: reportingManagerId || null,
+            gender: gender || null,
+            shiftId: finalShiftId,
+            employmentType: finalEmploymentType,
+            probationPeriod: finalProbationPeriod,
+            grade: grade || null,
+            jobLevel: jobLevel || null,
+            costCenter: costCenter || null,
+            businessUnit: businessUnit || null,
+            workLocation: workLocation || null,
+            customData: Object.keys(customData).length > 0 ? customData : undefined
           }
         });
       } catch (err) {
@@ -186,7 +275,7 @@ const createUser = async (req, res) => {
     await logActivity({
       userId: req.user.id,
       action: 'USER_CREATE',
-      details: `Created new user ${newUser.name} (${newUser.employeeId}) with role ${role}`
+      details: `Created new user ${newUser.name} (${newUser.employeeId}) with role ${finalRole}`
     });
 
     const { password: _, ...userWithoutPassword } = newUser;
@@ -200,7 +289,7 @@ const createUser = async (req, res) => {
 
 const getAllUsers = async (req, res) => {
   try {
-    const { role, status, teamId, search, page = 1, limit = 50, excludeSuperAdmin = 'true', excludeSelf } = req.query;
+    const { role, status, teamId, search, department, position, page = 1, limit = 50, excludeSuperAdmin = 'true', excludeSelf } = req.query;
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -241,9 +330,23 @@ const getAllUsers = async (req, res) => {
         some: { teamId }
       };
     }
+    if (department) {
+      where.OR = [
+        ...(where.OR || []),
+        { department: { equals: department, mode: 'insensitive' } },
+        { departmentRef: { name: { equals: department, mode: 'insensitive' } } },
+        { departmentId: department }
+      ];
+    }
+    if (position) {
+      where.position = {
+        name: { equals: position, mode: 'insensitive' }
+      };
+    }
 
     if (search) {
       where.OR = [
+        ...(where.OR || []),
         { name: { contains: search, mode: 'insensitive' } },
         { email: { contains: search, mode: 'insensitive' } },
         { employeeId: { contains: search, mode: 'insensitive' } },
@@ -261,6 +364,12 @@ const getAllUsers = async (req, res) => {
         take: limitNum,
         orderBy: { createdAt: 'desc' },
         include: {
+          position: true,
+          branch: true,
+          departmentRef: true,
+          designationRef: true,
+          reportingManager: { select: { id: true, name: true, employeeId: true, role: true } },
+          shiftRef: true,
           teamMembers: {
             include: { team: true }
           }
@@ -273,6 +382,7 @@ const getAllUsers = async (req, res) => {
       const { password, ...details } = u;
       return {
         ...details,
+        department: details.department || details.departmentRef?.name || null,
         profilePhoto: details.profilePic || null
       };
     });
@@ -298,6 +408,20 @@ const getUserById = async (req, res) => {
     const user = await prisma.user.findUnique({
       where: { id },
       include: {
+        position: true,
+        branch: true,
+        departmentRef: true,
+        designationRef: true,
+        reportingManager: { select: { id: true, name: true, employeeId: true, role: true } },
+        shiftRef: true,
+        positionHistories: {
+          include: {
+            oldPosition: true,
+            newPosition: true,
+            changedBy: { select: { id: true, name: true, employeeId: true, role: true } }
+          },
+          orderBy: { createdAt: 'desc' }
+        },
         teamMembers: {
           include: { team: { include: { leader: true } } }
         },
@@ -316,7 +440,10 @@ const getUserById = async (req, res) => {
     }
 
     const { password, ...details } = user;
-    res.json(details);
+    res.json({
+      ...details,
+      department: details.department || details.departmentRef?.name || null
+    });
   } catch (error) {
     console.error('Get user by ID error:', error);
     res.status(500).json({ message: 'Failed to fetch user details.' });
@@ -346,10 +473,25 @@ const editUser = async (req, res) => {
       keySkills,
       companyName,
       designation,
-      totalExperience
+      totalExperience,
+      // Organization & Position fields
+      positionId,
+      branchId,
+      departmentId,
+      designationId,
+      reportingManagerId,
+      gender,
+      shiftId,
+      employmentType,
+      probationPeriod,
+      grade,
+      jobLevel,
+      costCenter,
+      businessUnit,
+      workLocation
     } = req.body;
 
-    // Fetch current user to compare DOB
+    // Fetch current user to compare DOB and position
     const existingUser = await prisma.user.findUnique({ where: { id } });
     if (!existingUser) {
       return res.status(404).json({ message: 'User not found.' });
@@ -360,7 +502,7 @@ const editUser = async (req, res) => {
       email,
       phone,
       college: college !== undefined ? (college || companyName || null) : existingUser.college,
-      department,
+      department: department !== undefined ? department : existingUser.department,
       role,
       status
     };
@@ -377,8 +519,65 @@ const editUser = async (req, res) => {
     if (designation !== undefined) data.designation = designation || null;
     if (totalExperience !== undefined) data.totalExperience = totalExperience || null;
 
+    if (departmentId !== undefined) {
+      data.departmentId = departmentId || null;
+      if (departmentId && !data.department) {
+        const deptObj = await prisma.department.findUnique({ where: { id: departmentId } });
+        if (deptObj) {
+          data.department = deptObj.name;
+        }
+      }
+    }
+    if (reportingManagerId !== undefined) data.reportingManagerId = reportingManagerId || null;
+    if (gender !== undefined) data.gender = gender || null;
+    if (shiftId !== undefined) data.shiftId = shiftId || null;
+    if (employmentType !== undefined) data.employmentType = employmentType || null;
+    if (probationPeriod !== undefined) data.probationPeriod = probationPeriod || null;
+    if (grade !== undefined) data.grade = grade || null;
+    if (jobLevel !== undefined) data.jobLevel = jobLevel || null;
+    if (costCenter !== undefined) data.costCenter = costCenter || null;
+    if (businessUnit !== undefined) data.businessUnit = businessUnit || null;
+    if (workLocation !== undefined) data.workLocation = workLocation || null;
+
+    // Track Position History if positionId changes
+    if (positionId !== undefined && positionId !== existingUser.positionId) {
+      data.positionId = positionId || null;
+
+      await prisma.positionHistory.create({
+        data: {
+          userId: id,
+          oldPositionId: existingUser.positionId,
+          newPositionId: positionId || null,
+          changedById: req.user?.id || null,
+          reason: req.body.positionChangeReason || 'Administrative Position Change'
+        }
+      });
+
+      const oldPos = existingUser.positionId ? await prisma.position.findUnique({ where: { id: existingUser.positionId } }) : null;
+      const newPos = positionId ? await prisma.position.findUnique({ where: { id: positionId } }) : null;
+
+      await logActivity({
+        userId: req.user?.id || id,
+        action: 'POSITION_CHANGED',
+        details: `Position changed for ${existingUser.name} (${existingUser.employeeId}): ` +
+                 `Old Position: ${oldPos?.name || 'None'} -> New Position: ${newPos?.name || 'None'} ` +
+                 `by Admin ${req.user?.name || 'System'}`
+      });
+    }
+
     if (req.files?.resume?.[0]) {
-      data.resume = `/uploads/resumes/${req.files.resume[0].filename}`;
+      const file = req.files.resume[0];
+      const resumePath = `/uploads/resumes/${file.filename}`;
+      data.resume = resumePath;
+      const existingCustom = (typeof existingUser.customData === 'object' && existingUser.customData) ? existingUser.customData : {};
+      data.customData = {
+        ...existingCustom,
+        resumeFileName: file.filename,
+        resumeOriginalName: file.originalname,
+        resumePath: resumePath,
+        resumeMimeType: file.mimetype,
+        resumeSize: file.size
+      };
     } else if (req.body.resume !== undefined) {
       data.resume = req.body.resume || null;
     }
@@ -403,7 +602,6 @@ const editUser = async (req, res) => {
         data.password = await bcrypt.hash(newTempPassword, 10);
         dobPasswordReset = true;
 
-        // Audit: record DOB change and password reset — never log the password value
         await logActivity({
           userId: req.user.id,
           action: 'USER_DOB_CHANGED',
@@ -698,6 +896,234 @@ const bulkDelete = async (req, res) => {
   }
 };
 
+// Helper to convert Employee ID prefix while preserving numeric sequence
+const convertEmployeeId = (currentId, targetRole) => {
+  const targetPrefix = targetRole === 'EMPLOYEE' ? 'EMP' : targetRole === 'TEAM_LEADER' ? 'TL' : targetRole === 'ADMIN' ? 'AD' : 'IN';
+
+  if (!currentId) {
+    return `${targetPrefix}-1001`;
+  }
+
+  const match = currentId.match(/^(IN|EMP|EM|TL|AD|USR|EMP-)?[-_]?(\d+)$/i);
+  if (match && match[2]) {
+    return `${targetPrefix}-${match[2]}`;
+  }
+
+  return `${targetPrefix}-${currentId}`;
+};
+
+const promoteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      targetRole,
+      positionId,
+      departmentId,
+      department,
+      reportingManagerId,
+      reason,
+      effectiveDate
+    } = req.body;
+
+    if (req.user.role !== 'ADMIN' && req.user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Only Admin and Super Admin can perform user promotions.' });
+    }
+
+    if (!targetRole || !positionId || !reason) {
+      return res.status(400).json({ message: 'Target Role, Position, and Promotion Reason are required.' });
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: { id },
+      include: { position: true }
+    });
+
+    if (!existingUser) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    const roleHierarchy = {
+      INTERN: 1,
+      EMPLOYEE: 2,
+      TEAM_LEADER: 3,
+      ADMIN: 4,
+      SUPER_ADMIN: 5
+    };
+
+    const currentLevel = roleHierarchy[existingUser.role] || 1;
+    const targetLevel = roleHierarchy[targetRole];
+
+    if (!targetLevel) {
+      return res.status(400).json({ message: `Invalid target role: ${targetRole}` });
+    }
+
+    if (existingUser.role === 'SUPER_ADMIN') {
+      return res.status(400).json({ message: 'Super Admin cannot be promoted further.' });
+    }
+
+    if (targetLevel <= currentLevel) {
+      return res.status(400).json({ message: `User is already at ${existingUser.role} role. Demotions or self-promotions are not permitted.` });
+    }
+
+    if (targetLevel > currentLevel + 1 && req.user.role !== 'SUPER_ADMIN') {
+      return res.status(400).json({ message: `Non-sequential promotion from ${existingUser.role} to ${targetRole} requires Super Admin override.` });
+    }
+
+    const targetPosition = await prisma.position.findUnique({ where: { id: positionId } });
+    if (!targetPosition) {
+      return res.status(400).json({ message: 'Selected target position does not exist.' });
+    }
+
+    const newEmployeeId = convertEmployeeId(existingUser.employeeId, targetRole);
+    const promoEffectiveDate = effectiveDate ? new Date(effectiveDate) : new Date();
+
+    // Sanitize foreign keys and required values
+    let cleanDeptId = (departmentId && departmentId.trim() !== '') ? departmentId : (existingUser.departmentId || null);
+    let cleanManagerId = (reportingManagerId && reportingManagerId.trim() !== '') ? reportingManagerId : (existingUser.reportingManagerId || null);
+    const prevEmpId = existingUser.employeeId || `IN-${existingUser.id.substring(0, 4)}`;
+
+    // Verify foreign keys if supplied
+    if (cleanDeptId) {
+      const deptExists = await prisma.departmentMaster.findUnique({ where: { id: cleanDeptId } });
+      if (!deptExists) {
+        console.warn(`[PROMOTION] Department ID ${cleanDeptId} not found, resetting departmentId to null.`);
+        cleanDeptId = null;
+      }
+    }
+
+    if (cleanManagerId) {
+      const mgrExists = await prisma.user.findUnique({ where: { id: cleanManagerId } });
+      if (!mgrExists) {
+        console.warn(`[PROMOTION] Reporting Manager ID ${cleanManagerId} not found, resetting managerId to null.`);
+        cleanManagerId = null;
+      }
+    }
+
+    console.log('[PROMOTION PRE-FLIGHT CHECK]:');
+    console.log('- Promoted User ID:', id);
+    console.log('- Current Role:', existingUser.role, '-> Target Role:', targetRole);
+    console.log('- Current Emp ID:', prevEmpId, '-> New Emp ID:', newEmployeeId);
+    console.log('- Target Position ID:', targetPosition.id, '(', targetPosition.name, ')');
+    console.log('- Clean Dept ID:', cleanDeptId);
+    console.log('- Clean Manager ID:', cleanManagerId);
+    console.log('- Promoted By User ID:', req.user.id);
+
+    const result = await prisma.$transaction(async (tx) => {
+      console.log('-> STEP 1: Updating User Record in-place...');
+      const updatedUser = await tx.user.update({
+        where: { id },
+        data: {
+          role: targetRole,
+          employeeId: newEmployeeId,
+          positionId: targetPosition.id,
+          departmentId: cleanDeptId,
+          department: department || existingUser.department,
+          reportingManagerId: cleanManagerId,
+          promotionDate: promoEffectiveDate,
+          promotionEligible: false
+        },
+        include: {
+          position: true,
+          departmentRef: true,
+          reportingManager: { select: { id: true, name: true, email: true } }
+        }
+      });
+      console.log('-> STEP 1 SUCCESS: User updated.');
+
+      console.log('-> STEP 2: Creating PromotionHistory record...');
+      const promotionHistory = await tx.promotionHistory.create({
+        data: {
+          userId: id,
+          previousRole: existingUser.role,
+          newRole: targetRole,
+          previousPositionId: existingUser.positionId || null,
+          newPositionId: targetPosition.id,
+          previousEmployeeId: prevEmpId,
+          newEmployeeId: newEmployeeId,
+          promotedById: req.user.id,
+          promotionReason: reason,
+          effectiveDate: promoEffectiveDate
+        }
+      });
+      console.log('-> STEP 2 SUCCESS: PromotionHistory created.');
+
+      console.log('-> STEP 3: Creating PositionHistory record...');
+      await tx.positionHistory.create({
+        data: {
+          userId: id,
+          oldPositionId: existingUser.positionId || null,
+          newPositionId: targetPosition.id,
+          changedById: req.user.id,
+          reason: `PROMOTION: ${existingUser.role} -> ${targetRole} (${reason})`,
+          effectiveDate: promoEffectiveDate
+        }
+      });
+      console.log('-> STEP 3 SUCCESS: PositionHistory created.');
+
+      console.log('-> STEP 4: Creating ActivityLog record...');
+      await tx.activityLog.create({
+        data: {
+          userId: req.user.id,
+          action: 'USER_PROMOTED',
+          details: `Promoted ${existingUser.name} from ${existingUser.role} (${prevEmpId}) to ${targetRole} (${newEmployeeId}) - Position: ${targetPosition.name}`
+        }
+      });
+      console.log('-> STEP 4 SUCCESS: ActivityLog created.');
+
+      console.log('-> STEP 5: Creating Notification record...');
+      await tx.notification.create({
+        data: {
+          userId: id,
+          title: '🎉 Congratulations! You have been promoted',
+          message: `You have been officially promoted from ${existingUser.role} to ${targetRole} as ${targetPosition.name} (Employee ID: ${newEmployeeId}). Effective Date: ${promoEffectiveDate.toLocaleDateString()}`,
+          type: 'PROMOTION',
+          isRead: false
+        }
+      });
+      console.log('-> STEP 5 SUCCESS: Notification created.');
+
+      return { updatedUser, promotionHistory };
+    });
+
+    res.json({
+      success: true,
+      message: `User ${existingUser.name} promoted successfully to ${targetRole}.`,
+      user: result.updatedUser,
+      updatedUser: result.updatedUser,
+      promotionHistory: result.promotionHistory
+    });
+  } catch (error) {
+    console.error('===== PROMOTION ERROR =====');
+    console.error(error);
+    console.error(error.stack);
+    console.error('===========================');
+    res.status(500).json({
+      message: error.message || 'Failed to promote user.',
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+};
+
+const getUserPromotionHistory = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const history = await prisma.promotionHistory.findMany({
+      where: { userId: id },
+      include: {
+        previousPosition: { select: { id: true, name: true, code: true, color: true } },
+        newPosition: { select: { id: true, name: true, code: true, color: true } },
+        promotedBy: { select: { id: true, name: true, email: true, profilePic: true } }
+      },
+      orderBy: { effectiveDate: 'desc' }
+    });
+
+    res.json(history);
+  } catch (error) {
+    console.error('Fetch promotion history error:', error);
+    res.status(500).json({ message: 'Failed to fetch promotion history.' });
+  }
+};
+
 module.exports = {
   createUser,
   getAllUsers,
@@ -707,5 +1133,7 @@ module.exports = {
   toggleUserStatus,
   resetUserPassword,
   bulkImport,
-  bulkDelete
+  bulkDelete,
+  promoteUser,
+  getUserPromotionHistory
 };

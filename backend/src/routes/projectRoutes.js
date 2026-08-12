@@ -5,6 +5,7 @@ const {
   getProjects,
   getProjectById,
   updateProject,
+  updateProjectWorkflowStages,
   deleteProject,
   uploadDocument,
   deleteDocument
@@ -18,6 +19,7 @@ router.get('/', getProjects);
 router.post('/', requireRole(['ADMIN']), createProject);
 router.get('/:id', getProjectById);
 router.put('/:id', requireRole(['ADMIN', 'TEAM_LEADER']), updateProject);
+router.put('/:id/workflow-stages', requireRole(['ADMIN', 'SUPER_ADMIN']), updateProjectWorkflowStages);
 router.delete('/:id', requireRole(['ADMIN']), deleteProject);
 
 // Project Documents
