@@ -24,6 +24,7 @@ const OrganizationManager = () => {
   const [assignedMemberSearch, setAssignedMemberSearch] = useState('');
   const [membersLoading, setMembersLoading] = useState(false);
   const [saveLoading, setSaveLoading] = useState(false);
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState({ open: false, dept: null, memberCount: 0 });
 
   // State for Positions
   const [positions, setPositions] = useState([]);
@@ -136,21 +137,33 @@ const OrganizationManager = () => {
     });
   };
 
-  const handleDeleteDepartmentClick = async () => {
-    if (stagedAssignedMembers.length > 0) {
-      showAlert('error', 'This department contains members. Move or remove all members before deleting.');
-      return;
+  const handleDeleteDepartmentClick = () => {
+    if (!selectedDepartment) return;
+    const memberCount = stagedAssignedMembers.length;
+
+    if (memberCount > 0) {
+      setDeleteConfirmModal({
+        open: true,
+        dept: selectedDepartment,
+        memberCount
+      });
+    } else {
+      executeDeleteDepartment(selectedDepartment.id);
     }
+  };
 
-    if (!window.confirm(`Are you sure you want to delete department "${selectedDepartment.name}"?`)) return;
-
+  const executeDeleteDepartment = async (deptId) => {
     try {
-      await api.delete(`/organization/departments/${selectedDepartment.id}`);
-      showAlert('success', `Department "${selectedDepartment.name}" deleted successfully.`);
+      setSaveLoading(true);
+      const res = await api.delete(`/organization/departments/${deptId}`);
+      showAlert('success', res.data?.message || 'Department deleted successfully.');
       setSelectedDepartment(null);
+      setDeleteConfirmModal({ open: false, dept: null, memberCount: 0 });
       fetchTree();
     } catch (err) {
       showAlert('error', err.response?.data?.message || 'Failed to delete department.');
+    } finally {
+      setSaveLoading(false);
     }
   };
 
@@ -314,7 +327,7 @@ const OrganizationManager = () => {
       setSelectedUserIdsForNewDept([]);
       fetchTree();
     } catch (err) {
-      showAlert('error', err.response?.data?.message || 'Failed to save department.');
+      showAlert('error', err.response?.data?.message || 'Failed to create department');
     }
   };
 
@@ -324,6 +337,10 @@ const OrganizationManager = () => {
     const matchStatus = posStatusFilter === 'ALL' || pos.status === posStatusFilter;
     return matchQuery && matchStatus;
   });
+
+  const displayDepartments = (treeData?.departments || []).filter(
+    d => d.name !== 'Unassigned' && d.code !== 'DEP-UNASSIGNED'
+  );
 
   return (
     <div className="space-y-6 text-left pb-12">
@@ -377,7 +394,7 @@ const OrganizationManager = () => {
             }`}
           >
             <Briefcase className="h-4 w-4" />
-            <span>Departments ({treeData?.departments?.length || 0})</span>
+            <span>Departments ({displayDepartments.length})</span>
           </button>
         </div>
       </div>
@@ -564,7 +581,7 @@ const OrganizationManager = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {treeData?.departments?.map(dept => (
+            {displayDepartments.map(dept => (
               <div
                 key={dept.id}
                 onClick={() => openManageDepartmentModal(dept)}
@@ -1118,6 +1135,61 @@ const OrganizationManager = () => {
                     <span>{saveLoading ? 'Saving...' : 'Save Changes'}</span>
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE DEPARTMENT CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {deleteConfirmModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-card border border-border/80 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 text-left"
+            >
+              <div className="flex items-center gap-3 border-b border-border/60 pb-4">
+                <div className="p-3 rounded-2xl bg-rose-500/10 text-rose-600 border border-rose-500/20">
+                  <AlertTriangle className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-foreground">Delete Department</h3>
+                  <p className="text-xs text-muted-foreground font-medium">Reassignment Confirmation</p>
+                </div>
+              </div>
+
+              <div className="space-y-3 bg-muted/20 p-4 rounded-2xl border border-border/60 text-xs font-medium text-foreground">
+                <p className="font-extrabold text-foreground">
+                  This department contains {deleteConfirmModal.memberCount} member(s).
+                </p>
+                <p className="text-muted-foreground leading-relaxed">
+                  If you continue, all members in this department will be moved to <strong className="text-primary font-bold">Unassigned</strong>.
+                </p>
+                <p className="font-bold text-foreground pt-1">
+                  Do you want to continue?
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-border/60">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmModal({ open: false, dept: null, memberCount: 0 })}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={saveLoading}
+                  onClick={() => executeDeleteDepartment(deleteConfirmModal.dept.id)}
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>{saveLoading ? 'Deleting...' : 'Delete & Move Members'}</span>
+                </button>
               </div>
             </motion.div>
           </div>

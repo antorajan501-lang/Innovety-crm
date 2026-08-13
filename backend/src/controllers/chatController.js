@@ -24,7 +24,7 @@ const getRooms = async (req, res) => {
         where: { roomId_userId: { roomId: companyRoomRecord.id, userId } },
         update: {},
         create: { roomId: companyRoomRecord.id, userId }
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     // B. Fetch DB ChatRooms where user is a member (including archived project rooms for history browsing)
@@ -343,7 +343,7 @@ const getRoomMessages = async (req, res) => {
     // Auto-join if user is authorized for Company room
     let isMember = room.members.some(m => m.userId === userId);
     if (!isMember && (room.type === 'COMPANY' || room.type === 'GLOBAL')) {
-      await prisma.chatRoomMember.create({ data: { roomId, userId } }).catch(() => {});
+      await prisma.chatRoomMember.create({ data: { roomId, userId } }).catch(() => { });
       isMember = true;
     }
 
@@ -525,7 +525,7 @@ const sendMessage = async (req, res) => {
     if (!isMember) {
       await prisma.chatRoomMember.create({
         data: { roomId, userId }
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     const createdMsg = await prisma.chatMessage.create({
@@ -554,7 +554,7 @@ const sendMessage = async (req, res) => {
 
     await prisma.messageRead.create({
       data: { messageId: createdMsg.id, userId }
-    }).catch(() => {});
+    }).catch(() => { });
 
     await prisma.chatRoom.update({
       where: { id: roomId },
