@@ -18,6 +18,7 @@ const getLeaves = async (req, res) => {
     const {
       status,
       leaveType,
+      payType,
       department,
       search,
       singleDate,
@@ -85,6 +86,12 @@ const getLeaves = async (req, res) => {
           { type: normType }
         ]
       });
+    }
+
+    // 3.5 Pay Type Filter
+    if (payType && payType !== 'ALL') {
+      const normPayType = payType.toUpperCase();
+      andConditions.push({ payType: normPayType });
     }
 
     // 4. Date Overlap Filter
@@ -268,7 +275,7 @@ const applyLeave = async (req, res) => {
       return res.status(403).json({ message: 'Administrators and Super Admins cannot apply for leave.' });
     }
 
-    const { startDate, endDate, leaveType, type: altType, reason, letterContent, contactPhone } = req.body;
+    const { startDate, endDate, leaveType, payType: inputPayType, type: altType, reason, letterContent, contactPhone } = req.body;
 
     if (!startDate || !endDate || (!reason && !letterContent)) {
       return res.status(400).json({ message: 'Start date, end date, and reason/letter content are required.' });
@@ -292,14 +299,18 @@ const applyLeave = async (req, res) => {
 
     const rawType = leaveType || altType || 'CASUAL';
     const normalizedType = String(rawType).toUpperCase();
-    const ALLOWED_TYPES = ['CASUAL', 'SICK', 'EMERGENCY', 'WFH'];
+    const ALLOWED_TYPES = ['CASUAL', 'SICK', 'EMERGENCY', 'WFH', 'LOP', 'UNPAID', 'LOSS_OF_PAY'];
 
     if (!ALLOWED_TYPES.includes(normalizedType)) {
-      return res.status(400).json({ message: 'Invalid leave type. Allowed: CASUAL, SICK, EMERGENCY, WFH.' });
+      return res.status(400).json({ message: 'Invalid leave type. Allowed: CASUAL, SICK, EMERGENCY, WFH, LOP, UNPAID.' });
     }
 
-    // Check available Leave Quota Balance against APPROVED leaves only (WFH exempt)
-    if (normalizedType !== 'WFH') {
+    const determinedPayType = inputPayType
+      ? (String(inputPayType).toUpperCase() === 'UNPAID' ? 'UNPAID' : 'PAID')
+      : (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(normalizedType) ? 'UNPAID' : 'PAID');
+
+    // Check available Leave Quota Balance against APPROVED leaves only (WFH and UNPAID exempt)
+    if (normalizedType !== 'WFH' && determinedPayType !== 'UNPAID') {
       const userRecord = await prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -386,6 +397,7 @@ const applyLeave = async (req, res) => {
         totalDays,
         leaveType: normalizedType,
         type: normalizedType === 'WFH' ? 'WFH' : 'LEAVE',
+        payType: determinedPayType,
         reason: reason || 'Leave Application',
         letterContent: letterContent || reason,
         contactPhone: contactPhone || null,

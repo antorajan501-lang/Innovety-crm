@@ -25,6 +25,8 @@ import SiteSettings from './pages/SiteSettings';
 import AssetManagement from './pages/AssetManagement';
 import Projects from './pages/Projects';
 import WorkLogs from './pages/WorkLogs';
+import WorkCalendar from './pages/WorkCalendar';
+
 
 
 // Finance & Payroll Pages
@@ -196,6 +198,7 @@ const App = () => {
               />
 
               {/* Protected Role-Based Routes */}
+              <Route path="/integrations" element={<Navigate to="/" replace />} />
               <Route
                 path="/"
                 element={
@@ -278,6 +281,16 @@ const App = () => {
               />
               <Route path="/leaves" element={<Navigate to="/leave-management" replace />} />
               <Route path="/operations/leave" element={<Navigate to="/leave-management" replace />} />
+              <Route path="/work-calendar" element={<Navigate to="/operations/work-calendar" replace />} />
+              <Route
+                path="/operations/work-calendar"
+                element={
+                  <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN']}>
+                    <WorkCalendar />
+                  </ProtectedRoute>
+                }
+              />
+
               <Route
                 path="/tickets"
                 element={

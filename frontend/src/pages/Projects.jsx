@@ -45,6 +45,7 @@ import {
   ActivityItem
 } from '../components/project';
 import ConfirmModal from '../components/ConfirmModal';
+import { getProjectStageProgress } from '../utils/projectProgress';
 
 const Projects = () => {
   const { user } = useAuth();
@@ -670,7 +671,10 @@ const Projects = () => {
               key={proj.id}
               project={proj}
               onSelect={() => openDetailDrawer(proj)}
-              onOpenChat={() => navigate('/chat')}
+              onOpenChat={(proj) => {
+                const targetId = proj?.id || proj?.projectId;
+                navigate(`/chat?projectId=${targetId}`);
+              }}
             />
           ))}
         </div>
@@ -1325,22 +1329,29 @@ const Projects = () => {
                   </div>
                 </div>
 
-                {/* Progress Bar */}
-                <div className="p-3 rounded-xl bg-white dark:bg-card border border-[#E5E7EB] dark:border-border/40 space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold">
-                    <span className="text-muted-foreground uppercase text-[10px]">Overall Progress</span>
-                    <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">{selectedProject.progressPercent || 0}%</span>
-                  </div>
-                  <div className="w-full bg-emerald-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-                      style={{ width: `${selectedProject.progressPercent || 0}%` }}
-                    />
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">
-                    {selectedProject.tasks?.filter(t => t.status === 'APPROVED' || t.status === 'COMPLETED').length || 0} of {selectedProject.tasks?.length || 0} tasks finished
-                  </p>
-                </div>
+                {/* Progress Summary Card */}
+                {(() => {
+                  const { progressPct, completedTasks, totalTasks } = getProjectStageProgress(selectedProject, selectedProject.tasks);
+                  return (
+                    <div className="p-3 rounded-xl bg-white dark:bg-card border border-[#E5E7EB] dark:border-border/40 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold">
+                        <span className="text-muted-foreground uppercase text-[10px] tracking-wider">
+                          COMPLETION <span className="text-primary font-black">{progressPct}%</span> <span className="text-foreground font-extrabold">({completedTasks}/{totalTasks})</span>
+                        </span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">{progressPct}%</span>
+                      </div>
+                      <div className="w-full bg-emerald-100 dark:bg-slate-800 rounded-full h-2 overflow-hidden border border-border/20">
+                        <div
+                          className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${progressPct}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground font-semibold">
+                        {completedTasks} of {totalTasks} tasks finished
+                      </p>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Right Card — Team Members (40% width on Desktop) */}

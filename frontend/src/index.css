@@ -26,6 +26,14 @@
     --success: 16, 185, 129;
     --warning: 245, 158, 11;
     --danger: 239, 68, 68;
+
+    --primary-color: rgb(var(--primary));
+    --primary-color-light: rgb(var(--primary-light));
+    --primary-color-soft: rgb(var(--primary));
+    --chat-outgoing-bg: rgb(var(--primary));
+    --chat-outgoing-bg-hover: rgb(var(--primary-hover));
+    --chat-outgoing-text: #ffffff;
+    --chat-area-bg: rgba(var(--primary), 0.08);
   }
 
   .dark {
@@ -51,6 +59,12 @@
     --success: 16, 185, 129;
     --warning: 245, 158, 11;
     --danger: 239, 68, 68;
+
+    --primary-color-soft: #005c4b;
+    --chat-outgoing-bg: #005c4b;
+    --chat-outgoing-bg-hover: #004d3e;
+    --chat-outgoing-text: #e9edef;
+    --chat-area-bg: rgb(13, 19, 16);
   }
 
   /* Predefined Theme Presets with High Specificity */
@@ -62,6 +76,10 @@
     --primary-dark: 4, 78, 56 !important;
     --secondary: 16, 185, 129 !important;
     --accent: 5, 150, 105 !important;
+    --chat-outgoing-bg: rgb(5, 122, 85) !important;
+    --chat-outgoing-bg-hover: rgb(4, 106, 74) !important;
+    --chat-outgoing-text: #ffffff !important;
+    --chat-area-bg: #e7f5ee !important;
     --app-background-from: 236, 253, 245 !important;
     --app-background-via: 240, 253, 248 !important;
     --app-background-to: 220, 252, 231 !important;
@@ -80,6 +98,10 @@
     --primary-dark: 30, 58, 138 !important;
     --secondary: 59, 130, 246 !important;
     --accent: 96, 165, 250 !important;
+    --chat-outgoing-bg: rgb(37, 99, 235) !important;
+    --chat-outgoing-bg-hover: rgb(29, 78, 216) !important;
+    --chat-outgoing-text: #ffffff !important;
+    --chat-area-bg: #eff6ff !important;
     --app-background-from: 239, 246, 255 !important;
     --app-background-via: 243, 248, 255 !important;
     --app-background-to: 224, 231, 255 !important;
@@ -98,6 +120,10 @@
     --primary-dark: 76, 29, 149 !important;
     --secondary: 139, 92, 246 !important;
     --accent: 167, 139, 250 !important;
+    --chat-outgoing-bg: rgb(124, 58, 237) !important;
+    --chat-outgoing-bg-hover: rgb(109, 40, 217) !important;
+    --chat-outgoing-text: #ffffff !important;
+    --chat-area-bg: #f5f3ff !important;
     --app-background-from: 245, 243, 255 !important;
     --app-background-via: 248, 245, 255 !important;
     --app-background-to: 238, 230, 255 !important;
@@ -116,6 +142,10 @@
     --primary-dark: 124, 45, 18 !important;
     --secondary: 249, 115, 22 !important;
     --accent: 251, 146, 60 !important;
+    --chat-outgoing-bg: rgb(234, 88, 12) !important;
+    --chat-outgoing-bg-hover: rgb(194, 65, 12) !important;
+    --chat-outgoing-text: #ffffff !important;
+    --chat-area-bg: #fff7ed !important;
     --app-background-from: 255, 247, 237 !important;
     --app-background-via: 255, 251, 245 !important;
     --app-background-to: 254, 243, 199 !important;
@@ -142,6 +172,10 @@
     --primary-dark: 2, 132, 199 !important;
     --secondary: 20, 184, 166 !important;
     --accent: 45, 212, 191 !important;
+    --chat-outgoing-bg: rgb(14, 165, 233) !important;
+    --chat-outgoing-bg-hover: rgb(3, 105, 161) !important;
+    --chat-outgoing-text: #ffffff !important;
+    --chat-area-bg: #0f172a !important;
     --app-background-from: 15, 23, 42 !important;
     --app-background-via: 30, 41, 59 !important;
     --app-background-to: 15, 23, 42 !important;
@@ -160,6 +194,10 @@
     --primary-dark: 76, 5, 25 !important;
     --secondary: 190, 18, 60 !important;
     --accent: 225, 29, 72 !important;
+    --chat-outgoing-bg: rgb(136, 19, 55) !important;
+    --chat-outgoing-bg-hover: rgb(112, 16, 46) !important;
+    --chat-outgoing-text: #ffffff !important;
+    --chat-area-bg: #fff1f2 !important;
     --app-background-from: 255, 241, 242 !important;
     --app-background-via: 255, 245, 245 !important;
     --app-background-to: 254, 226, 226 !important;
@@ -363,4 +401,22 @@ input::placeholder, textarea::placeholder {
 .dash-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgba(var(--primary), 0.55);
 }
+
+@keyframes marquee-scroll {
+  0%, 15% {
+    transform: translateX(0);
+  }
+  85%, 100% {
+    transform: translateX(calc(-100% + 90px));
+  }
+}
+
+.animate-marquee-scroll {
+  animation: marquee-scroll 7s cubic-bezier(0.4, 0, 0.2, 1) infinite alternate;
+}
+
+.pause-marquee:hover {
+  animation-play-state: paused;
+}
+
 

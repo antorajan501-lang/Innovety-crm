@@ -22,9 +22,9 @@ const userUpload = upload.fields([
 ]);
 
 // GET /api/users and GET /api/users/:id allowed for authenticated users
-router.get('/', authenticate, requireRole(['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getAllUsers);
+router.get('/', authenticate, requireRole(['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getAllUsers);
 router.get('/:id/promotion-history', authenticate, getUserPromotionHistory);
-router.get('/:id', authenticate, requireRole(['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getUserById);
+router.get('/:id', authenticate, requireRole(['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getUserById);
 
 // All user creation, modification, promotion, and deletion routes strictly require ADMIN privilege
 router.use(authenticate, requireRole(['ADMIN']));

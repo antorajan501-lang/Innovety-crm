@@ -93,6 +93,7 @@ const AssetManagement = () => {
   const [assetForm, setAssetForm] = useState({
     name: '',
     category: 'LAPTOP',
+    quantity: 1,
     brand: '',
     model: '',
     serialNumber: '',
@@ -192,8 +193,7 @@ const AssetManagement = () => {
         setAssetStats({
           totalAssets: res.data.totalAssets || 0,
           availableAssets: res.data.availableAssets || 0,
-          assignedAssets: res.data.assignedAssets || 0,
-          maintenanceAssets: res.data.maintenanceAssets || 0
+          assignedAssets: res.data.assignedAssets || 0
         });
       }
     } catch (err) {
@@ -224,6 +224,7 @@ const AssetManagement = () => {
     setAssetForm({
       name: '',
       category: 'LAPTOP',
+      quantity: 1,
       brand: '',
       model: '',
       serialNumber: '',
@@ -239,6 +240,13 @@ const AssetManagement = () => {
 
   const handleCreateSubmit = async (e) => {
     e.preventDefault();
+
+    const qty = parseInt(assetForm.quantity, 10);
+    if (isNaN(qty) || qty < 1 || qty > 500) {
+      setAlertMsg({ type: 'error', text: 'Quantity must be a valid integer between 1 and 500.' });
+      return;
+    }
+
     try {
       setLoading(true);
       const finalCategory = getFinalCategoryToSave();
@@ -246,6 +254,8 @@ const AssetManagement = () => {
       Object.keys(assetForm).forEach((key) => {
         if (key === 'category') {
           formData.append('category', finalCategory);
+        } else if (key === 'quantity') {
+          formData.append('quantity', qty);
         } else {
           formData.append(key, assetForm[key]);
         }
@@ -254,14 +264,17 @@ const AssetManagement = () => {
         formData.append('billPhoto', billFile);
       }
 
-      await api.post('/assets', formData, {
+      const res = await api.post('/assets', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
+
+      const createdCount = res.data?.created || qty || 1;
       setCreateModalOpen(false);
       resetForm();
       setBillFile(null);
-      setAlertMsg({ type: 'success', text: 'New asset registered successfully.' });
+      setAlertMsg({ type: 'success', text: `${createdCount} ${createdCount === 1 ? 'asset' : 'assets'} added successfully.` });
       fetchAssets();
+      fetchAssetAnalytics();
     } catch (err) {
       setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to create asset.' });
       setLoading(false);
@@ -322,6 +335,7 @@ const AssetManagement = () => {
       resetForm();
       setAlertMsg({ type: 'success', text: 'Asset details updated successfully.' });
       fetchAssets();
+      fetchAssetAnalytics();
     } catch (err) {
       setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to update asset.' });
       setLoading(false);
@@ -399,6 +413,7 @@ const AssetManagement = () => {
       setSelectedAsset(null);
       setAlertMsg({ type: 'success', text: 'Asset assigned successfully.' });
       fetchAssets();
+      fetchAssetAnalytics();
     } catch (err) {
       setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to assign asset.' });
       setLoading(false);
@@ -424,6 +439,7 @@ const AssetManagement = () => {
       setSelectedAsset(null);
       setAlertMsg({ type: 'success', text: 'Asset returned successfully.' });
       fetchAssets();
+      fetchAssetAnalytics();
     } catch (err) {
       setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to return asset.' });
       setLoading(false);
@@ -448,6 +464,7 @@ const AssetManagement = () => {
           await api.delete(`/assets/${asset.id}`);
           setAlertMsg({ type: 'success', text: 'Asset deleted successfully.' });
           fetchAssets();
+          fetchAssetAnalytics();
         } catch (err) {
           setAlertMsg({ type: 'error', text: err.response?.data?.message || 'Failed to delete asset.' });
         }
@@ -559,25 +576,20 @@ const AssetManagement = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-1">
             <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs">
               <span className="text-[10px] font-extrabold text-muted-foreground uppercase block">Total Assets</span>
               <span className="text-2xl font-black text-foreground mt-1 block">{assetStats.totalAssets}</span>
             </div>
 
             <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs">
-              <span className="text-[10px] font-extrabold text-primary uppercase block">Available</span>
-              <span className="text-2xl font-black text-primary mt-1 block">{assetStats.availableAssets}</span>
+              <span className="text-[10px] font-extrabold text-emerald-600 dark:text-emerald-400 uppercase block">Available</span>
+              <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1 block">{assetStats.availableAssets}</span>
             </div>
 
             <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs">
-              <span className="text-[10px] font-extrabold text-primary uppercase block">Assigned</span>
-              <span className="text-2xl font-black text-primary mt-1 block">{assetStats.assignedAssets}</span>
-            </div>
-
-            <div className="bg-card p-4 rounded-2xl border border-border/60 shadow-xs">
-              <span className="text-[10px] font-extrabold text-amber-500 uppercase block">Maintenance</span>
-              <span className="text-2xl font-black text-amber-500 mt-1 block">{assetStats.maintenanceAssets}</span>
+              <span className="text-[10px] font-extrabold text-blue-600 dark:text-blue-400 uppercase block">Assigned</span>
+              <span className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-1 block">{assetStats.assignedAssets}</span>
             </div>
           </div>
         </motion.div>
@@ -637,13 +649,12 @@ const AssetManagement = () => {
 
       {/* Assets Inventory Table */}
       <motion.div variants={itemVariants} className="w-full min-w-0 overflow-x-auto bg-card border border-border/60 shadow-md rounded-2xl">
-        <table className="w-full min-w-[1000px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[800px] border-collapse text-left text-sm">
           <thead>
             <tr className="border-b border-border/40 bg-muted/40 text-xs font-semibold text-muted-foreground uppercase tracking-wider whitespace-nowrap">
               <th className="px-6 py-4 whitespace-nowrap">Asset ID</th>
               <th className="px-6 py-4 whitespace-nowrap">Asset Name</th>
               <th className="px-6 py-4 whitespace-nowrap">Category</th>
-              <th className="px-6 py-4 whitespace-nowrap">Brand / Model</th>
               <th className="px-6 py-4 whitespace-nowrap">Serial Number</th>
               <th className="px-6 py-4 whitespace-nowrap">Assigned To</th>
               <th className="px-6 py-4 whitespace-nowrap">Status</th>
@@ -653,7 +664,7 @@ const AssetManagement = () => {
           <tbody className="divide-y divide-border/30">
             {assets.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-6 py-16 text-center whitespace-nowrap">
+                <td colSpan={7} className="px-6 py-16 text-center whitespace-nowrap">
                   <div className="mx-auto flex max-w-sm flex-col items-center justify-center text-center">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary mb-4 shadow-sm border border-primary/20">
                       <Laptop className="h-8 w-8" />
@@ -699,9 +710,6 @@ const AssetManagement = () => {
                     <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-extrabold px-2.5 py-1 rounded-full border border-slate-200 dark:border-slate-700 uppercase">
                       {item.category}
                     </span>
-                  </td>
-                  <td className="px-6 py-4 text-xs font-semibold text-foreground whitespace-nowrap">
-                    {item.brand || '—'} {item.model ? `/ ${item.model}` : ''}
                   </td>
                   <td className="px-6 py-4 font-mono text-xs text-muted-foreground whitespace-nowrap">
                     {item.serialNumber || 'N/A'}
@@ -832,7 +840,7 @@ const AssetManagement = () => {
 
             <form onSubmit={handleCreateSubmit} className="mt-3 space-y-3 text-left">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="flex flex-col gap-1 sm:col-span-2">
+                <div className="flex flex-col gap-1 sm:col-span-1">
                   <label className="text-[10px] font-bold text-muted-foreground uppercase">Asset Name *</label>
                   <input
                     type="text"
@@ -894,6 +902,28 @@ const AssetManagement = () => {
                   )}
                 </div>
 
+                <div className="flex flex-col gap-1 sm:col-span-1">
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase">Quantity / Count *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="500"
+                    step="1"
+                    required
+                    placeholder="1"
+                    value={assetForm.quantity}
+                    onChange={(e) => setAssetForm({ ...assetForm, quantity: e.target.value })}
+                    className={`w-full ${
+                      (parseInt(assetForm.quantity, 10) < 1 || parseInt(assetForm.quantity, 10) > 500)
+                        ? 'border-rose-500 focus:ring-rose-500'
+                        : ''
+                    }`}
+                  />
+                  {(parseInt(assetForm.quantity, 10) < 1 || parseInt(assetForm.quantity, 10) > 500 || isNaN(parseInt(assetForm.quantity, 10))) && (
+                    <span className="text-[9px] text-rose-500 font-semibold">Quantity must be between 1 and 500.</span>
+                  )}
+                </div>
+
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-bold text-muted-foreground uppercase">Brand</label>
                   <input
@@ -915,13 +945,30 @@ const AssetManagement = () => {
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-muted-foreground uppercase">Serial Number (Unique)</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. C02G182PMD6T"
-                    value={assetForm.serialNumber}
-                    onChange={(e) => setAssetForm({ ...assetForm, serialNumber: e.target.value })}
-                  />
+                  <label className="text-[10px] font-bold text-muted-foreground uppercase">
+                    {parseInt(assetForm.quantity, 10) > 1 ? 'Serial Number (Auto-Generated)' : 'Serial Number (Unique)'}
+                  </label>
+                  {parseInt(assetForm.quantity, 10) > 1 ? (
+                    <div>
+                      <input
+                        type="text"
+                        disabled
+                        readOnly
+                        placeholder="Auto-generated e.g. AUTO-MBP-001"
+                        className="bg-muted/70 opacity-80 cursor-not-allowed text-xs"
+                      />
+                      <span className="text-[9px] text-amber-600 dark:text-amber-400 font-semibold mt-0.5 block">
+                        Serial numbers will be auto-generated for bulk creation.
+                      </span>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="e.g. C02G182PMD6T"
+                      value={assetForm.serialNumber}
+                      onChange={(e) => setAssetForm({ ...assetForm, serialNumber: e.target.value })}
+                    />
+                  )}
                 </div>
 
                 <div className="flex flex-col gap-1">

@@ -1,4 +1,14 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const getApiUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl) return envUrl;
+  if (import.meta.env.PROD) {
+    console.error('[Production Config Warning] VITE_API_URL environment variable is required for production deployment.');
+    return '/api';
+  }
+  return 'http://localhost:5000/api';
+};
+
+const API_URL = getApiUrl();
 
 import axios from 'axios';
 
@@ -140,12 +150,19 @@ import { io } from 'socket.io-client';
 let socketInstance = null;
 export const getSocket = () => {
   if (!socketInstance) {
-    const backendServer = API_URL.replace(/\/api\/?$/, '');
+    let backendServer = '';
+    if (API_URL.startsWith('http://') || API_URL.startsWith('https://')) {
+      backendServer = API_URL.replace(/\/api\/?$/, '');
+    } else {
+      backendServer = window.location.origin;
+    }
+
     socketInstance = io(backendServer, {
       transports: ['polling', 'websocket'],
       reconnection: true,
-      reconnectionAttempts: 15,
-      reconnectionDelay: 1000
+      reconnectionAttempts: 20,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000
     });
   }
   return socketInstance;

@@ -986,10 +986,166 @@ const downloadAttachment = async (req, res) => {
   }
 };
 
+/**
+ * DELETE /api/chat/groups/:groupId
+ * Delete chat group (Only ADMIN and SUPER_ADMIN allowed)
+ */
+const deleteGroup = async (req, res) => {
+  try {
+    const targetGroupId = req.params.groupId || req.params.roomId;
+    const { id: userId, role: userRole } = req.user;
+
+    // 1. Role Authorization Check: Only ADMIN and SUPER_ADMIN can delete groups
+    if (userRole !== 'ADMIN' && userRole !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Access denied. Only Admins and Super Admins can delete chat groups.' });
+    }
+
+    // 2. Fetch Chat Room
+    const room = await prisma.chatRoom.findUnique({
+      where: { id: targetGroupId },
+      include: { team: true, project: true }
+    });
+
+    if (!room) {
+      return res.status(404).json({ message: 'Chat group not found.' });
+    }
+
+    // 3. Safety Check: Official Company / Global Community Group cannot be deleted
+    if (room.isDefault || room.type === 'GLOBAL' || room.type === 'COMPANY' || room.isOfficial) {
+      return res.status(400).json({ message: 'Official company chat group cannot be deleted.' });
+    }
+
+    const groupName = room.name || room.project?.name || room.team?.name || 'Chat Group';
+
+    // 4. Cascade Delete Room Messages, Members & Room Record
+    await prisma.chatMessage.deleteMany({
+      where: { roomId: targetGroupId }
+    });
+
+    await prisma.chatRoomMember.deleteMany({
+      where: { roomId: targetGroupId }
+    });
+
+    await prisma.chatRoom.delete({
+      where: { id: targetGroupId }
+    });
+
+    // 5. Audit Log
+    await logActivity({
+      userId,
+      action: 'CHAT_GROUP_DELETED',
+      detail: `Deleted chat group "${groupName}" (ID: ${targetGroupId})`,
+      req
+    }).catch(() => { });
+
+    console.log(`[CHAT DELETE] Admin ${userId} (${userRole}) deleted chat group "${groupName}" (${targetGroupId}) at ${new Date().toISOString()}`);
+
+    // 6. Broadcast Real-Time Socket Event to all connected clients
+    try {
+      const { getIo } = require('../socket');
+      const io = getIo();
+      if (io) {
+        io.emit('group_deleted', { roomId: targetGroupId, deletedBy: userId });
+        io.emit('chat_room_deleted', { roomId: targetGroupId, deletedBy: userId });
+      }
+    } catch (socketErr) {
+      console.error('Socket broadcast error during chat group deletion:', socketErr);
+    }
+
+    res.json({ message: 'Chat group deleted successfully.' });
+  } catch (error) {
+    console.error('Delete chat group error:', error);
+    res.status(500).json({ message: 'Failed to delete chat group. Please try again.' });
+  }
+};
+
+// Get or Auto-create Project Chat Room by Project ID
+const getOrCreateProjectChatRoom = async (req, res) => {
+  try {
+    const { projectId } = req.params;
+    const userId = req.user.id;
+
+    // Find project by ID or projectCode
+    const project = await prisma.project.findFirst({
+      where: {
+        OR: [
+          { id: projectId },
+          { projectCode: projectId }
+        ],
+        isDeleted: false
+      },
+      include: {
+        leader: { select: { id: true, name: true, role: true } },
+        members: { include: { user: { select: { id: true, name: true, role: true } } } }
+      }
+    });
+
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found.' });
+    }
+
+    const { syncProjectLifecycleChatRoom } = require('../services/projectChatService');
+    let chatRoom = await syncProjectLifecycleChatRoom(project.id);
+
+    if (!chatRoom) {
+      chatRoom = await prisma.chatRoom.findUnique({
+        where: { projectId: project.id }
+      });
+    }
+
+    if (!chatRoom) {
+      const formattedName = `[${project.projectCode}] ${project.name}`;
+      const targetUserIds = new Set([userId]);
+      if (project.creatorId) targetUserIds.add(project.creatorId);
+      if (project.leaderId) targetUserIds.add(project.leaderId);
+      if (project.members) project.members.forEach(m => targetUserIds.add(m.userId));
+
+      chatRoom = await prisma.chatRoom.create({
+        data: {
+          name: formattedName,
+          type: 'PROJECT',
+          projectId: project.id,
+          teamId: project.teamId || null,
+          status: 'ACTIVE',
+          isArchived: false,
+          members: {
+            create: Array.from(targetUserIds).map(uId => ({ userId: uId }))
+          }
+        }
+      });
+    } else {
+      // Ensure requesting user is a member of this chat room
+      await prisma.chatRoomMember.upsert({
+        where: { roomId_userId: { roomId: chatRoom.id, userId } },
+        update: {},
+        create: { roomId: chatRoom.id, userId }
+      }).catch(() => { });
+    }
+
+    const fullRoom = await prisma.chatRoom.findUnique({
+      where: { id: chatRoom.id },
+      include: {
+        members: {
+          include: {
+            user: { select: { id: true, name: true, email: true, role: true, profilePic: true } }
+          }
+        },
+        project: { select: { id: true, name: true, projectCode: true } }
+      }
+    });
+
+    return res.status(200).json(fullRoom || chatRoom);
+  } catch (error) {
+    console.error('[getOrCreateProjectChatRoom Error]:', error);
+    return res.status(500).json({ message: 'Failed to access project chat room.', error: error.message });
+  }
+};
+
 module.exports = {
   getRooms,
   createDirectRoom,
   createTeamRoom,
+  getOrCreateProjectChatRoom,
   getRoomMessages,
   sendMessage,
   editMessage,
@@ -997,5 +1153,6 @@ module.exports = {
   togglePinMessage,
   markRoomAsRead,
   searchChat,
-  downloadAttachment
+  downloadAttachment,
+  deleteGroup
 };

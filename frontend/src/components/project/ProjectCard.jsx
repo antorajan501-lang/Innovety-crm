@@ -6,11 +6,12 @@ import { ProgressRing } from './ProgressRing';
 import { Calendar, MessageSquare, CheckSquare, ChevronRight, UserCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+import { getProjectStageProgress } from '../../utils/projectProgress';
+
 export const ProjectCard = ({ project, onSelect, onOpenChat }) => {
   const navigate = useNavigate();
 
-  const openTasksCount = project.tasks?.filter(t => t.status !== 'COMPLETED' && t.status !== 'APPROVED').length || 0;
-  const totalTasksCount = project.tasks?.length || 0;
+  const { progressPct, completedTasks, totalTasks } = getProjectStageProgress(project, project.tasks);
 
   return (
     <div
@@ -34,15 +35,23 @@ export const ProjectCard = ({ project, onSelect, onOpenChat }) => {
           </p>
         </div>
 
-        <ProgressRing progress={project.progressPercent || 0} size={54} strokeWidth={5} />
+        {/* Stage-Based Progress Ring */}
+        <div className="flex flex-col items-center shrink-0">
+          <ProgressRing progress={progressPct} size={54} strokeWidth={8} />
+          <span className="text-[8px] font-bold text-muted-foreground uppercase mt-1 tracking-wider">Progress</span>
+        </div>
       </div>
 
-      {/* Status & Health Badges */}
+      {/* Status, Health & Tasks Completed Indicator */}
       <div className="flex items-center justify-between border-y border-border/20 py-2.5">
         <ProjectStatusBadge status={project.status} isOverdue={project.isOverdue} health={project.health} />
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-semibold">
-          <CheckSquare className="h-3.5 w-3.5 text-primary" />
-          <span>{totalTasksCount - openTasksCount}/{totalTasksCount} Tasks</span>
+        
+        <div className="flex flex-col items-end text-right">
+          <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-wider block">Tasks Completed</span>
+          <div className="flex items-center gap-1.5 text-xs font-black text-foreground mt-0.5">
+            <CheckSquare className="h-3.5 w-3.5 text-primary" />
+            <span>{completedTasks}/{totalTasks}</span>
+          </div>
         </div>
       </div>
 
@@ -66,24 +75,33 @@ export const ProjectCard = ({ project, onSelect, onOpenChat }) => {
         </div>
 
         <div className="flex items-center gap-2">
-          {project.chatRoom && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (onOpenChat) onOpenChat(project.chatRoom);
-                else navigate('/chat');
-              }}
-              className="p-2 rounded-xl bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground border border-primary/20 transition-all"
-              title="Open 1:1 Project Chat"
-            >
-              <MessageSquare className="h-4 w-4" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onOpenChat) {
+                onOpenChat(project);
+              } else {
+                navigate(`/chat?projectId=${project.id}`);
+              }
+            }}
+            className="p-2 rounded-xl bg-primary/10 hover:bg-primary text-primary hover:text-primary-foreground border border-primary/20 transition-all cursor-pointer"
+            title={`Open Chat for ${project.name}`}
+          >
+            <MessageSquare className="h-4 w-4" />
+          </button>
 
-          <div className="p-2 rounded-xl bg-muted/40 group-hover:bg-primary group-hover:text-primary-foreground text-muted-foreground transition-all">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/tasks?tab=Board&projectId=${project.id}`);
+            }}
+            className="p-2 rounded-xl bg-muted/40 group-hover:bg-primary group-hover:text-primary-foreground text-muted-foreground transition-all cursor-pointer"
+            title={`Open Board for ${project.name}`}
+          >
             <ChevronRight className="h-4 w-4" />
-          </div>
+          </button>
         </div>
       </div>
     </div>

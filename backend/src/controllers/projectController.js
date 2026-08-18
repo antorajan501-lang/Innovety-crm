@@ -269,6 +269,82 @@ const createProject = async (req, res) => {
   }
 };
 
+const isTaskDoneBackend = (task, stages = []) => {
+  if (task.status === 'COMPLETED' || task.status === 'APPROVED') return true;
+  const stage = stages.find(s => s.id === task.stageId);
+  if (stage) {
+    if (stage.isCompletedStage || (stage.name && (stage.name.toLowerCase() === 'done' || stage.name.toLowerCase() === 'completed'))) {
+      if (stage.requiresApproval) {
+        return task.reviewStatus === 'APPROVED' || task.status === 'COMPLETED' || task.status === 'APPROVED';
+      }
+      return true;
+    }
+  }
+  return false;
+};
+
+const computeProjectStageProgressBackend = (project) => {
+  const projTasks = project?.tasks || [];
+  const totalTasks = projTasks.length;
+  const completedTasks = projTasks.filter(t => isTaskDoneBackend(t, project?.workflowStages)).length;
+
+  if (totalTasks === 0) {
+    return { progress: 0, completedTasks: 0, totalTasks: 0 };
+  }
+
+  const defaultStages = [
+    { id: 'todo', name: 'To Do', statuses: ['PENDING', 'REJECTED'] },
+    { id: 'in_progress', name: 'In Progress', statuses: ['IN_PROGRESS'] },
+    { id: 'in_review', name: 'In Review', statuses: ['WAITING_FOR_REVIEW'] },
+    { id: 'done', name: 'Done', isCompletedStage: true, statuses: ['APPROVED', 'COMPLETED', 'DONE'] }
+  ];
+
+  const stages = (project?.workflowStages && project.workflowStages.length > 0)
+    ? project.workflowStages
+    : defaultStages;
+
+  const totalStages = stages.length;
+  if (totalStages <= 1) {
+    return { progress: 0, completedTasks, totalTasks };
+  }
+
+  const totalProgress = projTasks.reduce((sum, task) => {
+    let index = -1;
+    const taskStatus = (task.status || '').toLowerCase();
+
+    // 1. Direct stageId match
+    if (task.stageId) {
+      index = stages.findIndex(s => s.id === task.stageId);
+    }
+
+    // 2. Direct stage name / statuses / completion match
+    if (index === -1) {
+      index = stages.findIndex(s => {
+        if (typeof s === 'string') return s.toLowerCase() === taskStatus;
+        if (s.name && s.name.toLowerCase() === taskStatus) return true;
+        if (s.statuses && s.statuses.map(st => st.toLowerCase()).includes(taskStatus)) return true;
+        if (s.isCompletedStage && (taskStatus === 'completed' || taskStatus === 'approved' || taskStatus === 'done')) return true;
+        return false;
+      });
+    }
+
+    // 3. Fallback standard CRM status mapping
+    if (index === -1) {
+      if (['pending', 'rejected', 'todo', 'to do'].includes(taskStatus)) index = 0;
+      else if (['in_progress', 'in progress', 'doing'].includes(taskStatus)) index = Math.min(1, totalStages - 1);
+      else if (['waiting_for_review', 'in_review', 'in review', 'review'].includes(taskStatus)) index = Math.min(2, totalStages - 1);
+      else if (['approved', 'completed', 'done'].includes(taskStatus)) index = totalStages - 1;
+    }
+
+    if (index === -1) return sum;
+    const taskProgress = Math.round((index / (totalStages - 1)) * 100);
+    return sum + taskProgress;
+  }, 0);
+
+  const progress = Math.round(totalProgress / totalTasks);
+  return { progress, completedTasks, totalTasks };
+};
+
 // 2. Get All Projects (with summary metrics, computed progress %, health, isOverdue)
 const getProjects = async (req, res) => {
   try {
@@ -303,7 +379,7 @@ const getProjects = async (req, res) => {
           }
         },
         chatRoom: { select: { id: true, status: true, isArchived: true } },
-        tasks: { select: { id: true, status: true, stageId: true } },
+        tasks: { select: { id: true, status: true, stageId: true, reviewStatus: true } },
         workflowStages: { orderBy: { order: 'asc' } }
       },
       orderBy: { createdAt: 'desc' }
@@ -311,10 +387,7 @@ const getProjects = async (req, res) => {
 
     const today = new Date();
     const formattedProjects = projectsList.map(project => {
-      const totalTasks = project.tasks.length;
-      const completedTasks = project.tasks.filter(t => t.status === 'COMPLETED' || t.status === 'APPROVED').length;
-      const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
-
+      const { progress, completedTasks, totalTasks } = computeProjectStageProgressBackend(project);
       const isOverdue = today > new Date(project.estimatedEndDate) && project.status === 'ACTIVE';
       const health = computeProjectHealth(project, totalTasks, completedTasks);
 
@@ -412,9 +485,7 @@ const getProjectById = async (req, res) => {
       return res.status(404).json({ message: 'Project not found.' });
     }
 
-    const totalTasks = project.tasks.length;
-    const completedTasks = project.tasks.filter(t => t.status === 'COMPLETED' || t.status === 'APPROVED').length;
-    const progress = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    const { progress, completedTasks, totalTasks } = computeProjectStageProgressBackend(project);
     const isOverdue = new Date() > new Date(project.estimatedEndDate) && project.status === 'ACTIVE';
     const health = computeProjectHealth(project, totalTasks, completedTasks);
 

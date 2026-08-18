@@ -1,8 +1,21 @@
 const socketIo = require('socket.io');
 
-const onlineUsers = new Map(); // userId -> { socketId, name, role, teamId }
+const onlineUsers = new Map(); // userId (string) -> { name, role, teamId, socketIds: Set(socketId) }
 
 let io;
+
+const getOnlineUsersPayload = () => {
+  return Array.from(onlineUsers.entries()).map(([id, info]) => ({
+    id: String(id),
+    name: info.name,
+    role: info.role
+  }));
+};
+
+const broadcastOnlineUsers = () => {
+  if (!io) return;
+  io.emit('online_users', getOnlineUsersPayload());
+};
 
 const init = (server) => {
   io = socketIo(server, {
@@ -18,16 +31,31 @@ const init = (server) => {
 
     // Client registers their identity
     socket.on('register', ({ userId, name, role, teamId }) => {
-      socket.userId = userId;
+      if (!userId) return;
+      const strUserId = String(userId);
+      socket.userId = strUserId;
       socket.userName = name;
       socket.role = role;
       socket.teamId = teamId;
 
-      onlineUsers.set(userId, { socketId: socket.id, name, role, teamId, online: true });
+      if (!onlineUsers.has(strUserId)) {
+        onlineUsers.set(strUserId, {
+          name,
+          role,
+          teamId,
+          socketIds: new Set([socket.id])
+        });
+      } else {
+        const userEntry = onlineUsers.get(strUserId);
+        userEntry.socketIds.add(socket.id);
+        userEntry.name = name || userEntry.name;
+        userEntry.role = role || userEntry.role;
+        userEntry.teamId = teamId || userEntry.teamId;
+      }
 
       // Join standard rooms
       socket.join('global');
-      socket.join(`user_${userId}`);
+      socket.join(`user_${strUserId}`);
       if (teamId) {
         socket.join(`team_${teamId}`);
       }
@@ -37,9 +65,10 @@ const init = (server) => {
         socket.join('leaders');
       }
 
-      // Broadcast list of active users to all
-      io.emit('online_users', Array.from(onlineUsers.entries()).map(([id, info]) => ({ id, name: info.name, role: info.role })));
-      console.log(`User registered: ${userId} (${role})`);
+      const activeList = getOnlineUsersPayload();
+      socket.emit('online_users', activeList);
+      io.emit('online_users', activeList);
+      console.log(`User registered: ${strUserId} (${role}) [socket: ${socket.id}]`);
     });
 
     // ─── CHAT MODULE EVENT HANDLERS ──────────────────────────────
@@ -104,12 +133,20 @@ const init = (server) => {
       }
     });
 
-    // Handle manual disconnect
-    socket.on('disconnect', () => {
+    // Handle disconnect
+    socket.on('disconnect', (reason) => {
+      console.log(`Socket disconnected: ${socket.id} (reason: ${reason})`);
       if (socket.userId) {
-        onlineUsers.delete(socket.userId);
-        io.emit('online_users', Array.from(onlineUsers.entries()).map(([id, info]) => ({ id, name: info.name, role: info.role })));
-        console.log(`User unregistered: ${socket.userId}`);
+        const strUserId = String(socket.userId);
+        const userEntry = onlineUsers.get(strUserId);
+        if (userEntry) {
+          userEntry.socketIds.delete(socket.id);
+          if (userEntry.socketIds.size === 0) {
+            onlineUsers.delete(strUserId);
+            broadcastOnlineUsers();
+            console.log(`User unregistered (offline): ${strUserId}`);
+          }
+        }
       }
     });
   });
@@ -119,11 +156,14 @@ const init = (server) => {
 
 // Send direct notification to active user
 const sendNotificationToUser = (userId, notification) => {
-  if (!io) return;
-  io.to(`user_${userId}`).emit('notification', notification);
-  const userRecord = onlineUsers.get(userId);
-  if (userRecord && userRecord.socketId) {
-    io.to(userRecord.socketId).emit('notification', notification);
+  if (!io || !userId) return;
+  const strUserId = String(userId);
+  io.to(`user_${strUserId}`).emit('notification', notification);
+  const userRecord = onlineUsers.get(strUserId);
+  if (userRecord && userRecord.socketIds) {
+    for (const socketId of userRecord.socketIds) {
+      io.to(socketId).emit('notification', notification);
+    }
   }
 };
 
@@ -139,16 +179,19 @@ const sendAnnouncement = (announcement) => {
 
 // Disconnect active socket connection for a user
 const disconnectUserSocket = (userId) => {
-  if (!io) return;
-  const userRecord = onlineUsers.get(userId);
-  if (userRecord && userRecord.socketId) {
-    const socket = io.sockets.sockets.get(userRecord.socketId);
-    if (socket) {
-      socket.disconnect(true);
+  if (!io || !userId) return;
+  const strUserId = String(userId);
+  const userRecord = onlineUsers.get(strUserId);
+  if (userRecord && userRecord.socketIds) {
+    for (const socketId of userRecord.socketIds) {
+      const sock = io.sockets.sockets.get(socketId);
+      if (sock) {
+        sock.disconnect(true);
+      }
     }
   }
-  onlineUsers.delete(userId);
-  io.emit('online_users', Array.from(onlineUsers.entries()).map(([id, info]) => ({ id, name: info.name, role: info.role })));
+  onlineUsers.delete(strUserId);
+  broadcastOnlineUsers();
 };
 
 // Get list of online user IDs

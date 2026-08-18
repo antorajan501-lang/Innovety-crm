@@ -5,8 +5,34 @@ const { broadcastAttendanceEvent } = require('../socket');
 const {
   getSystemTimeZone,
   getTodayZonedDate,
+  getZonedParts,
+  createZonedDate,
   validateAttendanceWindow
 } = require('../utils/attendanceUtils');
+
+const parseInputDate = (inputVal, timeZone = 'Asia/Kolkata') => {
+  if (!inputVal) return null;
+  if (inputVal instanceof Date) return isNaN(inputVal.getTime()) ? null : inputVal;
+
+  const str = String(inputVal).trim();
+  if (str.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(str)) {
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  const parts = str.split(/[T ]/);
+  if (parts.length >= 2) {
+    const [year, month, day] = parts[0].split('-').map(Number);
+    const [hour, minute] = parts[1].split(':').map(Number);
+    if (year && month && day && !isNaN(hour) && !isNaN(minute)) {
+      return createZonedDate(year, month, day, hour, minute, timeZone);
+    }
+  }
+
+  const fallback = new Date(str);
+  return isNaN(fallback.getTime()) ? null : fallback;
+};
+
 
 // Helper to parse User Agent details
 const parseUserAgent = (userAgentString) => {
@@ -104,8 +130,35 @@ const getClockInStatus = async (req, res) => {
 
 const clockIn = async (req, res) => {
   try {
+    if (['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        reason: 'ROLE_NOT_ALLOWED',
+        message: 'Administrators do not use personal clock-in.'
+      });
+    }
+
     const userId = req.user.id;
     const now = new Date();
+
+    const { workLocation = 'OFFICE', workLocationOther, location } = req.body;
+
+    const validLocations = ['OFFICE', 'HOME', 'OTHER'];
+    if (!validLocations.includes(workLocation)) {
+      return res.status(400).json({
+        success: false,
+        reason: 'INVALID_WORK_LOCATION',
+        message: 'Please select a valid work location (Office, Home, or Other).'
+      });
+    }
+
+    if (workLocation === 'OTHER' && (!workLocationOther || !workLocationOther.trim())) {
+      return res.status(400).json({
+        success: false,
+        reason: 'LOCATION_REASON_REQUIRED',
+        message: 'Location or reason is required when "Other" is selected.'
+      });
+    }
 
     const settings = await getOrCreateSystemSettings();
     const timeZone = getSystemTimeZone(settings);
@@ -118,10 +171,10 @@ const clockIn = async (req, res) => {
 
     if (existing) {
       if (existing.status === 'ABSENT' && existing.clockInLocation?.includes('Declined')) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           success: false,
           reason: 'DECLINED_LEAVE_ABSENT',
-          message: 'Your leave application letter for today was DECLINED by Admin and your attendance is marked as ABSENT.' 
+          message: 'Your leave application letter for today was DECLINED by Admin and your attendance is marked as ABSENT.'
         });
       }
       return res.status(400).json({
@@ -174,7 +227,6 @@ const clockIn = async (req, res) => {
     const ipAddress = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
     const userAgent = req.headers['user-agent'] || '';
     const { browser, device } = parseUserAgent(userAgent);
-    const { location } = req.body;
 
     let finalStatus = 'PRESENT';
     let lateMinutes = validation.lateMinutes;
@@ -193,6 +245,10 @@ const clockIn = async (req, res) => {
       ? (settings?.tlShiftStart || '09:30')
       : (settings?.internShiftStart || '09:30');
 
+    const formattedLocationStr = workLocation === 'OTHER'
+      ? workLocationOther.trim()
+      : (workLocation === 'HOME' ? 'Home (Remote)' : 'Office');
+
     const attendance = await prisma.attendance.create({
       data: {
         userId,
@@ -202,7 +258,9 @@ const clockIn = async (req, res) => {
         browser,
         device,
         status: finalStatus,
-        clockInLocation: location || null,
+        clockInLocation: location || formattedLocationStr,
+        workLocation,
+        workLocationOther: workLocation === 'OTHER' ? workLocationOther.trim() : null,
         lateMinutes,
         earlyWindowUsed: settings?.earlyWindowMinutes !== undefined ? settings.earlyWindowMinutes : 30,
         gracePeriodUsed: settings?.gracePeriodMinutes !== undefined ? settings.gracePeriodMinutes : 15,
@@ -213,7 +271,7 @@ const clockIn = async (req, res) => {
     await logActivity({
       userId,
       action: 'CLOCK_IN',
-      details: `Clocked in today at ${validation.currentTimeFormatted}. Status: ${finalStatus}${lateMinutes ? ` (${lateMinutes} mins late)` : ''}`,
+      details: `Clocked in today at ${validation.currentTimeFormatted} from ${workLocation}. Status: ${finalStatus}${lateMinutes ? ` (${lateMinutes} mins late)` : ''}`,
       ipAddress
     });
 
@@ -230,7 +288,12 @@ const clockIn = async (req, res) => {
     broadcastAttendanceEvent('attendance_clock_in', { userId, record: attendance });
     broadcastAttendanceEvent('attendance_updated', { userId, record: attendance });
 
-    res.status(201).json(attendance);
+    res.status(201).json({
+      success: true,
+      message: 'Clocked in successfully.',
+      attendance,
+      ...attendance
+    });
   } catch (error) {
     console.error('Clock in error:', error);
     res.status(500).json({ success: false, reason: 'SERVER_ERROR', message: 'Clock in failed.' });
@@ -583,13 +646,16 @@ const updateAttendance = async (req, res) => {
       editedBy: req.user.id
     };
 
+    const settings = await getOrCreateSystemSettings();
+    const timeZone = getSystemTimeZone(settings);
+
     if (newStatus === 'LEAVE' || newStatus === 'ABSENT') {
       data.clockIn = null;
       data.clockOut = null;
       data.workingHours = 0;
     } else {
-      const newClockIn = clockIn ? new Date(clockIn) : (record ? record.clockIn : null);
-      const newClockOut = clockOut ? new Date(clockOut) : (record ? record.clockOut : null);
+      const newClockIn = clockIn ? parseInputDate(clockIn, timeZone) : (record ? record.clockIn : null);
+      const newClockOut = clockOut ? parseInputDate(clockOut, timeZone) : (record ? record.clockOut : null);
 
       if (!newClockIn && newStatus !== 'WORK_FROM_HOME') {
         return res.status(400).json({ message: `Clock In time is required for ${newStatus} status.` });
@@ -609,17 +675,16 @@ const updateAttendance = async (req, res) => {
       data.clockOut = newClockOut || null;
 
       if (newStatus === 'LATE' && newClockIn) {
-        const settings = await getOrCreateSystemSettings();
         const userObj = record ? record.user : await prisma.user.findUnique({ where: { id: targetUserId } });
         const shiftStartStr = (userObj?.role === 'TEAM_LEADER' || userObj?.role === 'ADMIN')
           ? (settings?.tlShiftStart || '09:30')
           : (settings?.internShiftStart || '09:30');
         const [shiftH, shiftM] = shiftStartStr.split(':').map(Number);
 
-        const shiftTimeObj = new Date(newClockIn);
-        shiftTimeObj.setHours(shiftH, shiftM, 0, 0);
+        const { year, month, day } = getZonedParts(newClockIn, timeZone);
+        const shiftStart = createZonedDate(year, month, day, shiftH, shiftM, timeZone);
 
-        const diffMins = Math.floor((newClockIn.getTime() - shiftTimeObj.getTime()) / 60000);
+        const diffMins = Math.floor((newClockIn.getTime() - shiftStart.getTime()) / 60000);
         data.lateMinutes = diffMins > 0 ? diffMins : null;
       } else if (newStatus !== 'LATE') {
         data.lateMinutes = null;
@@ -726,11 +791,163 @@ const getAttendanceAnalytics = async (req, res) => {
   }
 };
 
+const getAttendanceHistory = async (req, res) => {
+  try {
+    const targetUserId = (['ADMIN', 'SUPER_ADMIN'].includes(req.user.role) && req.query.userId)
+      ? req.query.userId
+      : req.user.id;
+
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 10));
+
+    const { status, workLocation, month, year } = req.query;
+
+    const now = new Date();
+    const settings = await getOrCreateSystemSettings();
+    const timeZone = getSystemTimeZone(settings);
+    const todayZoned = getTodayZonedDate(now, timeZone);
+
+    const selMonth = parseInt(month) || (todayZoned.getUTCMonth() + 1);
+    const selYear = parseInt(year) || todayZoned.getUTCFullYear();
+
+    // 1. Determine month boundaries
+    const startOfMonth = new Date(Date.UTC(selYear, selMonth - 1, 1));
+    const endOfMonth = new Date(Date.UTC(selYear, selMonth, 0, 23, 59, 59));
+
+    // 2. Fetch existing DB attendance records for this user in selected month
+    const dbAttendances = await prisma.attendance.findMany({
+      where: {
+        userId: targetUserId,
+        date: { gte: startOfMonth, lte: endOfMonth }
+      },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true, employeeId: true, role: true, department: true }
+        }
+      }
+    });
+
+    const attMap = new Map();
+    dbAttendances.forEach(a => {
+      const dStr = new Date(a.date).toISOString().split('T')[0];
+      attMap.set(dStr, a);
+    });
+
+    // 3. Fetch Company Holidays for selected month
+    const holidays = await prisma.holidayCalendar.findMany({
+      where: {
+        date: { gte: startOfMonth, lte: endOfMonth }
+      }
+    });
+    const holidaySet = new Set(
+      holidays.map(h => new Date(h.date).toISOString().split('T')[0])
+    );
+
+    // 4. Saturday is treated as a normal working day unless explicitly configured otherwise
+    const isSaturdayWorking = true;
+
+    // 5. Generate all valid historical dates up to TODAY (clamped to todayZoned)
+    const generatedLogs = [];
+    const maxDate = endOfMonth < todayZoned ? endOfMonth : todayZoned;
+
+    const curr = new Date(startOfMonth);
+    while (curr <= maxDate) {
+      const dateStr = curr.toISOString().split('T')[0];
+      const dayOfWeek = curr.getUTCDay(); // 0 = Sunday, 6 = Saturday
+
+      const isSunday = dayOfWeek === 0;
+      const isHoliday = holidaySet.has(dateStr);
+      const isNonWorkingSaturday = dayOfWeek === 6 && !isSaturdayWorking;
+
+      const existingRecord = attMap.get(dateStr);
+
+      if (existingRecord) {
+        generatedLogs.push(existingRecord);
+      } else if (isSunday || isHoliday || isNonWorkingSaturday) {
+        if (isHoliday) {
+          const holObj = holidays.find(h => new Date(h.date).toISOString().split('T')[0] === dateStr);
+          generatedLogs.push({
+            id: `holiday-${dateStr}`,
+            userId: targetUserId,
+            date: new Date(curr),
+            status: 'HOLIDAY',
+            holidayTitle: holObj?.title || 'Company Holiday',
+            clockIn: null,
+            clockOut: null,
+            workLocation: null,
+            workingHours: null
+          });
+        }
+      } else {
+        const isToday = dateStr === todayZoned.toISOString().split('T')[0];
+        if (isToday) {
+          generatedLogs.push({
+            id: `today-pending-${dateStr}`,
+            userId: targetUserId,
+            date: new Date(curr),
+            status: 'NOT_CHECKED_IN',
+            clockIn: null,
+            clockOut: null,
+            workLocation: null,
+            workingHours: null
+          });
+        } else {
+          generatedLogs.push({
+            id: `absent-${dateStr}`,
+            userId: targetUserId,
+            date: new Date(curr),
+            status: 'ABSENT',
+            clockIn: null,
+            clockOut: null,
+            workLocation: null,
+            workingHours: null
+          });
+        }
+      }
+
+      curr.setUTCDate(curr.getUTCDate() + 1);
+    }
+
+    // 6. Sort Newest First (Descending by date)
+    generatedLogs.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    // 7. Apply Filters (status, workLocation)
+    let filteredLogs = generatedLogs;
+
+    if (status && status !== 'ALL') {
+      filteredLogs = filteredLogs.filter(l => l.status === status);
+    }
+
+    if (workLocation && workLocation !== 'ALL') {
+      filteredLogs = filteredLogs.filter(l => l.workLocation === workLocation);
+    }
+
+    // 8. Apply Pagination
+    const total = filteredLogs.length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const skip = (page - 1) * limit;
+    const paginatedRecords = filteredLogs.slice(skip, skip + limit);
+
+    res.json({
+      success: true,
+      records: paginatedRecords,
+      total,
+      page,
+      limit,
+      totalPages
+    });
+  } catch (error) {
+    console.error('Get attendance history error:', error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve attendance history.' });
+  }
+};
+
 module.exports = {
   getClockInStatus,
   clockIn,
   clockOut,
   getAttendanceLogs,
   updateAttendance,
-  getAttendanceAnalytics
+  getAttendanceAnalytics,
+  getAttendanceHistory
 };

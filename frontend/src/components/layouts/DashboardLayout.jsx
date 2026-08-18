@@ -63,7 +63,6 @@ const QUICK_NAV_ITEMS = [
   { label: 'My Tasks / Task Board', path: '/tasks', keywords: ['tasks', 'task', 'task board', 'my tasks', 'todo'], category: 'Workspaces', icon: FileText, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'Roadmap', path: '/tasks?tab=Timeline', keywords: ['roadmap', 'timeline', 'schedule', 'gantt'], category: 'Workspaces', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'Repositories', path: '/tasks?tab=Code', keywords: ['repositories', 'repo', 'git', 'code', 'github'], category: 'Workspaces', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-  { label: 'Integrations', path: '/tasks?tab=Development', keywords: ['integrations', 'webhooks', 'api', 'dev'], category: 'Workspaces', icon: Settings, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
 
   // Communication
   { label: 'Chat Room', path: '/chat', keywords: ['chat', 'messages', 'chat room', 'messaging', 'dm', 'discussion'], category: 'Communication', icon: MessageSquare, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
@@ -74,7 +73,9 @@ const QUICK_NAV_ITEMS = [
   { label: 'Attendance', path: '/attendance', keywords: ['attendance', 'atten', 'clock in', 'clock out', 'timesheet'], category: 'Operations', icon: Clock, roles: ['INTERN', 'TEAM_LEADER', 'EMPLOYEE'] },
   { label: 'Attendance Audit', path: '/attendance-audit', keywords: ['attendance audit', 'attendance logs', 'attendance history', 'atten'], category: 'Operations', icon: Clock, roles: ['ADMIN', 'TEAM_LEADER'] },
   { label: 'Apply Leave / Leave Management', path: '/leave-management', keywords: ['leave', 'leaves', 'apply leave', 'leave management', 'vacation', 'time off', 'pto'], category: 'Operations', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
+  { label: 'Work Calendar', path: '/operations/work-calendar', keywords: ['work calendar', 'calendar', 'holidays', 'schedule', 'wfh', 'working days'], category: 'Operations', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
   { label: 'Sanction WFH & Leaves', path: '/leave-management?tab=Sanction', keywords: ['sanction', 'wfh', 'leaves', 'approve leave', 'sanction wfh', 'sanction leaves'], category: 'Operations', icon: CheckCircle2, roles: ['ADMIN', 'TEAM_LEADER'] },
+
   { label: 'Ticket Desk', path: '/tickets', keywords: ['tickets', 'ticket', 'ticket desk', 'support', 'help', 'issue'], category: 'Operations', icon: Ticket, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'Assets', path: '/assets', keywords: ['assets', 'asset', 'hardware', 'laptop', 'inventory', 'devices'], category: 'Operations', icon: Laptop, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
 
@@ -113,7 +114,7 @@ const DashboardLayout = ({ children }) => {
   const currentFull = location.pathname + location.search;
 
   const { user, logout } = useAuth();
-  const { notifications, unreadCount, markRead, markAllAsRead, deleteNotification } = useSocket();
+  const { notifications, unreadCount, markRead, markAllAsRead, deleteNotification, clearAllNotifications } = useSocket();
   const { companyName, companyLogo, themeMode, updateThemeSettings } = useTheme();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -134,8 +135,34 @@ const DashboardLayout = ({ children }) => {
     localStorage.setItem('sidebar_pinned', String(nextPin));
   };
 
+  const notifRef = useRef(null);
   const profileRef = useRef(null);
   const searchRef = useRef(null);
+
+  // Handle outside click & Esc key for Notifications Panel
+  useEffect(() => {
+    if (!notifOpen) return;
+
+    const handlePointerDownOutside = (event) => {
+      if (notifRef.current && !notifRef.current.contains(event.target)) {
+        setNotifOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setNotifOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDownOutside, true);
+    document.addEventListener('keydown', handleKeyDown, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDownOutside, true);
+      document.removeEventListener('keydown', handleKeyDown, true);
+    };
+  }, [notifOpen]);
 
   const userRoleUpper = String(user?.role || '').toUpperCase();
 
@@ -284,8 +311,7 @@ const DashboardLayout = ({ children }) => {
         { label: 'Projects', path: '/projects', icon: FolderOpen, roles: ['ADMIN', 'TEAM_LEADER'] },
         { label: 'Active Board', path: '/tasks?tab=Board', icon: Layers, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
         { label: 'Roadmap', path: '/tasks?tab=Timeline', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-        { label: 'Repositories', path: '/tasks?tab=Code', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-        { label: 'Integrations', path: '/tasks?tab=Development', icon: Settings, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] }
+        { label: 'Repositories', path: '/tasks?tab=Code', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] }
       ]
     },
     {
@@ -303,7 +329,9 @@ const DashboardLayout = ({ children }) => {
         { label: 'Attendance Portal', path: '/attendance', icon: Clock, roles: ['INTERN', 'TEAM_LEADER', 'EMPLOYEE'] },
         { label: 'Attendance Audit', path: '/attendance-audit', icon: Clock, roles: ['ADMIN', 'TEAM_LEADER'] },
         { label: 'Leave Management', path: '/leave-management', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
+        { label: 'Work Calendar', path: '/operations/work-calendar', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
         { label: 'Ticket Desk', path: '/tickets', icon: Ticket, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+
         { label: 'Asset Management', path: '/assets', icon: Laptop, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] }
       ]
     },
@@ -392,7 +420,11 @@ const DashboardLayout = ({ children }) => {
     } else if (pathname === '/leave-management' || pathname === '/leaves') {
       parts.push({ label: 'Operations', path: '/leave-management' });
       parts.push({ label: 'Leave Management', path: '/leave-management' });
+    } else if (pathname === '/operations/work-calendar' || pathname === '/work-calendar') {
+      parts.push({ label: 'Operations', path: '/operations/work-calendar' });
+      parts.push({ label: 'Work Calendar', path: '/operations/work-calendar' });
     } else if (pathname === '/reports') {
+
       parts.push({ label: 'System Control', path: '/reports' });
       parts.push({ label: 'Report Center', path: '/reports' });
     } else if (pathname === '/audit-logs') {
@@ -651,7 +683,7 @@ const DashboardLayout = ({ children }) => {
               </button>
 
               {/* Notifications Bell */}
-              <div className="relative">
+              <div className="relative" ref={notifRef}>
                 <button onClick={() => setNotifOpen(!notifOpen)} className="relative rounded-xl p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-all">
                   <Bell className="h-5 w-5" />
                   {unreadCount > 0 && (
@@ -662,46 +694,50 @@ const DashboardLayout = ({ children }) => {
                 </button>
 
                 {notifOpen && (
-                  <>
-                    <div className="fixed inset-0 z-30" onClick={() => setNotifOpen(false)} />
-                    <div className="absolute right-0 mt-2.5 z-40 w-80 sm:w-96 rounded-2xl border border-border/60 bg-white dark:bg-slate-900 p-4 shadow-2xl animate-in fade-in slide-in-from-top-3 duration-200">
-                      <div className="flex items-center justify-between border-b border-border/40 pb-3">
-                        <span className="text-xs font-bold">Workspace Notifications</span>
+                  <div className="absolute right-0 mt-2.5 z-40 w-80 sm:w-96 rounded-2xl border border-border/60 bg-white dark:bg-slate-900 p-4 shadow-2xl animate-in fade-in slide-in-from-top-3 duration-200">
+                    <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                      <span className="text-xs font-bold">Workspace Notifications</span>
+                      <div className="flex items-center gap-2.5">
                         {unreadCount > 0 && (
                           <button onClick={markAllAsRead} className="text-[10px] text-primary hover:underline font-bold">
                             Mark all read
                           </button>
                         )}
-                      </div>
-                      <div className="max-h-80 overflow-y-auto divide-y divide-border/40 py-2">
-                        {notifications.length === 0 ? (
-                          <p className="text-xs text-center text-muted-foreground py-6">No notifications</p>
-                        ) : (
-                          notifications.map((n) => (
-                            <div
-                              key={n._id || n.id}
-                              className={`p-3 rounded-xl transition-colors ${n.isRead ? 'opacity-70' : 'bg-primary/5 font-medium'} hover:bg-muted/50 flex items-start justify-between gap-2 my-1 cursor-pointer`}
-                              onClick={() => markRead(n._id || n.id)}
-                            >
-                              <div className="flex-1">
-                                <p className="text-xs font-semibold text-foreground">{n.title}</p>
-                                <p className="text-xs text-muted-foreground mt-0.5">{n.message}</p>
-                              </div>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteNotification(n._id || n.id);
-                                }}
-                                className="text-muted-foreground hover:text-danger p-1 rounded-lg transition-colors"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          ))
+                        {notifications.length > 0 && (
+                          <button onClick={clearAllNotifications} className="text-[10px] text-muted-foreground hover:text-rose-500 dark:hover:text-rose-400 hover:underline font-bold transition-colors">
+                            Clear All
+                          </button>
                         )}
                       </div>
                     </div>
-                  </>
+                    <div className="max-h-80 overflow-y-auto divide-y divide-border/40 py-2">
+                      {notifications.length === 0 ? (
+                        <p className="text-xs text-center text-muted-foreground py-6 font-medium">No new notifications</p>
+                      ) : (
+                        notifications.map((n) => (
+                          <div
+                            key={n._id || n.id}
+                            className={`p-3 rounded-xl transition-colors ${n.isRead ? 'opacity-70' : 'bg-primary/5 font-medium'} hover:bg-muted/50 flex items-start justify-between gap-2 my-1 cursor-pointer`}
+                            onClick={() => markRead(n._id || n.id)}
+                          >
+                            <div className="flex-1">
+                              <p className="text-xs font-semibold text-foreground">{n.title}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">{n.message}</p>
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteNotification(n._id || n.id);
+                              }}
+                              className="text-muted-foreground hover:text-danger p-1 rounded-lg transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
                 )}
               </div>
 

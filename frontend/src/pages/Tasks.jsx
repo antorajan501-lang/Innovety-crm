@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useLocation } from 'react-router-dom';
 import api, { getUploadUrl, downloadFile, getSocket } from '../services/api';
@@ -46,6 +46,7 @@ import TaskDiscussionPanel from '../components/TaskDiscussionPanel';
 import AudioPlayer from '../components/AudioPlayer';
 import ConfirmModal from '../components/ConfirmModal';
 import { motion, AnimatePresence } from 'framer-motion';
+import { getProjectStageProgress, isTaskDone } from '../utils/projectProgress';
 
 const Tasks = () => {
   const { user } = useAuth();
@@ -141,10 +142,15 @@ const Tasks = () => {
   const [selectedSprint, setSelectedSprint] = useState('ALL');
   const [selectedPriority, setSelectedPriority] = useState('ALL');
   const [selectedType, setSelectedType] = useState('ALL');
-  const [selectedProject, setSelectedProject] = useState('ALL');
+  const [selectedProject, setSelectedProject] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('projectId') || params.get('project') || 'ALL';
+  });
 
   // Drag highlight state
   const [activeDragCol, setActiveDragCol] = useState(null);
+  const projectBoardRefs = useRef({});
+  const [highlightedProjectId, setHighlightedProjectId] = useState(null);
 
   // Subtask input state
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
@@ -177,7 +183,8 @@ const Tasks = () => {
     try {
       setLoading(true);
       const res = await api.get('/tasks');
-      setTasks(res.data);
+      const loadedTasks = Array.isArray(res.data) ? res.data : (res.data?.tasks || []);
+      setTasks(loadedTasks);
       setLoading(false);
     } catch (err) {
       console.error(err);
@@ -304,9 +311,9 @@ const Tasks = () => {
   const fetchProjects = async () => {
     try {
       const res = await api.get('/projects');
-      const list = res.data.projects || res.data || [];
+      const list = res?.data?.projects || (Array.isArray(res?.data) ? res.data : []);
       setProjectsList(list);
-      console.log('Projects from API:', list.map(p => p.name));
+      console.log('Projects from API:', (list || []).map(p => p.name));
     } catch (err) {
       console.error('Failed to load projects:', err);
     }
@@ -350,18 +357,67 @@ const Tasks = () => {
     }
   }, [user]);
 
-  // Synchronize active tab from URL query params
+  // Synchronize active tab and selected project from URL query params
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const tabParam = params.get('tab');
     if (tabParam) {
-      const validTabs = ['Summary', 'Board', 'Code', 'Timeline', 'Docs', 'Forms', 'Development'];
+      const validTabs = ['Summary', 'Board', 'Code', 'Timeline', 'Docs', 'Forms'];
       const match = validTabs.find(t => t.toLowerCase() === tabParam.toLowerCase());
       if (match) {
         setActiveSubTab(match);
       }
     }
-  }, [location]);
+
+    const projectIdParam = params.get('projectId') || params.get('project');
+    if (projectIdParam) {
+      if (projectsList.length > 0) {
+        const foundProj = projectsList.find(
+          p => p.id === projectIdParam ||
+               p.projectCode === projectIdParam ||
+               (p.projectCode && p.projectCode.toLowerCase() === projectIdParam.toLowerCase())
+        );
+        if (foundProj) {
+          setSelectedProject(foundProj.id);
+        } else {
+          setAlertMsg('Requested project was not found or access is restricted.');
+          setSelectedProject('ALL');
+        }
+      }
+    }
+  }, [location.search, projectsList]);
+
+  // Auto-scroll to selected project section & apply temporary highlight ring
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const projectIdParam = params.get('projectId') || params.get('project');
+
+    if (projectIdParam && activeSubTab === 'Board' && projectsList.length > 0) {
+      const matchedProj = projectsList.find(
+        p => p.id === projectIdParam ||
+             p.projectCode === projectIdParam ||
+             (p.projectCode && p.projectCode.toLowerCase() === projectIdParam.toLowerCase())
+      );
+
+      const targetId = matchedProj ? matchedProj.id : projectIdParam;
+
+      const timer = setTimeout(() => {
+        const el = projectBoardRefs.current[targetId];
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          setHighlightedProjectId(targetId);
+
+          const clearTimer = setTimeout(() => {
+            setHighlightedProjectId(null);
+          }, 2500);
+
+          return () => clearTimeout(clearTimer);
+        }
+      }, 150);
+
+      return () => clearTimeout(timer);
+    }
+  }, [location.search, projectsList, activeSubTab]);
 
   // Handle Drag & Drop
   const onDragStart = (e, taskId) => {
@@ -660,7 +716,10 @@ const Tasks = () => {
       const matchesSprint = selectedSprint === 'ALL' || t.sprintName === selectedSprint;
       const matchesPriority = selectedPriority === 'ALL' || t.priority === selectedPriority;
       const matchesType = selectedType === 'ALL' || t.type === selectedType;
-      const matchesProject = selectedProject === 'ALL' || t.projectId === selectedProject;
+      const matchesProject =
+        selectedProject === 'ALL' ||
+        t.projectId === selectedProject ||
+        (t.projectCode && t.projectCode.toLowerCase() === selectedProject.toLowerCase());
       return matchesSearch && matchesSprint && matchesPriority && matchesType && matchesProject;
     });
   }, [visibleTasks, searchQuery, selectedSprint, selectedPriority, selectedType, selectedProject]);
@@ -669,7 +728,11 @@ const Tasks = () => {
   const roadmapProjects = useMemo(() => {
     let result = projectsList.filter(p => accessibleProjectIds.has(p.id));
     if (selectedProject !== 'ALL') {
-      result = result.filter(p => p.id === selectedProject);
+      result = result.filter(
+        p => p.id === selectedProject ||
+             p.projectCode === selectedProject ||
+             (p.projectCode && p.projectCode.toLowerCase() === selectedProject.toLowerCase())
+      );
     }
     return result;
   }, [projectsList, accessibleProjectIds, selectedProject]);
@@ -682,7 +745,7 @@ const Tasks = () => {
     { title: 'TO DO', statuses: ['PENDING', 'REJECTED'] },
     { title: 'IN PROGRESS', statuses: ['IN_PROGRESS'] },
     { title: 'IN REVIEW', statuses: ['WAITING_FOR_REVIEW'] },
-    { title: 'DONE', statuses: ['APPROVED'] }
+    { title: 'DONE', statuses: ['APPROVED', 'COMPLETED', 'DONE'] }
   ];
 
   // Extract unique sprints from tasks
@@ -765,10 +828,10 @@ const Tasks = () => {
 
   const renderSummaryTab = () => {
     const total = filteredTasks.length;
-    const completed = filteredTasks.filter(t => t.status === 'APPROVED').length;
+    const completed = filteredTasks.filter(t => isTaskDone(t, null)).length;
     const inProgress = filteredTasks.filter(t => t.status === 'IN_PROGRESS').length;
     const review = filteredTasks.filter(t => t.status === 'WAITING_FOR_REVIEW').length;
-    const pending = filteredTasks.filter(t => ['PENDING', 'REJECTED'].includes(t.status)).length;
+    const pending = filteredTasks.filter(t => ['PENDING', 'REJECTED'].includes(t.status) && !isTaskDone(t, null)).length;
     const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
     
     const bugs = filteredTasks.filter(t => t.type === 'BUG').length;
@@ -781,7 +844,7 @@ const Tasks = () => {
           <div className="glass-card p-4 border border-white/70 dark:border-white/10 shadow-lg flex flex-col justify-between">
             <span className="text-[10px] font-bold text-muted-foreground uppercase">Work Completion</span>
             <div className="flex items-center gap-3 mt-2">
-              <span className="text-xl font-black text-foreground">{rate}%</span>
+              <span className="text-xl font-black text-foreground">{rate}% ({completed}/{total})</span>
               <div className="flex-1 bg-muted/60 h-2 rounded-full overflow-hidden border border-border/30">
                 <div className="bg-primary h-full rounded-full" style={{ width: `${rate}%` }} />
               </div>
@@ -887,12 +950,26 @@ const Tasks = () => {
               ];
               const color = colors[i % colors.length];
               const startDate = project.estimatedStartDate ? new Date(project.estimatedStartDate) : new Date();
-              const endDate = project.estimatedEndDate ? new Date(project.estimatedEndDate) : new Date();
+              const endDate = project.estimatedEndDate ? new Date(project.estimatedEndDate) : new Date(startDate.getTime() + 30 * 24 * 60 * 60 * 1000);
               const formattedStart = startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
               const formattedEnd = endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
-              const offset = (i * 10) % 35;
-              const length = 40 + (i * 15) % 45;
+              // Calculate timeline bar offset & width percentages
+              const now = new Date();
+              const timelineStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+              const timelineEnd = new Date(now.getFullYear(), now.getMonth() + 3, 0);
+              const totalSpanMs = Math.max(1, timelineEnd - timelineStart);
+
+              const startMs = Math.max(0, startDate - timelineStart);
+              const durationMs = Math.max(7 * 24 * 60 * 60 * 1000, endDate - startDate);
+
+              const offset = Math.min(75, Math.max(0, Math.round((startMs / totalSpanMs) * 100)));
+              const length = Math.min(100 - offset, Math.max(20, Math.round((durationMs / totalSpanMs) * 100)));
+
+              const projTasks = visibleTasks.filter(t => t.projectId === project.id);
+              const totalT = projTasks.length;
+              const doneT = projTasks.filter(t => isTaskDone(t, project)).length;
+              const pct = totalT > 0 ? Math.round((doneT / totalT) * 100) : (project.progress || 0);
 
               return (
                 <div key={project.id} className="flex flex-col sm:flex-row sm:items-center gap-4 text-xs">
@@ -901,7 +978,7 @@ const Tasks = () => {
                       <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded font-bold">{project.projectCode || 'PRJ'}</span>
                       <span className="truncate text-foreground font-extrabold">{project.name}</span>
                     </div>
-                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-500/10 px-1.5 py-0.5 rounded shrink-0">{project.progress || 0}%</span>
+                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-500/10 px-1.5 py-0.5 rounded shrink-0">{pct}% ({doneT}/{totalT})</span>
                   </div>
 
                   <div className="flex-1 bg-muted/30 border border-border/20 rounded-lg h-8 relative flex items-center p-0.5 overflow-hidden">
@@ -1138,51 +1215,7 @@ const Tasks = () => {
     );
   };
 
-  const renderDevelopmentTab = () => {
-    const integrations = [
-      { name: 'GitHub Integration', desc: 'Sync commit history and verify pull requests directly.', icon: CodeIcon, connected: true, tagColor: 'text-emerald-500 bg-emerald-500/10' },
-      { name: 'Slack Alerts Channel', desc: 'Alert notifications on task allocation and reviews.', icon: MessageSquare, connected: true, tagColor: 'text-emerald-500 bg-emerald-500/10' },
-      { name: 'Ticketing Bridge', desc: 'Sync tickets desk queries to backlog workspaces.', icon: FolderOpen, connected: false, tagColor: 'text-slate-500 bg-slate-500/10' },
-      { name: 'Figma Assets Sync', desc: 'Verify UI designs references inside doc specs.', icon: Settings, connected: false, tagColor: 'text-slate-500 bg-slate-500/10' }
-    ];
 
-    return (
-      <div className="bg-card border border-border/40 p-6 rounded-2xl shadow-sm text-left animate-in fade-in duration-300 space-y-6">
-        <div>
-          <h3 className="text-sm font-bold text-foreground">Third-Party Integrations</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Integrate workspace files and alert flows directly to external developer platforms.</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {integrations.map((item, i) => {
-            const Icon = item.icon;
-            return (
-              <div key={i} className="border border-border/30 bg-muted/10 p-4 rounded-xl flex items-start gap-4">
-                <div className="rounded-lg bg-primary/10 p-2.5 text-primary shrink-0">
-                  <Icon className="h-5 w-5" />
-                </div>
-                <div className="flex-1 space-y-1.5">
-                  <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-foreground">{item.name}</h4>
-                    <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${item.tagColor}`}>
-                      {item.connected ? 'Connected' : 'Disconnected'}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground leading-relaxed">{item.desc}</p>
-                  <div className="pt-2 flex justify-between items-center border-t border-border/10 mt-2">
-                    <span className="text-[9px] text-muted-foreground">Status: <b>{item.connected ? 'Active Syncing' : 'Inactive'}</b></span>
-                    <button className="text-[9px] text-primary hover:underline font-bold">
-                      {item.connected ? 'Configure' : 'Configure Connect'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
 
   const renderDocsTab = () => {
     const documents = [
@@ -1423,7 +1456,13 @@ const Tasks = () => {
           {(() => {
             const activeProjects = (projectsList || []).filter(p => {
               if (p.isDeleted) return false;
-              if (selectedProject !== 'ALL' && p.id !== selectedProject) return false;
+              if (selectedProject !== 'ALL') {
+                return (
+                  p.id === selectedProject ||
+                  p.projectCode === selectedProject ||
+                  (p.projectCode && p.projectCode.toLowerCase() === selectedProject.toLowerCase())
+                );
+              }
               return true;
             });
 
@@ -1443,24 +1482,25 @@ const Tasks = () => {
               // Extract all tasks for this project
               const projTasks = filteredTasks.filter(t => t.projectId === proj.id);
 
-              // Apply Role-Based Visibility
+              // Apply Role-Based Column Visibility
               let roleTasks = projTasks;
               if (user.role === 'INTERN' || user.role === 'EMPLOYEE') {
                 roleTasks = projTasks.filter(t => t.assigneeId === user.id);
               }
 
-              // Compute dynamic project progress %
-              const totalTasksCount = roleTasks.length;
-              const completedTasksCount = roleTasks.filter(t => {
-                const stage = t.stage || (proj.workflowStages || []).find(s => s.id === t.stageId);
-                if (!stage?.isCompletedStage) return false;
-                if (stage.requiresApproval) return t.reviewStatus === 'APPROVED';
-                return true;
-              }).length;
-              const progressPct = totalTasksCount > 0 ? Math.round((completedTasksCount / totalTasksCount) * 100) : 0;
+              // Compute stage-based project progress (%) and task completion (completed/total)
+              const { progressPct, completedTasks, totalTasks } = getProjectStageProgress(proj, projTasks);
 
               return (
-                <div key={proj.id} className="rounded-3xl border border-[#E5E7EB] bg-white dark:bg-card dark:border-border/50 p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] space-y-4 text-left transition-all duration-250 hover:-translate-y-0.5 hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]">
+                <div
+                  key={proj.id}
+                  ref={(el) => (projectBoardRefs.current[proj.id] = el)}
+                  className={`rounded-3xl border p-5 shadow-[0_8px_24px_rgba(15,23,42,0.06)] space-y-4 text-left transition-all duration-300 ${
+                    highlightedProjectId === proj.id
+                      ? 'ring-2 ring-emerald-500/80 border-emerald-500 bg-emerald-500/5 dark:bg-emerald-500/10 shadow-[0_12px_30px_rgba(5,150,105,0.15)]'
+                      : 'border-[#E5E7EB] bg-white dark:bg-card dark:border-border/50 hover:-translate-y-0.5 hover:shadow-[0_12px_30px_rgba(15,23,42,0.08)]'
+                  }`}
+                >
                   {/* Project Workspace Header Banner */}
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/40 pb-4">
                     <div className="space-y-1">
@@ -1488,7 +1528,7 @@ const Tasks = () => {
                       )}
                     </div>
 
-                    {/* Right side: Leader, Team & Progress Bar */}
+                    {/* Right side: Leader, Team & Progress Widget */}
                     <div className="flex flex-wrap items-center gap-5 shrink-0">
                       {/* Project Leader & Team info */}
                       <div className="flex items-center gap-2 bg-white dark:bg-muted/30 border border-[#E5E7EB] dark:border-border/40 px-3 py-1.5 rounded-2xl shadow-sm">
@@ -1499,14 +1539,22 @@ const Tasks = () => {
                         </div>
                       </div>
 
-                      {/* Dynamic Progress Ring / Bar */}
-                      <div className="w-44 bg-white dark:bg-muted/30 border border-[#E5E7EB] dark:border-border/40 p-2.5 rounded-2xl space-y-1 shadow-sm">
-                        <div className="flex justify-between items-center text-[10px] font-bold">
-                          <span className="text-muted-foreground uppercase">Completion</span>
-                          <span className="text-primary font-black">{progressPct}% ({completedTasksCount}/{totalTasksCount})</span>
-                        </div>
-                        <div className="w-full bg-muted h-2 rounded-full overflow-hidden border border-border/20">
-                          <div className="bg-gradient-primary h-full rounded-full transition-all duration-300" style={{ width: `${progressPct}%` }} />
+                      {/* Project Progress Summary Card */}
+                      <div className="flex items-center bg-white dark:bg-muted/30 border border-[#E5E7EB] dark:border-border/40 p-2.5 px-3.5 rounded-2xl shadow-xs">
+                        <div className="w-44 space-y-1 text-left">
+                          <div className="flex justify-between items-center text-[10px] font-bold">
+                            <span className="text-muted-foreground uppercase tracking-wider">COMPLETION</span>
+                            <span className="font-black">
+                              <span className="text-primary">{progressPct}%</span>{' '}
+                              <span className="text-foreground font-extrabold">({completedTasks}/{totalTasks})</span>
+                            </span>
+                          </div>
+                          <div className="w-full bg-muted h-2 rounded-full overflow-hidden border border-border/20">
+                            <div
+                              className="bg-gradient-primary h-full rounded-full transition-all duration-300"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
                         </div>
                       </div>
 
@@ -1851,8 +1899,6 @@ const Tasks = () => {
         renderTimelineTab()
       ) : activeSubTab === 'Code' ? (
         renderCodeTab()
-      ) : activeSubTab === 'Development' ? (
-        renderDevelopmentTab()
       ) : activeSubTab === 'Docs' ? (
         renderDocsTab()
       ) : activeSubTab === 'Forms' ? (

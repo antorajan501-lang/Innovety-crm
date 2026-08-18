@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
-import api from '../services/api';
+import api, { getSocket } from '../services/api';
 
 const SocketContext = createContext(null);
 
@@ -40,60 +39,65 @@ export const SocketProvider = ({ children }) => {
     fetchInitialData();
   }, [token]);
 
-  // Handle live socket connections
+  // Handle live socket connections using ONE shared socket instance
   useEffect(() => {
     if (!user || !token) {
-      if (socket) {
-        socket.disconnect();
-        setSocket(null);
-      }
+      setOnlineUsers([]);
+      setSocket(null);
       return;
     }
 
-    const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-    const newSocket = io(BACKEND_URL, {
-      transports: ['websocket'],
-      upgrade: false
-    });
+    const sharedSocket = getSocket();
+    setSocket(sharedSocket);
 
-    setSocket(newSocket);
-
-    newSocket.on('connect', () => {
-      console.log('Connected to real-time notification socket.');
+    const handleRegister = () => {
+      console.log('Registering identity on shared real-time socket...');
       const teamId = user.teamMembers?.[0]?.teamId || null;
-      newSocket.emit('register', {
+      sharedSocket.emit('register', {
         userId: user.id,
         name: user.name,
         role: user.role,
         teamId
       });
-    });
+    };
+
+    if (sharedSocket.connected) {
+      handleRegister();
+    }
+
+    sharedSocket.on('connect', handleRegister);
 
     // Listen for new notifications
-    newSocket.on('notification', (newNotif) => {
+    const handleNotification = (newNotif) => {
       setNotifications((prev) => [newNotif, ...prev]);
       setUnreadCount((prev) => prev + 1);
 
-      // Play alert sound if supported
       try {
         const audio = new Audio('/notification.mp3');
         audio.volume = 0.5;
         audio.play().catch(() => { });
       } catch (e) { }
-    });
+    };
 
     // Listen for live announcements
-    newSocket.on('announcement', (newAnnounce) => {
+    const handleAnnouncement = (newAnnounce) => {
       setAnnouncements((prev) => [newAnnounce, ...prev]);
-    });
+    };
 
     // Listen for changes in online users status list
-    newSocket.on('online_users', (userIdsList) => {
+    const handleOnlineUsers = (userIdsList) => {
       setOnlineUsers(userIdsList);
-    });
+    };
+
+    sharedSocket.on('notification', handleNotification);
+    sharedSocket.on('announcement', handleAnnouncement);
+    sharedSocket.on('online_users', handleOnlineUsers);
 
     return () => {
-      newSocket.disconnect();
+      sharedSocket.off('connect', handleRegister);
+      sharedSocket.off('notification', handleNotification);
+      sharedSocket.off('announcement', handleAnnouncement);
+      sharedSocket.off('online_users', handleOnlineUsers);
     };
   }, [user, token]);
 
@@ -132,6 +136,18 @@ export const SocketProvider = ({ children }) => {
     }
   };
 
+  const clearAllNotifications = async () => {
+    try {
+      await api.delete('/notifications/clear-all');
+      setNotifications([]);
+      setUnreadCount(0);
+    } catch (error) {
+      console.error('Failed to clear all notifications:', error);
+      setNotifications([]);
+      setUnreadCount(0);
+    }
+  };
+
   const isUserOnline = (userId) => {
     return onlineUsers.some((u) => u.id === userId);
   };
@@ -144,6 +160,7 @@ export const SocketProvider = ({ children }) => {
     markRead,
     markAllAsRead,
     deleteNotification,
+    clearAllNotifications,
     isUserOnline
   };
 

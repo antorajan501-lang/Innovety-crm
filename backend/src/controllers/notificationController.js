@@ -86,6 +86,19 @@ const deleteNotification = async (req, res) => {
   }
 };
 
+const clearAllNotifications = async (req, res) => {
+  try {
+    await prisma.notification.deleteMany({
+      where: { userId: req.user.id }
+    });
+
+    res.json({ message: 'All notifications cleared successfully.' });
+  } catch (error) {
+    console.error('Clear all notifications error:', error);
+    res.status(500).json({ message: 'Failed to clear notifications.' });
+  }
+};
+
 const updatePreferences = async (req, res) => {
   try {
     const { preferences } = req.body;
@@ -108,5 +121,6 @@ module.exports = {
   markAsRead,
   markAllRead,
   deleteNotification,
+  clearAllNotifications,
   updatePreferences
 };

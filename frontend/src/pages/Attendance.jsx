@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import api, { getSocket } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import ClockInModal from '../components/attendance/ClockInModal';
+import AttendanceHistorySection from '../components/attendance/AttendanceHistorySection';
 import {
   Clock,
   Play,
@@ -22,6 +24,7 @@ const Attendance = () => {
   const [settings, setSettings] = useState(null);
   const [currentCoords, setCurrentCoords] = useState(null);
   const [clockInStatus, setClockInStatus] = useState(null);
+  const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0);
 
   // Local Browser Telemetry Preview
   const [telemetry, setTelemetry] = useState({
@@ -68,6 +71,7 @@ const Attendance = () => {
       const handleAttendanceEvent = () => {
         fetchClockInStatus();
         fetchAttendanceStatus();
+        setHistoryRefreshTrigger(prev => prev + 1);
       };
       socket.on('attendance_clock_in', handleAttendanceEvent);
       socket.on('attendance_clock_out', handleAttendanceEvent);
@@ -165,27 +169,10 @@ const Attendance = () => {
     return () => clearInterval(pollInterval);
   }, []);
 
-  const handleClockIn = async () => {
-    try {
-      setLoading(true);
-      const coords = await getCoordinatesObj();
-      let location = 'Location not available';
-      if (coords) {
-        setCurrentCoords(coords);
-        const address = await geocodePosition(coords.lat, coords.lon);
-        location = address 
-          ? `${address} (Lat: ${coords.lat}, Lon: ${coords.lon})`
-          : `Lat: ${coords.lat}, Lon: ${coords.lon}`;
-      }
-      
-      const res = await api.post('/attendance/clock-in', { location });
-      setClockedRecord(res.data);
-      setAlert(`Successfully clocked in today! Status: ${res.data.status}`);
-      fetchAttendanceStatus();
-    } catch (err) {
-      setAlert(err.response?.data?.message || 'Clock in failed.');
-      setLoading(false);
-    }
+  const [isClockInModalOpen, setIsClockInModalOpen] = useState(false);
+
+  const handleClockIn = () => {
+    setIsClockInModalOpen(true);
   };
 
   const handleClockOut = async () => {
@@ -243,6 +230,21 @@ const Attendance = () => {
     const hrs = Math.floor(hours);
     const mins = Math.round((hours - hrs) * 60);
     return `${hrs}h ${mins}m`;
+  };
+
+  const formatLateDuration = (totalMinutes) => {
+    if (!totalMinutes || totalMinutes <= 0) return '';
+    const minsNum = Number(totalMinutes);
+    if (minsNum < 60) {
+      return `${minsNum}min`;
+    }
+    const hours = Math.floor(minsNum / 60);
+    const remainderMins = minsNum % 60;
+    if (remainderMins === 0) {
+      return `${hours}hr`;
+    }
+    const paddedMins = String(remainderMins).padStart(2, '0');
+    return `${hours}hr ${paddedMins}min`;
   };
 
   return (
@@ -456,7 +458,7 @@ const Attendance = () => {
                     <td className="px-5 py-3.5 whitespace-nowrap">{formatWorkingHours(log.workingHours, log.status)}</td>
                     <td className="px-5 py-3.5 text-right whitespace-nowrap">
                       <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-primary/10 text-primary' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : 'bg-red-500/10 text-red-500'}`}>
-                        {log.status} {log.lateMinutes ? `(${log.lateMinutes}m late)` : ''}
+                        {log.status === 'LATE' && log.lateMinutes ? `LATE (${formatLateDuration(log.lateMinutes)})` : log.status}
                       </span>
                     </td>
                   </tr>
@@ -466,6 +468,20 @@ const Attendance = () => {
           </table>
         </div>
       </div>
+
+      {/* Full Attendance History Section */}
+      <AttendanceHistorySection user={user} refreshTrigger={historyRefreshTrigger} />
+
+      {/* Clock In Modal */}
+      <ClockInModal
+        isOpen={isClockInModalOpen}
+        onClose={() => setIsClockInModalOpen(false)}
+        onSuccess={() => {
+          fetchAttendanceStatus();
+          setHistoryRefreshTrigger(prev => prev + 1);
+        }}
+        user={user}
+      />
     </div>
   );
 };

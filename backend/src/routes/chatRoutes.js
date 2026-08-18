@@ -31,8 +31,11 @@ router.use(authenticate);
 
 // Rooms & Conversations
 router.get('/rooms', chatController.getRooms);
+router.get('/rooms/project/:projectId', chatController.getOrCreateProjectChatRoom);
 router.post('/rooms/direct', chatController.createDirectRoom);
 router.post('/rooms/team', chatController.createTeamRoom);
+router.delete('/groups/:groupId', chatController.deleteGroup);
+router.delete('/rooms/:roomId', chatController.deleteGroup);
 
 // Messages
 router.get('/rooms/:roomId/messages', chatController.getRoomMessages);

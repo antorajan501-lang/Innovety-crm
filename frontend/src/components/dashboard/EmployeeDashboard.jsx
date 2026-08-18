@@ -5,6 +5,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import api, { getSocket } from '../../services/api';
 import UserAvatar from '../common/UserAvatar';
+import ClockInModal from '../attendance/ClockInModal';
+import { calculateAttendanceStreak, formatStreakDays } from '../../utils/streakCalculator';
 import {
   Clock,
   CheckCircle2,
@@ -77,10 +79,11 @@ export const EmployeeDashboard = () => {
 
   // Attendance State
   const [clockedRecord, setClockedRecord] = useState(null);
-  const [clockStatus, setClockStatus] = useState(null);
-  const [clockLoading, setClockLoading] = useState(false);
-  const [attendanceAlert, setAttendanceAlert] = useState('');
   const [attendanceLogs, setAttendanceLogs] = useState([]);
+  const [holidays, setHolidays] = useState([]);
+  const [clockLoading, setClockLoading] = useState(false);
+  const [clockStatus, setClockStatus] = useState(null);
+  const [attendanceAlert, setAttendanceAlert] = useState('');
 
   // Data States (Strictly Database Fetched & Employee Scoped)
   const [myTasks, setMyTasks] = useState([]);
@@ -156,7 +159,8 @@ export const EmployeeDashboard = () => {
         announcementsRes,
         leavesRes,
         teamsRes,
-        logsRes
+        logsRes,
+        holidaysRes
       ] = await Promise.all([
         api.get('/tasks').catch(() => ({ data: [] })),
         api.get('/projects').catch(() => ({ data: [] })),
@@ -165,7 +169,8 @@ export const EmployeeDashboard = () => {
         api.get('/announcements').catch(() => ({ data: [] })),
         api.get('/leaves').catch(() => ({ data: [] })),
         api.get('/teams').catch(() => ({ data: [] })),
-        api.get('/logs?limit=20').catch(() => ({ data: { logs: [] } }))
+        api.get('/logs?limit=20').catch(() => ({ data: { logs: [] } })),
+        api.get('/payroll/holidays').catch(() => ({ data: [] }))
       ]);
 
       // 1. My Tasks (Strictly Filtered for logged-in Employee)
@@ -188,6 +193,9 @@ export const EmployeeDashboard = () => {
       // 3. Attendance Status & Logs
       const logs = Array.isArray(attendanceLogsRes.data) ? attendanceLogsRes.data : [];
       setAttendanceLogs(logs);
+      
+      const holData = Array.isArray(holidaysRes.data) ? holidaysRes.data : [];
+      setHolidays(holData);
       
       const statusData = attendanceStatusRes.data;
       setClockStatus(statusData);
@@ -245,20 +253,10 @@ export const EmployeeDashboard = () => {
     });
   };
 
-  const handleClockIn = async () => {
-    try {
-      setClockLoading(true);
-      setAttendanceAlert('');
-      const locationStr = await getCoordinates();
-      const res = await api.post('/attendance/clock-in', { location: locationStr });
-      setClockedRecord(res.data);
-      setAttendanceAlert(`Clocked In successfully at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
-      await fetchEmployeeDashboardData();
-    } catch (err) {
-      setAttendanceAlert(err.response?.data?.message || 'Clock in failed.');
-    } finally {
-      setClockLoading(false);
-    }
+  const [isClockInModalOpen, setIsClockInModalOpen] = useState(false);
+
+  const handleClockIn = () => {
+    setIsClockInModalOpen(true);
   };
 
   const handleClockOut = async () => {
@@ -315,6 +313,7 @@ export const EmployeeDashboard = () => {
         startDate: leaveForm.startDate,
         endDate: leaveForm.endDate,
         leaveType: leaveForm.type,
+        payType: leaveForm.payType || (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(leaveForm.type) ? 'UNPAID' : 'PAID'),
         type: leaveForm.type,
         reason: leaveForm.reason,
         contactPhone: leaveForm.contactPhone
@@ -377,18 +376,8 @@ export const EmployeeDashboard = () => {
 
   // Real Attendance Streak (consecutive days)
   const attendanceStreak = useMemo(() => {
-    if (!attendanceLogs || attendanceLogs.length === 0) return 0;
-    const sorted = [...attendanceLogs].sort((a, b) => new Date(b.date) - new Date(a.date));
-    let streak = 0;
-    for (const log of sorted) {
-      if (['PRESENT', 'LATE', 'HALF_DAY', 'WORK_FROM_HOME'].includes(log.status)) {
-        streak++;
-      } else {
-        break;
-      }
-    }
-    return streak;
-  }, [attendanceLogs]);
+    return calculateAttendanceStreak(attendanceLogs, holidays);
+  }, [attendanceLogs, holidays]);
 
   // Leave Balances (12 Casual, 8 Sick, 3 Emergency default limits minus approved)
   const leaveStats = useMemo(() => {
@@ -499,6 +488,13 @@ export const EmployeeDashboard = () => {
           <div className="skeleton h-96 lg:col-span-2 rounded-[28px]" />
           <div className="skeleton h-96 rounded-[28px]" />
         </div>
+        {/* Clock In Modal */}
+      <ClockInModal
+        isOpen={isClockInModalOpen}
+        onClose={() => setIsClockInModalOpen(false)}
+        onSuccess={() => fetchEmployeeDashboardData()}
+        user={user}
+      />
       </div>
     );
   }
@@ -675,7 +671,7 @@ export const EmployeeDashboard = () => {
         <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm flex flex-col justify-between text-left">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Streak</span>
           <div className="flex items-baseline justify-between mt-2">
-            <span className="text-2xl font-black text-amber-500">{attendanceStreak} Days</span>
+            <span className="text-2xl font-black text-amber-500">{formatStreakDays(attendanceStreak)}</span>
             <span className="text-xl shrink-0">🔥</span>
           </div>
           <span className="text-[10px] text-muted-foreground mt-1">On-time checkins</span>
@@ -1133,6 +1129,14 @@ export const EmployeeDashboard = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Clock In Modal */}
+      <ClockInModal
+        isOpen={isClockInModalOpen}
+        onClose={() => setIsClockInModalOpen(false)}
+        onSuccess={() => fetchEmployeeDashboardData()}
+        user={user}
+      />
     </motion.div>
   );
 };

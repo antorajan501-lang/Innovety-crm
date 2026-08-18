@@ -104,6 +104,12 @@ enum ApprovalStatus {
   REJECTED
 }
 
+enum WorkCalendarStatus {
+  WORKING_DAY
+  WFH
+  HOLIDAY
+}
+
 enum AttendanceStatus {
   PRESENT
   LATE
@@ -236,6 +242,7 @@ model User {
   stageApprovals           ProjectWorkflowStage[]   @relation("StageApprover")
   requestedStageAudits     TaskStageApprovalAudit[] @relation("StageAuditRequestedBy")
   approvedStageAudits      TaskStageApprovalAudit[] @relation("StageAuditApprovedBy")
+  createdWorkCalendars     WorkCalendar[]           @relation("WorkCalendarCreator")
 }
 
 model Position {
@@ -403,7 +410,9 @@ model Attendance {
   lateMinutes     Int?
   earlyWindowUsed Int?
   gracePeriodUsed Int?
-  shiftStartUsed  String?
+  shiftStartUsed   String?
+  workLocation     String?          // OFFICE, HOME, OTHER
+  workLocationOther String?        // Text description if OTHER
 
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -548,6 +557,7 @@ model Asset {
   billPhoto      String?         // File path / URL for bill/invoice photocopy
   status         AssetStatus     @default(AVAILABLE)
   description    String?
+  quantity       Int             @default(1)
   
   // Current assignment snapshot / relation
   assignedToId   String?
@@ -695,6 +705,7 @@ model LeaveRequest {
   totalDays           Float    @default(1.0)
   leaveType           String   @default("CASUAL") // CASUAL, SICK, EMERGENCY, WFH
   type                String   @default("LEAVE")   // LEAVE, WFH
+  payType             String   @default("PAID")    // PAID, UNPAID
   subject             String?
   letterContent       String?
   reason              String
@@ -1404,5 +1415,25 @@ model TaskStageApprovalAudit {
   requestedBy   User                 @relation("StageAuditRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
   approvedBy    User?                @relation("StageAuditApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
 }
+
+model WorkCalendar {
+  id              String             @id @default(uuid())
+  date            DateTime?          @db.Date
+  status          WorkCalendarStatus
+  title           String?
+  reason          String?
+  isPermanent     Boolean            @default(false)
+  recurrenceMonth Int?
+  recurrenceDay   Int?
+  createdById     String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  createdBy       User?              @relation("WorkCalendarCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([date])
+  @@index([isPermanent, recurrenceMonth, recurrenceDay])
+}
+
 
 

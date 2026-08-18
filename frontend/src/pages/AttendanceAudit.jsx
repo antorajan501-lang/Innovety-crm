@@ -77,16 +77,69 @@ const formatDateDDMMYYYY = (dateInput) => {
 
 const formatLateMinutes = (totalMinutes) => {
   if (!totalMinutes || totalMinutes <= 0) return '';
-  if (totalMinutes < 60) {
-    return `${totalMinutes} MIN LATE`;
-  }
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (minutes === 0) {
-    return `${hours} HR LATE`;
-  }
-  return `${hours} HR ${minutes} MIN LATE`;
+  const minsNum = Number(totalMinutes);
+  const hours = Math.floor(minsNum / 60);
+  const remainingMins = minsNum % 60;
+
+  const hrStr = hours > 0 ? `${hours} ${hours === 1 ? 'hr' : 'hrs'}` : '';
+  const minStr = remainingMins > 0 ? `${remainingMins} ${remainingMins === 1 ? 'min' : 'mins'}` : '';
+
+  if (hours > 0 && remainingMins > 0) return `${hrStr} ${minStr}`;
+  if (hours > 0) return hrStr;
+  return minStr;
 };
+
+const parseLocalToISO = (datetimeLocalStr) => {
+  if (!datetimeLocalStr) return undefined;
+  if (datetimeLocalStr.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(datetimeLocalStr)) {
+    return new Date(datetimeLocalStr).toISOString();
+  }
+  const parts = datetimeLocalStr.split('T');
+  if (parts.length < 2) return new Date(datetimeLocalStr).toISOString();
+
+  const [datePart, timePart] = parts;
+  const [year, month, day] = datePart.split('-').map(Number);
+  const [hour, minute] = timePart.split(':').map(Number);
+
+  if (!year || !month || !day || isNaN(hour) || isNaN(minute)) {
+    return new Date(datetimeLocalStr).toISOString();
+  }
+
+  const utcCandidate = new Date(Date.UTC(year, month - 1, day, hour, minute, 0, 0));
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  });
+
+  const p = {};
+  formatter.formatToParts(utcCandidate).forEach(part => {
+    if (part.type !== 'literal') p[part.type] = part.value;
+  });
+
+  const zYear = parseInt(p.year, 10);
+  const zMonth = parseInt(p.month, 10);
+  const zDay = parseInt(p.day, 10);
+  let zHour = parseInt(p.hour, 10);
+  if (zHour === 24) zHour = 0;
+  const zMin = parseInt(p.minute, 10);
+
+  const targetMinutes = zHour * 60 + zMin;
+  const nominalMinutes = hour * 60 + minute;
+  let diffMinutes = targetMinutes - nominalMinutes;
+
+  if (diffMinutes > 720) diffMinutes -= 1440;
+  if (diffMinutes < -720) diffMinutes += 1440;
+
+  const result = new Date(utcCandidate.getTime() - diffMinutes * 60 * 1000);
+  return result.toISOString();
+};
+
 
 const AttendanceAudit = () => {
   const { user } = useAuth();
@@ -384,15 +437,19 @@ const AttendanceAudit = () => {
 
     try {
       setLoading(true);
+      const clockInISO = ['LEAVE', 'ABSENT'].includes(targetStatus) ? undefined : (editForm.clockIn ? parseLocalToISO(editForm.clockIn) : undefined);
+      const clockOutISO = ['LEAVE', 'ABSENT'].includes(targetStatus) ? undefined : (editForm.clockOut ? parseLocalToISO(editForm.clockOut) : undefined);
+
       await api.put(`/attendance/${selectedRecord.id}`, {
         userId: selectedRecord.userId,
         date: selectedRecord.date,
         status: targetStatus,
-        clockIn: ['LEAVE', 'ABSENT'].includes(targetStatus) ? undefined : (editForm.clockIn || undefined),
-        clockOut: ['LEAVE', 'ABSENT'].includes(targetStatus) ? undefined : (editForm.clockOut || undefined),
+        clockIn: clockInISO,
+        clockOut: clockOutISO,
         workingHours: editForm.workingHours ? parseFloat(editForm.workingHours) : undefined
       });
       setEditModalOpen(false);
+
       setSelectedRecord(null);
       setAlertMsg('Attendance log updated successfully.');
       fetchLogsAndAnalytics(filtersRef.current);
@@ -687,6 +744,7 @@ const AttendanceAudit = () => {
                   <th className="px-6 py-4 whitespace-nowrap">Date</th>
                   <th className="px-6 py-4 whitespace-nowrap">Clock In</th>
                   <th className="px-6 py-4 whitespace-nowrap">Clock Out</th>
+                  <th className="px-6 py-4 whitespace-nowrap">Work Location</th>
                   <th className="px-6 py-4 whitespace-nowrap">Hours</th>
                   <th className="px-6 py-4 whitespace-nowrap">Status</th>
                   <th className="px-6 py-4 text-right whitespace-nowrap">Action</th>
@@ -695,7 +753,7 @@ const AttendanceAudit = () => {
               <tbody className="divide-y divide-border/25">
                 {filteredLogs.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-6 py-10 text-center text-muted-foreground whitespace-nowrap">
+                    <td colSpan={8} className="px-6 py-10 text-center text-muted-foreground whitespace-nowrap">
                       No attendance logs match selected filters.
                     </td>
                   </tr>
@@ -720,6 +778,9 @@ const AttendanceAudit = () => {
                       </td>
                       <td className="px-6 py-4 font-mono whitespace-nowrap">
                         {!log.clockIn ? '—' : log.clockOut ? new Date(log.clockOut).toLocaleTimeString() : 'Shift Active'}
+                      </td>
+                      <td className="px-6 py-4 font-medium whitespace-nowrap text-muted-foreground">
+                        {log.workLocation === 'OTHER' ? (log.workLocationOther || log.clockInLocation || 'Other') : (log.workLocation || log.clockInLocation || '—')}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         {!log.workingHours || log.workingHours === 0 ? '—' : `${log.workingHours} hrs`}

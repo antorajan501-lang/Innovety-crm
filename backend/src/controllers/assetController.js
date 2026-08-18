@@ -8,6 +8,29 @@ const generateAssetId = async () => {
   return `AST-${number}`;
 };
 
+// Helper to derive serial number prefix from Asset Name -> Model -> Category
+const getSerialPrefix = (name, model, category) => {
+  const target = (name || model || category || 'ASSET').trim();
+
+  if (/macbook\s*pro/i.test(target)) return 'MBP';
+  if (/macbook\s*air/i.test(target)) return 'MBA';
+  if (/macbook/i.test(target)) return 'MB';
+  if (/thinkpad/i.test(target)) return 'TP';
+  if (/dell\s*xps/i.test(target)) return 'XPS';
+
+  const words = target.split(/\s+/).map((w) => w.replace(/[^A-Za-z0-9]/g, '')).filter(Boolean);
+  if (words.length === 0) return 'AST';
+  if (words.length === 1) {
+    return words[0].substring(0, 4).toUpperCase();
+  }
+
+  let prefix = '';
+  for (const w of words) {
+    prefix += w[0].toUpperCase();
+  }
+  return prefix.substring(0, 6);
+};
+
 // Create new asset (Admin / Super Admin)
 const createAsset = async (req, res) => {
   try {
@@ -24,48 +47,126 @@ const createAsset = async (req, res) => {
       location,
       billPhoto,
       status,
-      description
+      description,
+      quantity
     } = req.body;
 
     if (!name || !category) {
       return res.status(400).json({ message: 'Asset name and category are required.' });
     }
 
-    if (serialNumber) {
-      const existingSn = await prisma.asset.findUnique({ where: { serialNumber } });
-      if (existingSn) {
-        return res.status(400).json({ message: 'An asset with this serial number already exists.' });
-      }
+    const qty = quantity !== undefined && quantity !== null && quantity !== '' ? parseInt(quantity, 10) : 1;
+
+    if (isNaN(qty) || qty < 1 || qty > 500) {
+      return res.status(400).json({ message: 'Quantity must be an integer between 1 and 500.' });
     }
 
-    const assetId = await generateAssetId();
+    const parsedPurchaseDate = purchaseDate ? new Date(purchaseDate) : null;
+    const parsedWarrantyExpiry = warrantyExpiry ? new Date(warrantyExpiry) : null;
+    const parsedCost = cost ? parseFloat(cost) : null;
+    const uploadedBillPhoto = billPhoto || (req.file ? `/uploads/attachments/${req.file.filename}` : null);
 
-    const newAsset = await prisma.asset.create({
-      data: {
-        assetId,
-        name,
-        category: category || 'LAPTOP',
-        brand: brand || null,
-        model: model || null,
-        serialNumber: serialNumber || null,
-        purchaseDate: purchaseDate ? new Date(purchaseDate) : null,
-        warrantyExpiry: warrantyExpiry ? new Date(warrantyExpiry) : null,
-        cost: cost ? parseFloat(cost) : null,
-        vendor: vendor || null,
-        location: location || null,
-        billPhoto: billPhoto || (req.file ? `/uploads/attachments/${req.file.filename}` : null),
-        status: status || 'AVAILABLE',
-        description: description || null
+    if (qty === 1) {
+      if (serialNumber) {
+        const existingSn = await prisma.asset.findUnique({ where: { serialNumber } });
+        if (existingSn) {
+          return res.status(400).json({ message: 'An asset with this serial number already exists.' });
+        }
       }
+
+      const assetId = await generateAssetId();
+
+      const newAsset = await prisma.asset.create({
+        data: {
+          assetId,
+          name,
+          category: category || 'LAPTOP',
+          brand: brand || null,
+          model: model || null,
+          serialNumber: serialNumber || null,
+          purchaseDate: parsedPurchaseDate,
+          warrantyExpiry: parsedWarrantyExpiry,
+          cost: parsedCost,
+          vendor: vendor || null,
+          location: location || null,
+          billPhoto: uploadedBillPhoto,
+          status: status || 'AVAILABLE',
+          description: description || null,
+          quantity: 1
+        }
+      });
+
+      await logActivity({
+        userId: req.user.id,
+        action: 'ASSET_CREATED',
+        details: `Created new asset "${newAsset.name}" (${assetId})`
+      });
+
+      return res.status(201).json({
+        success: true,
+        created: 1,
+        message: '1 asset created successfully',
+        ...newAsset
+      });
+    }
+
+    // Bulk creation (qty > 1)
+    const prefix = getSerialPrefix(name, model, category);
+
+    const createdAssets = await prisma.$transaction(async (tx) => {
+      const baseCount = await tx.asset.count();
+      const assetsToCreate = [];
+
+      let seq = 1;
+      while (true) {
+        const testSn = `AUTO-${prefix}-${String(seq).padStart(3, '0')}`;
+        const existing = await tx.asset.findUnique({ where: { serialNumber: testSn } });
+        if (!existing) break;
+        seq++;
+      }
+
+      for (let i = 0; i < qty; i++) {
+        const currentNum = 1001 + baseCount + i;
+        const assetId = `AST-${currentNum}`;
+        const autoSn = `AUTO-${prefix}-${String(seq + i).padStart(3, '0')}`;
+
+        const assetData = {
+          assetId,
+          name,
+          category: category || 'LAPTOP',
+          brand: brand || null,
+          model: model || null,
+          serialNumber: autoSn,
+          purchaseDate: parsedPurchaseDate,
+          warrantyExpiry: parsedWarrantyExpiry,
+          cost: parsedCost,
+          vendor: vendor || null,
+          location: location || null,
+          billPhoto: uploadedBillPhoto,
+          status: status || 'AVAILABLE',
+          description: description || null,
+          quantity: qty
+        };
+
+        const created = await tx.asset.create({ data: assetData });
+        assetsToCreate.push(created);
+      }
+
+      return assetsToCreate;
     });
 
     await logActivity({
       userId: req.user.id,
-      action: 'ASSET_CREATED',
-      details: `Created new asset "${newAsset.name}" (${assetId})`
+      action: 'ASSET_BULK_CREATED',
+      details: `Created ${qty} assets for "${name}" (Quantity: ${qty})`
     });
 
-    res.status(201).json(newAsset);
+    return res.status(201).json({
+      success: true,
+      created: qty,
+      message: `${qty} assets created successfully`,
+      assets: createdAssets
+    });
   } catch (error) {
     console.error('Create asset error:', error);
     res.status(500).json({ message: 'Failed to create asset.' });
@@ -437,20 +538,21 @@ const deleteAsset = async (req, res) => {
 // Get asset KPI statistics for dashboard
 const getAssetAnalytics = async (req, res) => {
   try {
-    const [totalAssets, availableAssets, assignedAssets, maintenanceAssets, damagedAssets] = await Promise.all([
-      prisma.asset.count(),
-      prisma.asset.count({ where: { status: 'AVAILABLE' } }),
-      prisma.asset.count({ where: { status: 'ASSIGNED' } }),
-      prisma.asset.count({ where: { status: 'MAINTENANCE' } }),
-      prisma.asset.count({ where: { status: 'DAMAGED' } })
-    ]);
+    const totalAssets = await prisma.asset.count();
+    const assignedAssets = await prisma.asset.count({
+      where: {
+        OR: [
+          { status: 'ASSIGNED' },
+          { NOT: { assignedToId: null } }
+        ]
+      }
+    });
+    const availableAssets = Math.max(0, totalAssets - assignedAssets);
 
     res.json({
       totalAssets,
       availableAssets,
-      assignedAssets,
-      maintenanceAssets,
-      damagedAssets
+      assignedAssets
     });
   } catch (error) {
     console.error('Get asset analytics error:', error);

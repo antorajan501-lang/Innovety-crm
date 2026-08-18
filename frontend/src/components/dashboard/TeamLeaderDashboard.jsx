@@ -7,6 +7,7 @@ import api, { getSocket } from '../../services/api';
 import UserAvatar from '../common/UserAvatar';
 import TeamLeaderLeaveWidget from './TeamLeaderLeaveWidget';
 import LeaveOverviewCard from './LeaveOverviewCard';
+import ClockInModal from '../attendance/ClockInModal';
 import {
   Clock,
   CheckCircle2,
@@ -279,19 +280,10 @@ export const TeamLeaderDashboard = () => {
     }
   };
 
-  const handleClockIn = async () => {
-    try {
-      setClockLoading(true);
-      setAttendanceAlert('');
-      const res = await api.post('/attendance/clock-in');
-      setClockedRecord(res.data.record || res.data);
-      setAttendanceAlert('Successfully clocked in for today!');
-      fetchTLDashboardData();
-    } catch (err) {
-      setAttendanceAlert(err.response?.data?.message || 'Clock in failed.');
-    } finally {
-      setClockLoading(false);
-    }
+  const [isClockInModalOpen, setIsClockInModalOpen] = useState(false);
+
+  const handleClockIn = () => {
+    setIsClockInModalOpen(true);
   };
 
   const handleClockOut = async () => {
@@ -318,6 +310,7 @@ export const TeamLeaderDashboard = () => {
         startDate: leaveForm.startDate,
         endDate: leaveForm.endDate,
         leaveType: leaveForm.type,
+        payType: leaveForm.payType || (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(leaveForm.type) ? 'UNPAID' : 'PAID'),
         type: leaveForm.type,
         reason: leaveForm.reason,
         contactPhone: leaveForm.contactPhone
@@ -1330,6 +1323,14 @@ export const TeamLeaderDashboard = () => {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Clock In Modal */}
+      <ClockInModal
+        isOpen={isClockInModalOpen}
+        onClose={() => setIsClockInModalOpen(false)}
+        onSuccess={() => fetchTLDashboardData()}
+        user={user}
+      />
     </motion.div>
   );
 };

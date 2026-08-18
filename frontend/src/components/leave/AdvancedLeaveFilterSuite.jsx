@@ -109,6 +109,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
   const [toDate, setToDate] = useState('');
   const [statusTab, setStatusTab] = useState('ALL');
   const [typeFilter, setTypeFilter] = useState('ALL');
+  const [payTypeFilter, setPayTypeFilter] = useState('ALL');
   const [departmentFilter, setDepartmentFilter] = useState('ALL');
   const [search, setSearch] = useState('');
 
@@ -138,6 +139,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
     setToDate('');
     setStatusTab('ALL');
     setTypeFilter('ALL');
+    setPayTypeFilter('ALL');
     setDepartmentFilter('ALL');
     setSearch('');
     setCurrentPage(1);
@@ -162,6 +164,10 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
       // 2. Leave Type Filter
       const lType = (l.leaveType || l.type || 'CASUAL').toUpperCase();
       if (typeFilter !== 'ALL' && lType !== typeFilter) return false;
+
+      // 2.5 Pay Type Filter (Stored DB value or derived)
+      const lPayType = (l.payType || (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(lType) ? 'UNPAID' : 'PAID')).toUpperCase();
+      if (payTypeFilter !== 'ALL' && lPayType !== payTypeFilter) return false;
 
       // 3. Department Filter
       const userDept = l.user?.department || 'General';
@@ -193,7 +199,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
 
       return true;
     });
-  }, [leaves, statusTab, typeFilter, departmentFilter, search, fromDate, toDate]);
+  }, [leaves, statusTab, typeFilter, payTypeFilter, departmentFilter, search, fromDate, toDate]);
 
   // Dashboard Metrics
   const metrics = useMemo(() => {
@@ -622,8 +628,8 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
           </div>
         </div>
 
-        {/* Row 2: Status, Leave Type, Department, Search & Clear Filters */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-2 border-t border-border/40 items-center">
+        {/* Row 2: Status, Leave Type, Pay Type, Department, Search & Clear Filters */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5 pt-2 border-t border-border/40 items-center">
           {/* Status Dropdown */}
           <div>
             <select
@@ -649,6 +655,19 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
               {LEAVE_TYPES.map(t => (
                 <option key={t.id} value={t.id}>{t.label}</option>
               ))}
+            </select>
+          </div>
+
+          {/* Pay Type Dropdown */}
+          <div>
+            <select
+              value={payTypeFilter}
+              onChange={(e) => { setPayTypeFilter(e.target.value); setCurrentPage(1); }}
+              className="w-full h-9 bg-muted/30 border border-border/60 rounded-xl px-3 py-1.5 text-xs text-foreground font-bold cursor-pointer focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="ALL">All Pay Types</option>
+              <option value="PAID">Paid</option>
+              <option value="UNPAID">Unpaid</option>
             </select>
           </div>
 
@@ -681,7 +700,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
           <div className="flex justify-end sm:col-span-2 lg:col-span-1">
             <button
               onClick={handleClearFilters}
-              disabled={!(fromDate || toDate || quickFilter !== 'ALL' || statusTab !== 'ALL' || typeFilter !== 'ALL' || departmentFilter !== 'ALL' || search)}
+              disabled={!(fromDate || toDate || quickFilter !== 'ALL' || statusTab !== 'ALL' || typeFilter !== 'ALL' || payTypeFilter !== 'ALL' || departmentFilter !== 'ALL' || search)}
               className="h-9 px-4 rounded-xl text-xs font-bold text-rose-600 hover:text-rose-700 disabled:opacity-40 flex items-center justify-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition-all cursor-pointer w-full lg:w-auto"
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -707,6 +726,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                   <tr className="border-b border-border/60 bg-muted/20 text-xs font-black text-muted-foreground uppercase tracking-wider">
                     <th className="py-4 px-6 min-w-[200px]">Applicant</th>
                     <th className="py-4 px-4">Type</th>
+                    <th className="py-4 px-4">Pay Type</th>
                     <th className="py-4 px-4">Leave Duration</th>
                     <th className="py-4 px-4 w-72 max-w-[320px]">Reason</th>
                     <th className="py-4 px-5">Status</th>
@@ -715,6 +735,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                 <tbody className="divide-y divide-border/40 text-xs sm:text-sm">
                   {paginatedLeaves.map((leave) => {
                     const lType = leave.leaveType || leave.type || 'CASUAL';
+                    const lPayType = (leave.payType || (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(lType.toUpperCase()) ? 'UNPAID' : 'PAID')).toUpperCase();
                     const durationDisplay = getDurationDisplay(leave);
 
                     return (
@@ -750,6 +771,17 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                               : 'bg-primary/10 text-primary border-primary/20'
                           }`}>
                             {lType}
+                          </span>
+                        </td>
+
+                        {/* Pay Type */}
+                        <td className="py-4 px-4 whitespace-nowrap">
+                          <span className={`inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-extrabold font-mono uppercase border ${
+                            lPayType === 'UNPAID'
+                              ? 'bg-amber-500/10 text-amber-600 border-amber-500/20'
+                              : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                          }`}>
+                            {lPayType}
                           </span>
                         </td>
 
@@ -889,11 +921,22 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
             )}
 
             {/* Overview Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="p-3 rounded-2xl bg-muted/30 border border-border/40 space-y-0.5">
                 <span className="text-[10px] font-bold text-muted-foreground uppercase block">Leave Type</span>
                 <span className="text-xs font-mono font-extrabold text-foreground block">
                   {selectedLeave.leaveType || selectedLeave.type || 'CASUAL'}
+                </span>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-muted/30 border border-border/40 space-y-0.5">
+                <span className="text-[10px] font-bold text-muted-foreground uppercase block">Pay Type</span>
+                <span className={`text-xs font-mono font-extrabold block ${
+                  (selectedLeave.payType || (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes((selectedLeave.leaveType || selectedLeave.type || 'CASUAL').toUpperCase()) ? 'UNPAID' : 'PAID')).toUpperCase() === 'UNPAID'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400'
+                }`}>
+                  {(selectedLeave.payType || (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes((selectedLeave.leaveType || selectedLeave.type || 'CASUAL').toUpperCase()) ? 'UNPAID' : 'PAID')).toUpperCase()}
                 </span>
               </div>
 
@@ -904,7 +947,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'ADMIN', onRefresh }
                 </span>
               </div>
 
-              <div className="p-3 rounded-2xl bg-muted/30 border border-border/40 col-span-2 sm:col-span-1 space-y-0.5">
+              <div className="p-3 rounded-2xl bg-muted/30 border border-border/40 space-y-0.5">
                 <span className="text-[10px] font-bold text-muted-foreground uppercase block">Status</span>
                 <span className="text-xs font-bold text-foreground block">
                   {selectedLeave.status}

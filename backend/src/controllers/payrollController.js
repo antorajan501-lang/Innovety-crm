@@ -1,37 +1,62 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
+const { isPayrollEligibleUser } = require('../utils/payrollHelper');
 const crypto = require('crypto');
 
 // Helper to calculate itemized salary for a user in a given month/year
-const calculateUserPayroll = async (user, month, year, settings) => {
+const calculateUserPayroll = async (user, month, year, inputSettings) => {
   const startDate = new Date(Date.UTC(year, month - 1, 1));
   const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59));
   const workingDays = endDate.getUTCDate();
 
-  // 1. Fetch user's salary structure
-  let structure = await prisma.salaryStructure.findUnique({
+  const settings = inputSettings || (await prisma.systemSettings.findFirst()) || {};
+
+  // 1. Fetch user's assigned salary structure (NO fallback to template)
+  const structure = await prisma.salaryStructure.findUnique({
     where: { userId: user.id },
     include: { template: true }
   });
 
   if (!structure) {
-    structure = {
+    return {
+      userId: user.id,
+      month,
+      year,
       basicSalary: 0,
       hra: 0,
       da: 0,
-      specialAllowance: 0,
-      travelAllowance: 0,
-      medicalAllowance: 0,
-      otherAllowances: 0,
-      bonus: 0,
-      pfDeduction: 0,
-      esiDeduction: 0,
-      profTax: 0,
-      incomeTax: 0,
-      otherDeductions: 0,
+      allowancesJson: {
+        structureAssigned: false,
+        remark: 'Salary Structure Not Assigned',
+        specialAllowance: 0,
+        travelAllowance: 0,
+        medicalAllowance: 0,
+        otherAllowances: 0,
+        bonus: 0
+      },
+      deductionsJson: {
+        pfDeduction: 0,
+        esiDeduction: 0,
+        profTax: 0,
+        incomeTax: 0,
+        otherDeductions: 0,
+        leaveDeduction: 0,
+        lateDeduction: 0
+      },
       grossSalary: 0,
-      netSalary: 0
+      netSalary: 0,
+      workingDays,
+      presentDays: 0,
+      paidLeaveDays: 0,
+      unpaidAbsentDays: 0,
+      wfhDays: 0,
+      overtimeHours: 0,
+      overtimePay: 0,
+      holidayDaysWorked: 0,
+      holidayPay: 0,
+      lateDeduction: 0,
+      qrCodeHash: null
     };
   }
 
@@ -45,14 +70,33 @@ const calculateUserPayroll = async (user, month, year, settings) => {
 
   let presentDays = 0;
   let lateCount = 0;
+  let explicitAbsentDays = 0;
+  let halfDays = 0;
+  let attWfhDays = 0;
 
   attendances.forEach(att => {
-    if (att.status === 'PRESENT') presentDays += 1;
-    else if (att.status === 'LATE') {
+    if (att.status === 'PRESENT') {
+      presentDays += 1;
+    } else if (att.status === 'LATE') {
       presentDays += 1;
       lateCount += 1;
-    } else if (att.status === 'HALF_DAY') presentDays += 0.5;
+    } else if (att.status === 'HALF_DAY') {
+      presentDays += 0.5;
+      halfDays += 1;
+    } else if (att.status === 'ABSENT') {
+      explicitAbsentDays += 1;
+    } else if (att.status === 'WORK_FROM_HOME' || att.status === 'WFH') {
+      attWfhDays += 1;
+    }
   });
+
+  // Fetch company holidays in selected month
+  const holidays = await prisma.holidayCalendar.findMany({
+    where: {
+      date: { gte: startDate, lte: endDate }
+    }
+  });
+  const holidayDatesStr = new Set(holidays.map(h => new Date(h.date).toISOString().split('T')[0]));
 
   // 3. Fetch live Leave requests for month
   const leaves = await prisma.leaveRequest.findMany({
@@ -67,35 +111,51 @@ const calculateUserPayroll = async (user, month, year, settings) => {
   });
 
   let paidLeaveDays = 0;
-  let wfhDays = 0;
+  let leaveWfhDays = 0;
+  let unpaidLeaveDays = 0;
 
   leaves.forEach(l => {
     const lType = (l.leaveType || l.type || 'CASUAL').toUpperCase();
-    const days = Number(l.totalDays) || 1;
-    if (lType === 'WFH') wfhDays += days;
-    else paidLeaveDays += days;
+    const isUnpaid = l.payType === 'UNPAID' || ['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(lType);
+
+    const rawStart = new Date(l.startDate);
+    const rawEnd = new Date(l.endDate || l.startDate);
+
+    const lStart = new Date(Math.max(startDate.getTime(), Date.UTC(rawStart.getFullYear(), rawStart.getMonth(), rawStart.getDate())));
+    const lEnd = new Date(Math.min(endDate.getTime(), Date.UTC(rawEnd.getFullYear(), rawEnd.getMonth(), rawEnd.getDate())));
+
+    let curr = new Date(lStart);
+    while (curr <= lEnd) {
+      const dateStr = curr.toISOString().split('T')[0];
+      const isSunday = curr.getUTCDay() === 0;
+      const isCompanyHoliday = holidayDatesStr.has(dateStr);
+
+      if (!isSunday && !isCompanyHoliday) {
+        if (lType === 'WFH') {
+          leaveWfhDays += 1;
+        } else if (isUnpaid) {
+          unpaidLeaveDays += 1;
+        } else {
+          paidLeaveDays += 1;
+        }
+      }
+      curr.setUTCDate(curr.getUTCDate() + 1);
+    }
   });
 
-  const unpaidAbsentDays = Math.max(0, workingDays - (presentDays + paidLeaveDays + wfhDays));
+  const wfhDays = attWfhDays + leaveWfhDays;
+  const unpaidAbsentDays = explicitAbsentDays + (halfDays * 0.5) + unpaidLeaveDays;
 
   // 4. Overtime & Holiday Work Calculations
   let overtimeHours = 0;
   let holidayDaysWorked = 0;
-
-  const holidays = await prisma.holidayCalendar.findMany({
-    where: {
-      date: { gte: startDate, lte: endDate }
-    }
-  });
-
-  const holidayDatesStr = holidays.map(h => new Date(h.date).toISOString().split('T')[0]);
 
   attendances.forEach(att => {
     const attDateStr = new Date(att.date).toISOString().split('T')[0];
     if (att.workingHours && att.workingHours > 8) {
       overtimeHours += (att.workingHours - 8);
     }
-    if (holidayDatesStr.includes(attDateStr) && ['PRESENT', 'LATE', 'WORK_FROM_HOME'].includes(att.status)) {
+    if (holidayDatesStr.has(attDateStr) && ['PRESENT', 'LATE', 'WORK_FROM_HOME'].includes(att.status)) {
       holidayDaysWorked += 1;
     }
   });
@@ -154,13 +214,13 @@ const calculateUserPayroll = async (user, month, year, settings) => {
 // 1. Process Monthly Payroll (Draft / Preview)
 const processPayrollBatch = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({ message: 'Only Administrators can process payroll.' });
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only Administrators can process payroll.' });
     }
 
     const { month, year, userIds } = req.body;
     if (!month || !year) {
-      return res.status(400).json({ message: 'Month and year parameters are required.' });
+      return res.status(400).json({ success: false, message: 'Month and year parameters are required.' });
     }
 
     const m = Number(month);
@@ -172,7 +232,8 @@ const processPayrollBatch = async (req, res) => {
     if (Array.isArray(userIds) && userIds.length > 0) {
       targetUsers = await prisma.user.findMany({ where: { id: { in: userIds } } });
     } else {
-      targetUsers = await prisma.user.findMany({ where: { status: 'ACTIVE' } });
+      const allActive = await prisma.user.findMany({ where: { status: 'ACTIVE' } });
+      targetUsers = allActive.filter(isPayrollEligibleUser);
     }
 
     // Check existing batch
@@ -181,7 +242,7 @@ const processPayrollBatch = async (req, res) => {
     });
 
     if (batch && ['LOCKED', 'PUBLISHED', 'COMPLETED'].includes(batch.status)) {
-      return res.status(400).json({ message: `Payroll batch for ${m}/${y} is locked or published (${batch.status}). Unlock or Rollback first.` });
+      return res.status(400).json({ success: false, message: `Payroll batch for ${m}/${y} is locked or published (${batch.status}). Unlock or Rollback first.` });
     }
 
     let totalGross = 0;
@@ -251,22 +312,31 @@ const processPayrollBatch = async (req, res) => {
       }
     });
 
-    res.json(fullBatch);
+    res.json({
+      success: true,
+      batch: fullBatch,
+      ...fullBatch
+    });
   } catch (error) {
     console.error('Process payroll batch error:', error);
-    res.status(500).json({ message: 'Failed to process payroll batch.' });
+    res.status(500).json({ success: false, message: error.message || 'Failed to process payroll batch.' });
   }
 };
 
-// 2. Get All Payroll Batches
+// 2. Get All Payroll Batches (Admin / Super Admin Only)
 const getPayrollBatches = async (req, res) => {
   try {
-    const userRole = req.user.role;
-    if (userRole === 'INTERN' || userRole === 'EMPLOYEE') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
+    const { month, year } = req.query;
+    const where = {};
+    if (month) where.month = Number(month);
+    if (year) where.year = Number(year);
+
     const batches = await prisma.payrollBatch.findMany({
+      where,
       include: {
         processedBy: { select: { id: true, name: true, role: true } }
       },
@@ -280,9 +350,13 @@ const getPayrollBatches = async (req, res) => {
   }
 };
 
-// 3. Get Single Payroll Batch by ID
+// 3. Get Single Payroll Batch by ID (Admin / Super Admin Only)
 const getPayrollBatchById = async (req, res) => {
   try {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Access denied.' });
+    }
+
     const { id } = req.params;
     const batch = await prisma.payrollBatch.findUnique({
       where: { id },
@@ -307,10 +381,10 @@ const getPayrollBatchById = async (req, res) => {
   }
 };
 
-// 4. Lock Payroll Batch (Admin Only)
+// 4. Lock Payroll Batch (Admin / Super Admin Only)
 const lockPayrollBatch = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can lock payroll.' });
     }
 
@@ -344,10 +418,10 @@ const lockPayrollBatch = async (req, res) => {
   }
 };
 
-// 5. Review Payroll Batch (Admin Only)
+// 5. Review Payroll Batch (Admin / Super Admin Only)
 const reviewPayrollBatch = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can review payroll.' });
     }
 
@@ -364,10 +438,10 @@ const reviewPayrollBatch = async (req, res) => {
   }
 };
 
-// 6. Publish Payroll Batch & Payslips (Admin Only)
+// 6. Publish Payroll Batch & Payslips (Admin / Super Admin Only)
 const publishPayrollBatch = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can publish payroll.' });
     }
 
@@ -415,19 +489,28 @@ const publishPayrollBatch = async (req, res) => {
   }
 };
 
-// 7. Rollback Payroll Batch (Admin Only)
+// 7. Rollback Payroll Batch (Admin / Super Admin Only)
 const rollbackPayrollBatch = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
-      return res.status(403).json({ message: 'Only Administrators can rollback payroll.' });
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
+      return res.status(403).json({ success: false, message: 'Only Administrators can rollback payroll.' });
     }
 
     const { id } = req.params;
     const batch = await prisma.payrollBatch.findUnique({ where: { id } });
-    if (!batch) return res.status(404).json({ message: 'Batch not found.' });
+    if (!batch) return res.status(404).json({ success: false, message: 'Batch not found.' });
+
+    if (batch.status === 'PUBLISHED') {
+      return res.status(400).json({ success: false, message: 'Published payroll batches cannot be rolled back.' });
+    }
 
     await prisma.payrollBatch.update({
       where: { id },
+      data: { status: 'ROLLED_BACK' }
+    });
+
+    await prisma.payslip.updateMany({
+      where: { batchId: id },
       data: { status: 'ROLLED_BACK' }
     });
 
@@ -437,14 +520,32 @@ const rollbackPayrollBatch = async (req, res) => {
       details: `Rolled back payroll batch for ${batch.month}/${batch.year}`
     });
 
-    res.json({ message: `Payroll batch for ${batch.month}/${batch.year} rolled back successfully.` });
+    const fullBatch = await prisma.payrollBatch.findUnique({
+      where: { id: batch.id },
+      include: {
+        processedBy: { select: { id: true, name: true, role: true } },
+        payslips: {
+          include: {
+            user: { select: { id: true, name: true, email: true, employeeId: true, role: true, department: true } }
+          }
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      message: `Payroll batch for ${batch.month}/${batch.year} rolled back successfully.`,
+      batch: fullBatch,
+      ...fullBatch
+    });
   } catch (error) {
     console.error('Rollback payroll batch error:', error);
-    res.status(500).json({ message: 'Failed to rollback payroll batch.' });
+    res.status(500).json({ success: false, message: error.message || 'Failed to rollback payroll batch.' });
   }
 };
 
 module.exports = {
+  calculateUserPayroll,
   processPayrollBatch,
   getPayrollBatches,
   getPayrollBatchById,

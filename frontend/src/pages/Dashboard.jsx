@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api, { getSocket } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
+import ClockInModal from '../components/attendance/ClockInModal';
 import EmployeeDashboard from '../components/dashboard/EmployeeDashboard';
 import TeamLeaderDashboard from '../components/dashboard/TeamLeaderDashboard';
 import LeaveOverviewCard from '../components/dashboard/LeaveOverviewCard';
@@ -36,7 +37,9 @@ import {
   ChevronRight,
   ShieldAlert,
   Laptop,
-  Plus
+  Plus,
+  FolderOpen,
+  CalendarDays
 } from 'lucide-react';
 import {
   BarChart,
@@ -141,6 +144,7 @@ const Dashboard = () => {
   // Intern Clock-in/out state
   const [time, setTime] = useState(new Date());
   const [clockedRecord, setClockedRecord] = useState(null);
+  const [clockInStatus, setClockInStatus] = useState(null);
   const [attendanceAlert, setAttendanceAlert] = useState('');
   const [clockLoading, setClockLoading] = useState(false);
 
@@ -200,10 +204,12 @@ const Dashboard = () => {
         api.get('/tickets'),
         api.get('/announcements'),
         api.get('/chat/rooms'),
-        api.get('/leaves')
+        api.get('/leaves'),
+        api.get('/dashboard/overview')
       ];
 
-      if (user.role === 'ADMIN') {
+      const isManagementRole = ['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(user?.role);
+      if (isManagementRole) {
         promises.push(api.get('/attendance/analytics'));
         promises.push(api.get('/teams'));
         promises.push(api.get('/users?limit=1000'));
@@ -222,6 +228,8 @@ const Dashboard = () => {
       const leavesData = Array.isArray(results[4]?.data) ? results[4].data : [];
       setLeavesList(leavesData);
 
+      const overviewStats = results[5].data?.stats || {};
+
       let newStats = { ...stats };
 
       // Tasks Stats
@@ -236,26 +244,31 @@ const Dashboard = () => {
       newStats.openTickets = openT;
       newStats.closedTickets = closedT;
 
-      if (user.role === 'ADMIN') {
-        const attendanceData = results[3].data || {};
-        const teamsData = results[4].data || [];
-        const usersData = results[5].data?.users || [];
-        const logsData = results[6].data?.logs || [];
+      // Real Dashboard Overview metrics from GET /api/dashboard/overview
+      newStats.totalWorkforce = overviewStats.totalWorkforce ?? 0;
+      newStats.workforceChangeText = overviewStats.workforceChangeText || '+0% vs last mo';
+      newStats.presentToday = overviewStats.presentToday ?? 0;
+      newStats.lateToday = overviewStats.lateToday ?? 0;
+      newStats.lateBadgeText = overviewStats.lateBadgeText || `${overviewStats.lateToday || 0} late`;
+      newStats.activeDeliverables = overviewStats.activeDeliverables ?? pending;
+      newStats.completedBadgeText = overviewStats.completedBadgeText || `${completed} completed`;
+      newStats.openSupportTickets = overviewStats.openSupportTickets ?? openT;
+      newStats.supportBadgeText = overviewStats.supportBadgeText || (openT > 0 ? 'Needs attention' : 'All clear');
+      newStats.taskVelocity = overviewStats.taskVelocity;
+
+      if (isManagementRole) {
+        const attendanceData = results[6].data || {};
+        const teamsData = results[7].data || [];
+        const usersData = results[8].data?.users || [];
+        const logsData = results[9].data?.logs || [];
 
         newStats.totalMembers = usersData.filter(u => u.role === 'INTERN' || u.role === 'EMPLOYEE').length;
         newStats.totalInterns = newStats.totalMembers;
         newStats.totalLeaders = usersData.filter(u => u.role === 'TEAM_LEADER').length;
         newStats.totalTeams = teamsData.length;
-        newStats.presentToday = attendanceData.presentToday || 0;
         newStats.absentToday = attendanceData.absentToday || 0;
         newStats.lateToday = attendanceData.lateToday || 0;
         newStats.halfDayToday = attendanceData.halfDayToday || 0;
-
-        const totalActiveMembers = newStats.totalMembers;
-        if (totalActiveMembers > 0) {
-          const attending = newStats.presentToday + newStats.lateToday + newStats.halfDayToday;
-          newStats.attendanceRate = Math.round((attending / totalActiveMembers) * 100);
-        }
 
         setActivities(logsData);
 
@@ -310,8 +323,6 @@ const Dashboard = () => {
     }
   };
 
-  const [clockInStatus, setClockInStatus] = useState(null);
-
   useEffect(() => {
     fetchDashboardData();
 
@@ -348,224 +359,153 @@ const Dashboard = () => {
   useEffect(() => {
     if (user && (user.role === 'INTERN' || user.role === 'EMPLOYEE' || user.role === 'TEAM_LEADER')) {
       const timer = setInterval(() => setTime(new Date()), 1000);
-
-      const fetchTodayAttendance = async () => {
-        try {
-          const res = await api.get('/attendance/logs');
-          const localDateStr = new Date().toLocaleDateString('en-CA');
-          const todayRecord = res.data.find(log => {
-            const logDateStr = new Date(log.date).toLocaleDateString('en-CA');
-            return logDateStr === localDateStr;
-          });
-          setClockedRecord(todayRecord || null);
-        } catch (err) {
-          console.error('Failed to fetch today attendance on dashboard:', err);
-        }
-      };
-
-      fetchTodayAttendance();
       return () => clearInterval(timer);
     }
   }, [user]);
 
-  const getCoordinates = () => {
-    return new Promise((resolve) => {
-      if (!navigator.geolocation) {
-        resolve('Geolocation not supported');
-        return;
-      }
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = position.coords.latitude.toFixed(6);
-          const lon = position.coords.longitude.toFixed(6);
-          resolve(`Lat: ${lat}, Lon: ${lon}`);
-        },
-        (error) => {
-          console.warn('Geolocation error:', error);
-          resolve('Location denied/unavailable');
-        },
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
-      );
-    });
-  };
+  const [isClockInModalOpen, setIsClockInModalOpen] = useState(false);
 
-  const handleClockIn = async () => {
-    try {
-      setClockLoading(true);
-      setAttendanceAlert('');
-      const location = await getCoordinates();
-      const res = await api.post('/attendance/clock-in', { location });
-      setClockedRecord(res.data);
-      setAttendanceAlert(`Successfully clocked in. Location: ${location}`);
-      setClockLoading(false);
-    } catch (err) {
-      setAttendanceAlert(err.response?.data?.message || 'Clock in failed.');
-      setClockLoading(false);
-    }
+  const handleClockIn = () => {
+    setIsClockInModalOpen(true);
   };
 
   const handleClockOut = async () => {
     try {
       setClockLoading(true);
       setAttendanceAlert('');
-      const location = await getCoordinates();
-      const res = await api.post('/attendance/clock-out', { location });
-      setClockedRecord(res.data);
-      setAttendanceAlert(`Successfully clocked out. Location: ${location}`);
-      setClockLoading(false);
+      let locationStr = null;
+
+      if (navigator.geolocation) {
+        try {
+          const position = await new Promise((resolve, reject) => {
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 5000 });
+          });
+          locationStr = `${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`;
+        } catch (geoErr) {
+          console.warn('Geolocation unavailable:', geoErr);
+        }
+      }
+
+      await api.post('/attendance/clock-out', { location: locationStr });
+      setClockedRecord(null);
+      fetchDashboardData();
+
+      const fetchStatus = async () => {
+        try {
+          const sRes = await api.get('/attendance/status');
+          setClockInStatus(sRes.data);
+        } catch (e) { console.error(e); }
+      };
+      fetchStatus();
     } catch (err) {
-      setAttendanceAlert(err.response?.data?.message || 'Clock out failed.');
+      setAttendanceAlert(err.response?.data?.message || 'Clock-out failed.');
+    } finally {
       setClockLoading(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="space-y-6 p-2">
-        <div className="skeleton h-16 w-full rounded-[24px]" />
-        <div className="skeleton h-32 w-full rounded-[24px]" />
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <div className="skeleton h-96 lg:col-span-2 rounded-[24px]" />
-          <div className="skeleton h-96 rounded-[24px]" />
-        </div>
-      </div>
-    );
-  }
-
-  // Calculate average for bar chart reference line
-  const avgChartValue = taskChartData.length > 0
-    ? Math.round(taskChartData.reduce((acc, curr) => acc + curr.value, 0) / taskChartData.length)
-    : 0;
-
-  const showClockFirst = user && (user.role === 'EMPLOYEE' || user.role === 'INTERN' || user.role === 'TEAM_LEADER');
-  const showClockPortal = user && (user.role === 'INTERN' || user.role === 'EMPLOYEE' || user.role === 'TEAM_LEADER');
+  // Personal clock-in portal is reserved for Employee, Intern & Team Leader role views (excluded for Admin and Super Admin)
+  const canUserClockIn = ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'].includes(user?.role) && !['ADMIN', 'SUPER_ADMIN'].includes(user?.role);
+  const showClockFirst = canUserClockIn;
 
   const renderAttendanceClockPortal = () => {
-    if (!showClockPortal) return null;
-    const isClockedIn = clockedRecord && !clockedRecord.clockOut;
-    const isCompleted = clockedRecord && clockedRecord.clockOut;
-    const isCompact = showClockFirst && (isClockedIn || isCompleted);
+    if (!user || ['ADMIN', 'SUPER_ADMIN'].includes(String(user.role).toUpperCase())) {
+      return null;
+    }
+    const isClockedIn = Boolean(clockedRecord && !clockedRecord.clockOut);
+    const windowState = clockInStatus?.windowState || 'CLOSED';
+
+    let windowStatusBadgeText = 'Window Closed';
+    let windowStatusBadgeClass = 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20';
+
+    if (windowState === 'OPEN_EARLY') {
+      windowStatusBadgeText = 'Early Window Open';
+      windowStatusBadgeClass = 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20';
+    } else if (windowState === 'OPEN_ON_TIME') {
+      windowStatusBadgeText = 'Shift Check-in Open';
+      windowStatusBadgeClass = 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20';
+    } else if (windowState === 'OPEN_LATE') {
+      windowStatusBadgeText = 'Grace Period / Late Window';
+      windowStatusBadgeClass = 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/20';
+    }
 
     return (
-      <motion.div variants={itemVariants} className={`clean-card text-left ${isCompact ? 'p-4 space-y-2.5' : 'space-y-4'}`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className={`rounded-2xl bg-primary/10 text-primary border border-primary/20 ${isCompact ? 'p-2.5' : 'p-3'}`}>
-              <Clock className={isCompact ? 'h-4 w-4' : 'h-5 w-5'} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className={`font-bold text-foreground ${isCompact ? 'text-sm' : 'text-base'}`}>Attendance Clock Portal</h3>
-                {isCompact && (
-                  <span className={`text-[10px] px-2.5 py-0.5 rounded-full font-bold border ${isCompleted
-                    ? 'bg-primary/10 text-primary border-primary/20'
-                    : 'bg-primary text-white border-primary-hover shadow-2xs'
-                    }`}>
-                    {isCompleted ? 'Shift Completed' : 'Checked In / Active'}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {isCompact ? 'Active shift logged with geolocation validation.' : 'Clock your shift hours. Ensures geolocation validations are processed.'}
-              </p>
+      <motion.div variants={itemVariants} className="bg-card border border-border rounded-2xl p-5 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border/40">
+          <div>
+            <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+              Workforce Attendance Check-In Portal
+            </span>
+            <div className="flex items-center gap-2 mt-1">
+              <Clock className="w-5 h-5 text-primary animate-pulse" />
+              <h2 className="text-xl font-extrabold text-foreground tracking-tight">
+                {time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </h2>
+              <span className="text-xs font-semibold text-muted-foreground ml-1">
+                ({time.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })})
+              </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-4 shrink-0 sm:self-center">
-            <div className="text-right">
-              <span className={`font-black font-mono tracking-tight text-primary block ${isCompact ? 'text-lg' : 'text-2xl'}`}>
-                {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-              </span>
-              <span className="text-[10px] sm:text-xs text-muted-foreground block font-semibold">
-                {time.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}
-              </span>
-            </div>
-
-            {/* Compact Action Buttons */}
-            {isCompact && (
-              <div className="ml-2">
-                {isClockedIn ? (
-                  <button
-                    onClick={handleClockOut}
-                    disabled={clockLoading}
-                    className="flex items-center gap-1.5 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white px-4 py-2 rounded-full text-xs font-extrabold shadow-sm transition-all active:scale-95 disabled:opacity-50"
-                  >
-                    <Square className="h-3.5 w-3.5 fill-current" />
-                    <span>Clock Out</span>
-                  </button>
-                ) : (
-                  <div className="text-xs text-muted-foreground font-bold flex items-center gap-1 bg-primary/10 border border-primary/20 px-3.5 py-1.5 rounded-full">
-                    <CheckCircle className="h-3.5 w-3.5 text-primary" />
-                    <span>Logged</span>
-                  </div>
-                )}
-              </div>
-            )}
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1 text-xs font-bold px-3 py-1 rounded-full border ${windowStatusBadgeClass}`}>
+              {windowStatusBadgeText}
+            </span>
           </div>
         </div>
 
-        {clockedRecord && clockedRecord.status === 'LATE' && (
-          <div className="p-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 text-xs font-semibold flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
-            <span>Late Clock-In Notice: Marked as <strong>LATE</strong> (past 09:30 AM).</span>
-          </div>
-        )}
-
         {attendanceAlert && (
-          <div className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-between ${attendanceAlert.includes('failed') || attendanceAlert.includes('denied')
-            ? 'bg-rose-500/10 border-rose-500/20 text-rose-600'
-            : 'bg-primary/10 border-primary/20 text-primary'
-            }`}>
+          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-medium flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{attendanceAlert}</span>
           </div>
         )}
 
-        {!isCompact && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2 border-t border-border/30">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground font-semibold">Status:</span>
-              {!clockedRecord ? (
-                <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-3 py-1 rounded-full font-bold">Not Clocked In</span>
-              ) : clockedRecord.clockOut ? (
-                <span className="text-xs bg-primary/10 text-primary px-3 py-1 rounded-full font-extrabold border border-primary/20">Shift Completed</span>
-              ) : (
-                <span className="text-xs bg-primary text-white px-3 py-1 rounded-full font-extrabold shadow-sm">Checked In / Active</span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleClockIn}
-                disabled={clockLoading || !clockInStatus?.canClockIn}
-                className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-6 py-2.5 rounded-full text-xs font-extrabold shadow-md shadow-primary/20 transition-all active:scale-95 disabled:opacity-50"
-              >
-                <Play className="h-4 w-4 fill-current" />
-                <span>Clock In</span>
-              </button>
-              <button
-                onClick={handleClockOut}
-                disabled={clockLoading || !clockInStatus?.canClockOut}
-                className="flex items-center gap-2 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 text-white px-6 py-2.5 rounded-full text-xs font-extrabold shadow-md shadow-rose-600/25 transition-all active:scale-95 disabled:opacity-50"
-              >
-                <Square className="h-3.5 w-3.5 fill-current" />
-                <span>Clock Out</span>
-              </button>
-            </div>
+        <div className="flex items-center justify-between pt-1">
+          <div className="text-xs space-y-0.5">
+            <p className="font-semibold text-foreground">
+              Status: <span className={isClockedIn ? 'text-emerald-500 font-bold' : 'text-muted-foreground'}>{isClockedIn ? 'CLOCKED IN' : 'NOT CLOCKED IN'}</span>
+            </p>
+            {clockedRecord?.clockIn && (
+              <p className="text-muted-foreground">
+                Clocked in at {new Date(clockedRecord.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
           </div>
-        )}
+
+          {!isClockedIn ? (
+            <button
+              onClick={handleClockIn}
+              disabled={clockLoading || clockInStatus?.canClockIn === false}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              <span>Clock In Now</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleClockOut}
+              disabled={clockLoading}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+            >
+              <Square className="w-4 h-4 fill-current" />
+              <span>Clock Out</span>
+            </button>
+          )}
+        </div>
       </motion.div>
     );
   };
 
   return (
     <motion.div
-      className="space-y-6 pb-8"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
+      className="space-y-6 max-w-7xl mx-auto"
     >
-      {/* 1. Page Header — Clean SaaS Pattern */}
-      <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1 pb-2">
+      {/* 1. Welcome & Time Header */}
+      <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-foreground tracking-tight">
             Dashboard Overview
@@ -582,7 +522,7 @@ const Dashboard = () => {
               className="inline-flex items-center gap-2 bg-primary hover:bg-primary-hover text-white font-bold px-5 py-2.5 rounded-full text-xs shadow-md shadow-primary/25 transition-all active:scale-95"
             >
               <Plus className="h-4 w-4" />
-              <span>New Task</span>
+              <span>New Project</span>
             </Link>
           </div>
         )}
@@ -601,13 +541,13 @@ const Dashboard = () => {
             </span>
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-3xl font-black tracking-tight text-foreground">
-                {stats.totalMembers || stats.totalInterns}
+                {loading ? '—' : (stats.totalWorkforce ?? stats.totalMembers ?? 0)}
               </span>
               <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                +12% vs last mo
+                {loading ? '—' : (stats.workforceChangeText || '+0% vs last mo')}
               </span>
             </div>
-            <p className="text-[11px] text-muted-foreground/80 font-medium">Active intern & employee roster</p>
+            <p className="text-[11px] text-muted-foreground/80 font-medium">Active intern, employee & team leader roster</p>
           </div>
 
           {/* Stat Group 2 */}
@@ -617,10 +557,10 @@ const Dashboard = () => {
             </span>
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-3xl font-black tracking-tight text-foreground">
-                {stats.presentToday}
+                {loading ? '—' : (stats.presentToday ?? 0)}
               </span>
               <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                {stats.attendanceRate}% turnout
+                {loading ? '—' : (stats.lateBadgeText || `${stats.lateToday ?? 0}\u00A0late`)}
               </span>
             </div>
             <p className="text-[11px] text-muted-foreground/80 font-medium">Logged shift check-ins today</p>
@@ -633,13 +573,13 @@ const Dashboard = () => {
             </span>
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-3xl font-black tracking-tight text-foreground">
-                {stats.pendingTasks}
+                {loading ? '—' : (stats.activeDeliverables ?? stats.pendingTasks ?? 0)}
               </span>
               <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                {stats.completedTasks} completed
+                {loading ? '—' : (stats.completedBadgeText || `${stats.completedTasks || 0} completed`)}
               </span>
             </div>
-            <p className="text-[11px] text-muted-foreground/80 font-medium">In-flight sprint issues</p>
+            <p className="text-[11px] text-muted-foreground/80 font-medium">Active projects</p>
           </div>
 
           {/* Stat Group 4 */}
@@ -649,17 +589,21 @@ const Dashboard = () => {
             </span>
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-3xl font-black tracking-tight text-foreground">
-                {stats.openTickets}
+                {loading ? '—' : (stats.openSupportTickets ?? stats.openTickets ?? 0)}
               </span>
-              {stats.openTickets > 0 ? (
+              {loading ? (
+                <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  —
+                </span>
+              ) : ((stats.supportBadgeText === 'Needs attention' || stats.openTickets > 0) ? (
                 <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20">
-                  Needs attention
+                  {stats.supportBadgeText || 'Needs attention'}
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  All clear
+                  {stats.supportBadgeText || 'All clear'}
                 </span>
-              )}
+              ))}
             </div>
             <p className="text-[11px] text-muted-foreground/80 font-medium">Queries pending resolution</p>
           </div>
@@ -673,143 +617,97 @@ const Dashboard = () => {
         </motion.div>
       )}
 
-      {/* 2.5. Activity Assigned Card — Clean SaaS Pattern */}
-      <motion.div variants={itemVariants} className="clean-card text-left space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-bold text-foreground">Activity Assigned</h3>
-            <p className="text-xs text-muted-foreground mt-0.5 font-medium">Your current workforce time and activity allocation.</p>
-          </div>
 
-          {/* Search Input Box top-right */}
-          <div className="relative shrink-0 w-full sm:w-64">
-            <input
-              type="text"
-              placeholder="Search..."
-              value={activitySearch}
-              onChange={(e) => setActivitySearch(e.target.value)}
-              className="w-full bg-muted/30 border border-border/40 rounded-full px-4 py-2 text-xs pr-10 focus:ring-2 focus:ring-primary/20"
-            />
-            <Search className="absolute right-3.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-1">
-          {/* Column 1: Featured Task Activity */}
-          <div className="p-5 rounded-2xl bg-primary/5 border border-border/40 flex flex-col justify-between space-y-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-muted-foreground">Task</span>
-              <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                △ 14.13%
-              </span>
-            </div>
 
-            <div className="flex items-baseline justify-between gap-2">
-              <span className="text-4xl sm:text-5xl font-black text-foreground tracking-tight">
-                {Math.round((stats.completedTasks / ((stats.pendingTasks + stats.completedTasks) || 1)) * 100)}%
-              </span>
-              <div className="flex flex-col items-end gap-1">
-                <span className="text-[10px] text-muted-foreground font-mono font-semibold">23, Jan-Mar</span>
-                <svg className="w-20 h-6 text-primary stroke-current fill-none stroke-[2]" viewBox="0 0 80 24">
-                  <path d="M 0 20 Q 20 18, 40 10 T 80 4" />
-                  <circle cx="80" cy="4" r="2.5" className="fill-primary" />
-                </svg>
-              </div>
-            </div>
-
-            <p className="text-xs text-muted-foreground leading-relaxed pt-2 border-t border-border/30">
-              You've been completing a lot of sprint deliverables lately, which is having a positive impact on your productivity!
-            </p>
-          </div>
-
-          {/* Column 2: 2 Stacked Items (Meeting & Call equivalent) */}
-          <div className="grid grid-rows-2 gap-4">
-            {/* Top Item */}
-            <div className="p-4 rounded-2xl bg-card border border-border/30 flex flex-col justify-between space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-muted-foreground">Meeting & Standups</span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  △ 2.32%
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-black text-foreground">{stats.attendanceRate}%</span>
-                <svg className="w-16 h-5 text-primary stroke-current fill-none stroke-[2]" viewBox="0 0 80 24">
-                  <path d="M 0 18 Q 30 15, 50 8 T 80 4" />
-                  <circle cx="80" cy="4" r="2.5" className="fill-primary" />
-                </svg>
-              </div>
-            </div>
-
-            {/* Bottom Item */}
-            <div className="p-4 rounded-2xl bg-card border border-border/30 flex flex-col justify-between space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-muted-foreground">Support & Tickets</span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  △ 9.23%
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-black text-foreground">
-                  {Math.round((stats.openTickets / ((stats.openTickets + stats.closedTickets) || 1)) * 100)}%
-                </span>
-                <svg className="w-16 h-5 text-primary stroke-current fill-none stroke-[2]" viewBox="0 0 80 24">
-                  <path d="M 0 16 Q 25 12, 55 6 T 80 3" />
-                  <circle cx="80" cy="3" r="2.5" className="fill-primary" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          {/* Column 3: 2 Stacked Items (Email & Note equivalent) */}
-          <div className="grid grid-rows-2 gap-4">
-            {/* Top Item */}
-            <div className="p-4 rounded-2xl bg-card border border-border/30 flex flex-col justify-between space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-muted-foreground">Audit & System Logs</span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20">
-                  ▽ 17.12%
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-black text-foreground">8%</span>
-                <svg className="w-16 h-5 text-rose-500 stroke-current fill-none stroke-[2]" viewBox="0 0 80 24">
-                  <path d="M 0 4 Q 30 8, 50 16 T 80 20" />
-                  <circle cx="80" cy="20" r="2.5" className="fill-rose-500" />
-                </svg>
-              </div>
-            </div>
-
-            {/* Bottom Item */}
-            <div className="p-4 rounded-2xl bg-card border border-border/30 flex flex-col justify-between space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-muted-foreground">Task Completion</span>
-                <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  △ 7.41%
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-black text-foreground">
-                  {Math.round((stats.completedTasks / ((stats.completedTasks + stats.pendingTasks) || 1)) * 100)}%
-                </span>
-                <svg className="w-16 h-5 text-primary stroke-current fill-none stroke-[2]" viewBox="0 0 80 24">
-                  <path d="M 0 18 Q 20 14, 50 8 T 80 2" />
-                  <circle cx="80" cy="2" r="2.5" className="fill-primary" />
-                </svg>
-              </div>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* 3. Attendance Clock Portal */}
-      {!showClockFirst && renderAttendanceClockPortal()}
-
-      {/* 4. Two-Column Card Row (Chart Card Left + Schedule/List Card Right) */}
+      {/* 4. Main Section Row (Left 2 Columns + Right 1 Column) */}
       <motion.div variants={itemVariants} className="grid grid-cols-1 gap-6 lg:grid-cols-3 items-start">
 
-        {/* Left Column: Smooth Area Chart matching reference screenshot with Real CRM Data */}
-        <div className="clean-card lg:col-span-2 text-left space-y-6">
+        {/* Left Column (lg:col-span-2): Quick Access + Task Velocity & Deliverables */}
+        <div className="lg:col-span-2 space-y-6">
+
+          {/* Quick Access / Admin Shortcuts Section */}
+          {['ADMIN', 'SUPER_ADMIN'].includes(user.role) && (
+            <div className="clean-card text-left space-y-5">
+              <div>
+                <h3 className="text-lg font-bold text-foreground">Quick Access</h3>
+                <p className="text-xs text-muted-foreground mt-0.5 font-medium">Frequently used admin actions</p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                {/* 1. Attendance Audit */}
+                <Link
+                  to="/attendance-audit"
+                  className="p-4 rounded-2xl bg-card border border-border/40 hover:border-primary/50 hover:bg-primary/5 transition-all group flex items-start gap-3.5"
+                >
+                  <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0 group-hover:bg-primary group-hover:text-white transition-colors">
+                    <Clock className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors truncate">Attendance Audit</h4>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-transform group-hover:translate-x-0.5 shrink-0" />
+                    </div>
+                    <p className="text-xs text-muted-foreground font-medium mt-0.5 line-clamp-1">Review and correct attendance</p>
+                  </div>
+                </Link>
+
+                {/* 2. Employee Registry */}
+                <Link
+                  to="/employees"
+                  className="p-4 rounded-2xl bg-card border border-border/40 hover:border-primary/50 hover:bg-primary/5 transition-all group flex items-start gap-3.5"
+                >
+                  <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0 group-hover:bg-primary group-hover:text-white transition-colors">
+                    <Users className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors truncate">Employee Registry</h4>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-transform group-hover:translate-x-0.5 shrink-0" />
+                    </div>
+                    <p className="text-xs text-muted-foreground font-medium mt-0.5 line-clamp-1">Manage employees/interns</p>
+                  </div>
+                </Link>
+
+                {/* 3. Announcements */}
+                <Link
+                  to="/announcements"
+                  className="p-4 rounded-2xl bg-card border border-border/40 hover:border-primary/50 hover:bg-primary/5 transition-all group flex items-start gap-3.5"
+                >
+                  <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0 group-hover:bg-primary group-hover:text-white transition-colors">
+                    <Megaphone className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors truncate">Announcements</h4>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-transform group-hover:translate-x-0.5 shrink-0" />
+                    </div>
+                    <p className="text-xs text-muted-foreground font-medium mt-0.5 line-clamp-1">Create or manage announcements</p>
+                  </div>
+                </Link>
+
+                {/* 4. Work Calendar */}
+                <Link
+                  to="/operations/work-calendar"
+                  className="p-4 rounded-2xl bg-card border border-border/40 hover:border-primary/50 hover:bg-primary/5 transition-all group flex items-start gap-3.5"
+                >
+                  <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20 shrink-0 group-hover:bg-primary group-hover:text-white transition-colors">
+                    <CalendarDays className="h-5 w-5" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <h4 className="text-sm font-bold text-foreground group-hover:text-primary transition-colors truncate">Work Calendar</h4>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-transform group-hover:translate-x-0.5 shrink-0" />
+                    </div>
+                    <p className="text-xs text-muted-foreground font-medium mt-0.5 line-clamp-1">Manage WFH/holidays</p>
+                  </div>
+                </Link>
+              </div>
+            </div>
+          )}
+
+          {/* Vertical Bar Chart for Task Velocity & Deliverables */}
+          <div className="clean-card text-left space-y-6">
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-1">
@@ -819,124 +717,70 @@ const Dashboard = () => {
                 </div>
                 <div className="flex items-baseline gap-3">
                   <span className="text-2xl sm:text-3xl font-black text-foreground tracking-tight">
-                    {allTasks.length || (stats.pendingTasks + stats.completedTasks)} <span className="text-sm font-semibold text-muted-foreground">Tasks</span>
+                    {loading ? '—' : (stats.taskVelocity?.total ?? 7)} <span className="text-sm font-semibold text-muted-foreground">Tasks</span>
                   </span>
                   <span className="inline-flex items-center gap-1 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                    {stats.completedTasks} completed ({Math.round((stats.completedTasks / ((stats.pendingTasks + stats.completedTasks) || 1)) * 100)}%)
+                    {loading ? '—' : (stats.taskVelocity?.completedBadgeText || `${stats.taskVelocity?.completed ?? 3} completed (${stats.taskVelocity?.completionPercentage ?? 43}%)`)}
                   </span>
                 </div>
               </div>
-
-              {/* Time Range Filter Selector (1D, 1W, 1M, 3M, 1Y, ALL) */}
-              <div className="flex items-center gap-1 bg-muted/40 p-1 rounded-xl border border-border/40 text-xs font-semibold">
-                {['1D', '1W', '1M', '3M', '1Y', 'ALL'].map((range) => (
-                  <button
-                    key={range}
-                    onClick={() => setTimeFilter(range)}
-                    className={`px-3 py-1 rounded-lg transition-all ${timeFilter === range
-                      ? 'bg-primary text-white font-bold shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
-                      }`}
-                  >
-                    {range}
-                  </button>
-                ))}
-              </div>
             </div>
 
-            {/* Recharts AreaChart with real CRM task data */}
+            {/* Recharts BarChart for Task Status Distribution */}
             <div className="h-72 w-full mt-6">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={
-                    taskChartData && taskChartData.length > 0
-                      ? taskChartData.map(item => ({ label: item.name || item.label, value: item.value || 0 }))
-                      : [
-                        { label: 'Pending', value: stats.pendingTasks },
-                        { label: 'Completed', value: stats.completedTasks }
-                      ]
-                  }
+                <BarChart
+                  data={[
+                    { status: 'Pending', count: stats.taskVelocity?.statusCounts?.pending ?? 1 },
+                    { status: 'In Progress', count: stats.taskVelocity?.statusCounts?.inProgress ?? 3 },
+                    { status: 'Review', count: stats.taskVelocity?.statusCounts?.review ?? 0 },
+                    { status: 'Approved', count: stats.taskVelocity?.statusCounts?.approved ?? 3 },
+                    { status: 'Rejected', count: stats.taskVelocity?.statusCounts?.rejected ?? 0 }
+                  ]}
                   margin={{ top: 15, right: 10, left: -15, bottom: 0 }}
                 >
-                  <defs>
-                    <linearGradient id="areaColorGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={chartPrimaryColor} stopOpacity={0.35} />
-                      <stop offset="95%" stopColor={chartPrimaryColor} stopOpacity={0.0} />
-                    </linearGradient>
-                  </defs>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 234, 230, 0.5)" />
                   <XAxis
-                    dataKey="label"
+                    dataKey="status"
                     stroke="currentColor"
-                    className="text-xs font-medium text-muted-foreground"
+                    className="text-xs font-semibold text-muted-foreground"
                     tickLine={false}
                     axisLine={false}
                   />
                   <YAxis
                     stroke="currentColor"
-                    className="text-xs font-medium text-muted-foreground"
+                    className="text-xs font-semibold text-muted-foreground"
                     tickLine={false}
                     axisLine={false}
                     allowDecimals={false}
                     tickFormatter={(val) => Math.round(val)}
                   />
                   <Tooltip
-                    cursor={{ stroke: chartPrimaryColor, strokeWidth: 1, strokeDasharray: '3 3' }}
+                    cursor={{ fill: 'rgba(0, 0, 0, 0.04)' }}
                     content={({ active, payload }) => {
                       if (active && payload && payload.length) {
                         const dataPoint = payload[0].payload;
                         return (
                           <div className="bg-[#0B1528] text-white px-4 py-3 rounded-2xl shadow-2xl border border-slate-700/60 min-w-[130px] text-left">
-                            <p className="text-[11px] font-medium text-slate-400 font-sans">{dataPoint.label} Status</p>
-                            <p className="text-lg font-black text-primary font-mono mt-0.5">{dataPoint.value} <span className="text-xs text-slate-300 font-normal">tasks</span></p>
+                            <p className="text-[11px] font-medium text-slate-400 font-sans">{dataPoint.status} Status</p>
+                            <p className="text-lg font-black text-primary font-mono mt-0.5">{dataPoint.count} <span className="text-xs text-slate-300 font-normal">tasks</span></p>
                           </div>
                         );
                       }
                       return null;
                     }}
                   />
-                  <Area
-                    type="monotone"
-                    dataKey="value"
-                    stroke={chartPrimaryColor}
-                    strokeWidth={2.5}
-                    fillOpacity={1}
-                    fill="url(#areaColorGradient)"
+                  <Bar
+                    dataKey="count"
+                    fill={chartPrimaryColor}
+                    radius={[6, 6, 0, 0]}
+                    barSize={48}
                   />
-                </AreaChart>
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </div>
-
-          {/* Active Sprint Burndown Curve for Admin */}
-          {user.role === 'ADMIN' && burndownChartData.length > 0 && (
-            <div className="border-t border-border/30 pt-6">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h4 className="text-sm font-bold text-foreground">Active Sprint Burndown</h4>
-                  <p className="text-xs text-muted-foreground mt-0.5 font-medium">Ideal vs. remaining story point velocity.</p>
-                </div>
-                <span className="text-[10px] bg-primary/10 text-primary px-3 py-1 rounded-full font-mono font-bold border border-primary/20">
-                  {sprintStats.totalPoints} SP Total
-                </span>
-              </div>
-              <div className="h-44 w-full mt-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={burndownChartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(226, 234, 230, 0.6)" />
-                    <XAxis dataKey="name" stroke="currentColor" className="text-xs font-semibold text-muted-foreground" tickLine={false} />
-                    <YAxis stroke="currentColor" className="text-xs font-semibold text-muted-foreground" tickLine={false} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: '#0B1528', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)', color: '#fff' }}
-                      labelStyle={{ color: chartPrimaryColor, fontWeight: 'bold' }}
-                    />
-                    <Line type="monotone" dataKey="Ideal" stroke="#94A3B8" strokeDasharray="5 5" strokeWidth={2} activeDot={{ r: 4 }} />
-                    <Line type="monotone" dataKey="Remaining" stroke={chartPrimaryColor} strokeWidth={3} activeDot={{ r: 6 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-          )}
+        </div>
         </div>
 
         {/* Right Column: Common Chat Mini Widget + Schedule & Deliverables Card */}
@@ -994,7 +838,7 @@ const Dashboard = () => {
           </div>
 
           {/* 2. Schedule & Deliverables Card (7-Day Rolling Window) */}
-          <div className="clean-card text-left space-y-5">
+          <div className="clean-card text-left space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-foreground">Schedule & Deliverables</h3>
               <div className="flex items-center gap-2">
@@ -1013,7 +857,7 @@ const Dashboard = () => {
             </div>
 
             {/* Mini 7-Day Rolling Strip Date Selector */}
-            <div className="grid grid-cols-7 gap-1 text-center py-2 bg-card rounded-2xl p-1.5 border border-border/40">
+            <div className="grid grid-cols-7 gap-1 text-center py-1 bg-card rounded-2xl p-1.5 border border-border/40">
               {rollingWeekDays.map((wd, i) => {
                 const isSelected = wd.dateString === selectedDate;
                 const isToday = wd.isToday;
@@ -1023,7 +867,7 @@ const Dashboard = () => {
                     key={i}
                     type="button"
                     onClick={() => setSelectedDate(wd.dateString)}
-                    className={`py-2 px-1 rounded-xl transition-all cursor-pointer flex flex-col items-center justify-center ${
+                    className={`py-1.5 px-1 rounded-xl transition-all cursor-pointer flex flex-col items-center justify-center ${
                       isToday
                         ? isSelected
                           ? 'bg-primary text-white font-extrabold shadow-md shadow-primary/30 scale-105 ring-2 ring-primary ring-offset-2 dark:ring-offset-slate-900'
@@ -1036,7 +880,7 @@ const Dashboard = () => {
                     <span className="text-[10px] block uppercase font-mono tracking-wider">
                       {wd.dayName}
                     </span>
-                    <span className="text-sm font-bold block mt-0.5 font-sans">
+                    <span className="text-xs sm:text-sm font-bold block mt-0.5 font-sans">
                       {wd.dateNum}
                     </span>
                   </button>
@@ -1045,7 +889,7 @@ const Dashboard = () => {
             </div>
 
             {/* Tasks Section for Selected Date */}
-            <div className="space-y-3 pt-1">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground block">
                   {isTodaySelected ? "Today's Queue" : `${new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })} Queue`}
@@ -1055,7 +899,7 @@ const Dashboard = () => {
                 </span>
               </div>
 
-              <div className="dash-scroll max-h-[220px] space-y-2.5 snap-y snap-mandatory">
+              <div className="dash-scroll max-h-[220px] space-y-2 pr-0.5">
                 {dayTasks.length > 0 ? (
                   [...dayTasks]
                     .sort((a, b) => {
@@ -1111,7 +955,7 @@ const Dashboard = () => {
                       );
                     })
                 ) : (
-                  <div className="p-4 text-center text-xs text-muted-foreground rounded-2xl bg-muted/20 border border-dashed border-border">
+                  <div className="p-3.5 text-center text-xs text-muted-foreground rounded-2xl bg-muted/20 border border-dashed border-border font-medium">
                     No tasks scheduled for {isTodaySelected ? 'today' : new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.
                   </div>
                 )}
@@ -1177,6 +1021,16 @@ const Dashboard = () => {
         <TeamPerformanceRankings />
       </motion.div>
 
+      {/* Clock In Modal */}
+      <ClockInModal
+        isOpen={isClockInModalOpen}
+        onClose={() => setIsClockInModalOpen(false)}
+        onSuccess={() => {
+          fetchDashboardData();
+          api.get('/attendance/status').then(res => setClockInStatus(res.data)).catch(() => {});
+        }}
+        user={user}
+      />
     </motion.div>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -12,22 +12,30 @@ import api, { getSocket, downloadChatAttachment, getUploadUrl } from '../service
 
 import { useAuth } from '../context/AuthContext';
 import UserAvatar from '../components/common/UserAvatar';
+import useChatSocket from '../hooks/useChatSocket';
 
 const EMOJI_LIST = ['😊', '👍', '🔥', '🎉', '❤️', '🙌', '🚀', '✅', '😂', '💡', '👏', '🎯', '💯', '🙏', '✨', '⚡'];
 
 const SENDER_COLOR_PALETTE = [
-  '#FFD600', // Bright Canary Yellow
-  '#FF6D00', // Neon Tangerine Orange
-  '#FF1744', // Hot Coral Pink
-  '#00E5FF', // Electric Cyan
-  '#D500F9', // Neon Purple Magenta
-  '#FF9100', // Bright Deep Amber
-  '#E040FB', // Electric Orchid Violet
-  '#40C4FF', // High-Contrast Sky Blue
+  '#00a884', // Teal Green
+  '#e542a3', // Pink Magenta
+  '#53bdeb', // Sky Blue
+  '#eb6a00', // Bright Orange
+  '#a855f7', // Purple
+  '#eab308', // Amber
+  '#06b6d4', // Cyan
+  '#3b82f6', // Electric Blue
 ];
 
 const getSenderNameColor = (sender) => {
-  return '#40C4FF'; // Sky Blue
+  if (!sender) return '#53bdeb';
+  const idStr = String(sender.id || sender._id || sender.name || '');
+  let hash = 0;
+  for (let i = 0; i < idStr.length; i++) {
+    hash = idStr.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % SENDER_COLOR_PALETTE.length;
+  return SENDER_COLOR_PALETTE[index];
 };
 
 const getRoomTitleAndCode = (room) => {
@@ -332,8 +340,10 @@ const Chat = () => {
   const [forwardSearch, setForwardSearch] = useState('');
   const [forwarding, setForwarding] = useState(false);
 
-  // Group Info Drawer State
+  // Group Info Drawer & Delete Group Modal State
   const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [showDeleteGroupModal, setShowDeleteGroupModal] = useState(false);
+  const [deletingGroup, setDeletingGroup] = useState(false);
   const [roomDetails, setRoomDetails] = useState(null);
   const [sharedFilesList, setSharedFilesList] = useState([]);
 
@@ -562,10 +572,7 @@ const Chat = () => {
             messageType: msgItem.messageType || 'TEXT'
           });
 
-          const socket = getSocket();
-          if (socket) {
-            socket.emit('send_chat_message', res.data);
-          }
+          emitSendMessage(res.data);
         }
       }
 
@@ -601,89 +608,143 @@ const Chat = () => {
     }
   }, [authUser]);
 
-  // Socket.io initialization & real-time listeners
+  // Stable refs for callbacks
+  const activeRoomRef = useRef(activeRoom);
   useEffect(() => {
-    if (!currentUser) return;
+    activeRoomRef.current = activeRoom;
+  }, [activeRoom]);
 
-    const socket = getSocket();
-    if (!socket) return;
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
 
-    socket.emit('register', {
-      userId: currentUser.id,
-      name: currentUser.name,
-      role: currentUser.role,
-      teamId: currentUser.teamMembers?.[0]?.teamId
-    });
+  const fetchRoomsRef = useRef(null);
 
-    socket.on('online_users', (usersList) => {
-      setOnlineUserIds(new Set(usersList.map(u => u.id)));
-    });
-
-    socket.on('receive_chat_message', (msg) => {
-      setMessages(prev => {
-        if (prev.some(m => m.id === msg.id)) return prev;
-        if (msg.roomId === activeRoom?.id) {
-          return [...prev, msg];
-        }
-        return prev;
-      });
-      fetchRooms();
-    });
-
-    socket.on('user_typing', ({ roomId, userId, userName }) => {
-      if (activeRoom && roomId === activeRoom.id && userId !== currentUser.id) {
-        setTypingUsers(prev => new Map(prev.set(userId, userName)));
+  // Stable Socket Event Handlers
+  const handleReceiveMessage = useCallback((msg) => {
+    setMessages(prev => {
+      if (prev.some(m => m.id === msg.id)) return prev;
+      if (activeRoomRef.current && msg.roomId === activeRoomRef.current.id) {
+        return [...prev, msg];
       }
+      return prev;
     });
+    fetchRoomsRef.current?.();
+  }, []);
 
-    socket.on('user_stop_typing', ({ roomId, userId }) => {
-      if (activeRoom && roomId === activeRoom.id) {
-        setTypingUsers(prev => {
-          const next = new Map(prev);
-          next.delete(userId);
-          return next;
-        });
-      }
-    });
+  const handleMessageEdited = useCallback((updatedMsg) => {
+    setMessages(prev => prev.map(m => m.id === updatedMsg.id ? updatedMsg : m));
+  }, []);
 
-    socket.on('message_edited', (updatedMsg) => {
-      setMessages(prev => prev.map(m => m.id === updatedMsg.id ? updatedMsg : m));
-    });
-
-    socket.on('message_deleted', (deletedMsg) => {
-      if (deletedMsg.deleteMode === 'PERMANENT_EVERYONE' || deletedMsg.isPermanentlyDeleted) {
+  const handleMessageDeleted = useCallback((deletedMsg) => {
+    if (deletedMsg.deleteMode === 'PERMANENT_EVERYONE' || deletedMsg.isPermanentlyDeleted) {
+      setMessages(prev => prev.filter(m => m.id !== deletedMsg.id));
+    } else if (deletedMsg.deleteMode === 'PERMANENT_ME' || deletedMsg.deleteMode === 'ME') {
+      if (deletedMsg.userId === currentUserRef.current?.id) {
         setMessages(prev => prev.filter(m => m.id !== deletedMsg.id));
-      } else if (deletedMsg.deleteMode === 'PERMANENT_ME' || deletedMsg.deleteMode === 'ME') {
-        if (deletedMsg.userId === currentUser?.id) {
-          setMessages(prev => prev.filter(m => m.id !== deletedMsg.id));
-        }
-      } else {
-        setMessages(prev => prev.map(m => m.id === deletedMsg.id ? {
-          ...m,
-          isDeleted: true,
-          message: 'This message was deleted',
-          attachmentUrl: null,
-          fileName: null,
-          fileSize: null
-        } : m));
       }
-      fetchRooms();
-    });
+    } else {
+      setMessages(prev => prev.map(m => m.id === deletedMsg.id ? {
+        ...m,
+        isDeleted: true,
+        message: 'This message was deleted',
+        attachmentUrl: null,
+        fileName: null,
+        fileSize: null
+      } : m));
+    }
+    fetchRoomsRef.current?.();
+  }, []);
 
-    socket.on('chat_rooms_updated', () => {
-      fetchRooms();
-    });
+  const handleRoomsUpdated = useCallback(() => {
+    fetchRoomsRef.current?.();
+  }, []);
 
-    return () => {
-      socket.off('online_users');
-      socket.off('receive_chat_message');
-      socket.off('chat_rooms_updated');
-      socket.off('user_typing');
-      socket.off('user_stop_typing');
-      socket.off('message_edited');
-      socket.off('message_deleted');
-    };
-  }, [currentUser, activeRoom]);
+  const handleGroupDeleted = useCallback(({ roomId }) => {
+    setRooms(prev => prev.filter(r => r.id !== roomId));
+    if (activeRoomRef.current && activeRoomRef.current.id === roomId) {
+      showToast('This group has been deleted.');
+      setActiveRoom(null);
+      setMessages([]);
+      fetchRoomsRef.current?.();
+    }
+  }, []);
+
+  const handleOnlineUsers = useCallback((usersList) => {
+    setOnlineUserIds(new Set(usersList.map(u => String(u.id))));
+  }, []);
+
+  const isUserOnline = useCallback((userId) => {
+    if (!userId) return false;
+    return onlineUserIds.has(String(userId));
+  }, [onlineUserIds]);
+
+  const handleUserTyping = useCallback(({ roomId, userId, userName }) => {
+    if (activeRoomRef.current && roomId === activeRoomRef.current.id && userId !== currentUserRef.current?.id) {
+      setTypingUsers(prev => new Map(prev.set(userId, userName)));
+    }
+  }, []);
+
+  const handleUserStopTyping = useCallback(({ roomId, userId }) => {
+    if (activeRoomRef.current && roomId === activeRoomRef.current.id) {
+      setTypingUsers(prev => {
+        const next = new Map(prev);
+        next.delete(userId);
+        return next;
+      });
+    }
+  }, []);
+
+  // Initialize Stabilized Socket Hook
+  const {
+    emitSendMessage,
+    emitTyping,
+    emitStopTyping,
+    emitMessageEdited,
+    emitMessageDeleted,
+    emitGroupDeleted
+  } = useChatSocket({
+    currentUser,
+    activeRoomId: activeRoom?.id,
+    onReceiveMessage: handleReceiveMessage,
+    onMessageEdited: handleMessageEdited,
+    onMessageDeleted: handleMessageDeleted,
+    onRoomsUpdated: handleRoomsUpdated,
+    onGroupDeleted: handleGroupDeleted,
+    onOnlineUsers: handleOnlineUsers,
+    onUserTyping: handleUserTyping,
+    onUserStopTyping: handleUserStopTyping
+  });
+
+  const handleDeleteGroup = async () => {
+    if (!activeRoom) return;
+    setDeletingGroup(true);
+    try {
+      const res = await api.delete(`/chat/groups/${activeRoom.id}`);
+      showToast(res.data?.message || 'Chat group deleted successfully.');
+      setShowDeleteGroupModal(false);
+
+      const targetRoomId = activeRoom.id;
+      setActiveRoom(null);
+      setMessages([]);
+
+      emitGroupDeleted(targetRoomId);
+
+      // Fetch fresh rooms list and auto-select first room (e.g. Official Company Room)
+      const roomsRes = await api.get('/chat/rooms');
+      const updatedRooms = roomsRes.data || [];
+      setRooms(updatedRooms);
+      if (updatedRooms.length > 0) {
+        setActiveRoom(updatedRooms[0]);
+      }
+    } catch (err) {
+      console.error('Failed to delete chat group:', err);
+      showToast(err.response?.data?.message || 'Failed to delete chat group.');
+    } finally {
+      setDeletingGroup(false);
+    }
+  };
 
   const handleDeleteMessage = async () => {
     if (!deleteTargetMsg) return;
@@ -703,17 +764,14 @@ const Chat = () => {
         data: { deleteMode: chosenMode }
       });
 
-      const socket = getSocket();
-      if (socket) {
-        socket.emit('message_deleted', {
-          id: deleteTargetMsg.id,
-          roomId: activeRoom?.id,
-          deleteMode: chosenMode,
-          userId: currentUser?.id,
-          isDeleted: chosenMode === 'EVERYONE',
-          isPermanentlyDeleted: chosenMode.startsWith('PERMANENT')
-        });
-      }
+      emitMessageDeleted({
+        id: deleteTargetMsg.id,
+        roomId: activeRoom?.id,
+        deleteMode: chosenMode,
+        userId: currentUser?.id,
+        isDeleted: chosenMode === 'EVERYONE',
+        isPermanentlyDeleted: chosenMode.startsWith('PERMANENT')
+      });
 
       if (chosenMode === 'ME' || chosenMode.startsWith('PERMANENT')) {
         setMessages(prev => prev.filter(m => m.id !== deleteTargetMsg.id));
@@ -749,13 +807,50 @@ const Chat = () => {
       const params = new URLSearchParams(location.search);
       const targetDmUserId = params.get('dm');
       const targetRoomId = params.get('room');
+      const targetProjectId = params.get('projectId') || params.get('project') || params.get('proj');
 
       if (targetDmUserId) {
         const dmRes = await api.post('/chat/rooms/direct', { targetUserId: targetDmUserId });
         setActiveRoom(dmRes.data);
       } else if (targetRoomId) {
         const found = allRooms.find(r => r.id === targetRoomId);
-        if (found) setActiveRoom(found);
+        if (found) {
+          setActiveRoom(found);
+        } else {
+          try {
+            const roomRes = await api.get(`/chat/rooms/${targetRoomId}`);
+            if (roomRes.data) setActiveRoom(roomRes.data);
+          } catch (e) {
+            if (allRooms.length > 0 && !activeRoom) setActiveRoom(allRooms[0]);
+          }
+        }
+      } else if (targetProjectId) {
+        const foundByProject = allRooms.find(r =>
+          r.projectId === targetProjectId ||
+          r.project?.id === targetProjectId ||
+          r.projectCode === targetProjectId ||
+          r.project?.projectCode === targetProjectId ||
+          r.id === targetProjectId
+        );
+
+        if (foundByProject) {
+          setActiveRoom(foundByProject);
+        } else {
+          try {
+            const projChatRes = await api.get(`/chat/rooms/project/${targetProjectId}`);
+            if (projChatRes.data) {
+              setActiveRoom(projChatRes.data);
+              const freshRoomsRes = await api.get('/chat/rooms');
+              const updatedRooms = freshRoomsRes.data || [];
+              setRooms(updatedRooms);
+              const reFound = updatedRooms.find(r => r.id === projChatRes.data.id || r.projectId === targetProjectId);
+              if (reFound) setActiveRoom(reFound);
+            }
+          } catch (projErr) {
+            console.error('Failed to access project chat room:', projErr);
+            if (allRooms.length > 0 && !activeRoom) setActiveRoom(allRooms[0]);
+          }
+        }
       } else if (allRooms.length > 0 && !activeRoom) {
         setActiveRoom(allRooms[0]);
       }
@@ -844,15 +939,11 @@ const Chat = () => {
   const handleInputChange = (e) => {
     setInputText(e.target.value);
 
-    if (!activeRoom || !currentUser || activeRoom.isVirtual || activeRoom.id.startsWith('virtual_')) return;
-    const socket = getSocket();
-    if (!socket) return;
-
-    socket.emit('typing', { roomId: activeRoom.id, userId: currentUser.id, userName: currentUser.name });
+    emitTyping(activeRoom.id, currentUser.id, currentUser.name);
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      socket.emit('stop_typing', { roomId: activeRoom.id, userId: currentUser.id });
+      emitStopTyping(activeRoom.id, currentUser.id);
     }, 2000);
   };
 
@@ -878,18 +969,13 @@ const Chat = () => {
       }
     }
 
-    const socket = getSocket();
-    if (socket) {
-      socket.emit('stop_typing', { roomId: currentRoom.id, userId: currentUser.id });
-    }
+    emitStopTyping(currentRoom.id, currentUser.id);
 
     try {
       if (editingMsg) {
         const res = await api.put(`/chat/messages/${editingMsg.id}`, { message: content });
         setMessages(prev => prev.map(m => m.id === editingMsg.id ? res.data : m));
-        if (socket) {
-          socket.emit('message_edited', res.data);
-        }
+        emitMessageEdited(res.data);
         setEditingMsg(null);
       } else {
         const res = await api.post('/chat/messages', {
@@ -900,10 +986,7 @@ const Chat = () => {
 
         setMessages(prev => [...prev, res.data]);
         setReplyingTo(null);
-
-        if (socket) {
-          socket.emit('send_chat_message', res.data);
-        }
+        emitSendMessage(res.data);
       }
       fetchRooms();
     } catch (err) {
@@ -953,10 +1036,7 @@ const Chat = () => {
       setMessages(prev => [...prev, res.data]);
       setReplyingTo(null);
 
-      const socket = getSocket();
-      if (socket) {
-        socket.emit('send_chat_message', res.data);
-      }
+      emitSendMessage(res.data);
       fetchRooms();
     } catch (err) {
       console.error('Failed to upload file:', err);
@@ -1022,7 +1102,7 @@ const Chat = () => {
                   activeRoom.id === r.id ||
                   (activeRoom.isVirtual && r.isVirtual && activeRoom.targetUserId === r.targetUserId)
                 );
-                const isOnline = r.type === 'DIRECT' && r.otherUser && onlineUserIds.has(r.otherUser.id);
+                const isOnline = r.type === 'DIRECT' && r.otherUser && isUserOnline(r.otherUser.id);
                 const isCompany = r.type === 'COMPANY';
                 const showPersonalHeader = index > 0 && r.type === 'DIRECT' && arr[index - 1]?.type !== 'DIRECT';
 
@@ -1214,7 +1294,7 @@ const Chat = () => {
                     )}
 
                     {activeRoom.type === 'DIRECT' && (
-                      <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background ${onlineUserIds.has(activeRoom.otherUser?.id || roomDetails?.otherUser?.id) ? 'bg-primary' : 'bg-slate-400'}`} />
+                      <span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-background ${isUserOnline(activeRoom.otherUser?.id || roomDetails?.otherUser?.id) ? 'bg-primary' : 'bg-slate-400'}`} />
                     )}
                   </div>
 
@@ -1247,7 +1327,7 @@ const Chat = () => {
                       ) : activeRoom.type === 'PROJECT' ? (
                         `Project Chat Group • ${roomDetails?.members?.length || activeRoom.members?.length || 0} members`
                       ) : (
-                        onlineUserIds.has(activeRoom.otherUser?.id || roomDetails?.otherUser?.id) ? (
+                        isUserOnline(activeRoom.otherUser?.id || roomDetails?.otherUser?.id) ? (
                           <span className="text-primary font-bold flex items-center gap-1">
                             <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
                             Online
@@ -1263,15 +1343,27 @@ const Chat = () => {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setShowGroupInfo(!showGroupInfo)}
-                    className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                    title="Group Info"
                   >
                     <Info className="h-5 w-5" />
                   </button>
+
+                  {(currentUser?.role === 'ADMIN' || currentUser?.role === 'SUPER_ADMIN') &&
+                   activeRoom.type !== 'COMPANY' && !activeRoom.isDefault && (
+                    <button
+                      onClick={() => setShowDeleteGroupModal(true)}
+                      className="p-2 rounded-xl text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                      title="Delete Chat Group"
+                    >
+                      <Trash2 className="h-5 w-5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Messages Area */}
-              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scrollbar-none bg-background">
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 scrollbar-none bg-[var(--chat-area-bg)] dark:bg-background">
                 {messagesLoading ? (
                   <div className="flex items-center justify-center h-full">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1338,13 +1430,13 @@ const Chat = () => {
                           layout
                           initial={{ opacity: 1, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.95, height: 0, marginTop: 0 }}
-                          transition={{ duration: 0.18 }}
-                          className={`flex gap-2 items-start text-left px-4 ${isOwn ? 'flex-row-reverse' : 'flex-row'} ${isDifferentSender ? 'mt-4' : 'mt-2'}`}
+                          transition={{ duration: 0.15 }}
+                          className={`flex gap-[6px] items-start text-left px-3 sm:px-4 ${isOwn ? 'flex-row-reverse' : 'flex-row'} ${isDifferentSender ? 'mt-[10px]' : 'mt-[2px]'}`}
                         >
                           {!isOwn && (
                             <UserAvatar
                               user={msg.sender}
-                              className="h-10 w-10 rounded-2xl shrink-0 mt-0.5 shadow-xs"
+                              className="h-7 w-7 rounded-full shrink-0 mt-0.5"
                             />
                           )}
 
@@ -1354,204 +1446,188 @@ const Chat = () => {
                                 type="checkbox"
                                 checked={selectedMsgIds.has(msg.id)}
                                 onChange={() => toggleSelectMessage(msg.id)}
-                                className="accent-primary h-5 w-5 rounded-md cursor-pointer"
+                                className="accent-primary h-4.5 w-4.5 rounded cursor-pointer"
                               />
                             </div>
                           )}
 
-                          <div className={`max-w-[88%] sm:max-w-[80%] md:max-w-[75%] min-w-0 w-fit ${isOwn ? 'ml-auto' : 'mr-auto'}`}>
+                          <div className={`max-w-[85%] sm:max-w-[58%] min-w-[72px] w-fit ${isOwn ? 'ml-auto' : 'mr-auto'}`}>
                             {isEmojiMsg ? (
-                              /* ─── UNIFORM DYNAMIC THEME EMOJI MESSAGE BUBBLE ─── */
+                              /* ─── WHATSAPP EMOJI BUBBLE ─── */
                               <div
                                 onContextMenu={(e) => openMessageMenu(e, msg)}
                                 onTouchStart={(e) => handleTouchStartTrigger(e, msg)}
                                 onTouchEnd={handleTouchEndTrigger}
-                                className={`group/msg relative inline-flex flex-col p-[10px_12px_8px_12px] rounded-[22px] transition-all duration-200 hover:-translate-y-[1px] bg-primary text-white shadow-md shadow-primary/20 ${isOwn ? 'rounded-br-[4px] ml-auto' : 'rounded-bl-[4px] mr-auto'
-                                  }`}
+                                className={`group/msg relative inline-flex flex-col p-[6px_9px_6px_9px] transition-all border-none shadow-none ${
+                                  isOwn
+                                    ? 'bg-[var(--chat-outgoing-bg)] hover:bg-[var(--chat-outgoing-bg-hover)] text-white rounded-[7px_7px_2px_7px] ml-auto'
+                                    : 'bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-[7px_7px_7px_2px] mr-auto'
+                                }`}
                                 style={{ width: 'fit-content', height: 'fit-content', maxWidth: '100%' }}
                               >
                                 {!msg.isDeleted && (
-                                  <div className="absolute top-2 right-2.5 opacity-0 group-hover/msg:opacity-100 transition-opacity z-20">
+                                  <div className="absolute top-1 right-1 opacity-0 group-hover/msg:opacity-100 transition-opacity z-20">
                                     <button
                                       type="button"
                                       onClick={(e) => openMessageMenu(e, msg)}
-                                      className="msg-options-btn p-1 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-md transition-all shadow-xs cursor-pointer"
+                                      className="msg-options-btn p-0.5 rounded-full bg-black/10 hover:bg-black/20 dark:bg-white/10 dark:hover:bg-white/20 text-current transition-all shadow-xs cursor-pointer"
                                       title="Message options"
                                     >
-                                      <MoreVertical className="h-3.5 w-3.5 text-white pointer-events-none" />
+                                      <MoreVertical className="h-3 w-3 text-current pointer-events-none" />
                                     </button>
                                   </div>
                                 )}
 
-                                {!isOwn && activeRoom.type !== 'DIRECT' && (
+                                {!isOwn && activeRoom.type !== 'DIRECT' && isDifferentSender && (
                                   <p
-                                    className="text-[15px] font-bold mb-[6px] leading-[1.2] truncate select-none text-left w-full"
-                                    style={{ color: '#40C4FF' }}
+                                    className="text-[12.5px] font-semibold mb-0.5 leading-tight truncate select-none text-left w-full"
+                                    style={{ color: getSenderNameColor(msg.sender) }}
                                   >
                                     {msg.sender?.name}
                                   </p>
                                 )}
 
-                                <div className="text-center text-[48px] leading-none select-none my-0.5">
+                                <div className="text-center text-[42px] leading-none select-none my-0.5">
                                   {msg.message}
                                 </div>
 
-                                <div className="mt-[6px] text-right w-full flex items-center justify-end gap-1 text-[13px] font-medium text-white/85 select-none">
+                                <div className={`mt-1 text-right w-full flex items-center justify-end gap-1 text-[11px] font-normal select-none ${isOwn ? 'text-white/80' : 'text-[#5f6b73] dark:text-[#8696a0]'}`}>
                                   <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                   {isOwn && (
                                     msg.reads && msg.reads.length > 0 ? (
-                                      <CheckCheck className="h-3.5 w-3.5 text-white fill-current ml-0.5" title="Read ✓✓" />
+                                      <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb] bg-transparent border-none shadow-none p-0 ml-1 shrink-0" title="Read ✓✓" />
                                     ) : (
-                                      <Check className="h-3.5 w-3.5 text-white/70 ml-0.5" title="Sent ✓" />
+                                      <Check className="h-3.5 w-3.5 text-white/80 bg-transparent border-none shadow-none p-0 ml-1 shrink-0" title="Sent ✓" />
                                     )
                                   )}
                                 </div>
                               </div>
                             ) : (
-                              /* ─── UNIFORM DYNAMIC THEME TEXT / ATTACHMENT MESSAGE BUBBLE ─── */
+                              /* ─── WHATSAPP TEXT / ATTACHMENT MESSAGE BUBBLE ─── */
                               <div
                                 onContextMenu={(e) => openMessageMenu(e, msg)}
                                 onTouchStart={(e) => handleTouchStartTrigger(e, msg)}
                                 onTouchEnd={handleTouchEndTrigger}
-                                className={`group/msg relative inline-flex flex-col p-[10px_12px_8px_12px] rounded-[22px] transition-all duration-200 hover:-translate-y-[1px] bg-primary text-white shadow-md shadow-primary/20 max-w-full overflow-hidden ${isOwn ? 'rounded-br-[4px]' : 'rounded-bl-[4px]'
-                                  }`}
+                                className={`group/msg relative inline-flex flex-col p-[6px_9px_8px_9px] transition-all border-none shadow-none max-w-full ${
+                                  isOwn
+                                    ? 'bg-[var(--chat-outgoing-bg)] hover:bg-[var(--chat-outgoing-bg-hover)] text-white rounded-[7px_7px_2px_7px]'
+                                    : 'bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef] rounded-[7px_7px_7px_2px]'
+                                }`}
                                 style={{ width: 'fit-content', maxWidth: '100%' }}
                               >
                                 {!msg.isDeleted && (
-                                  <div className="absolute top-2 right-2.5 opacity-0 group-hover/msg:opacity-100 transition-opacity z-20">
+                                  <div className="absolute top-1 right-1 opacity-0 group-hover/msg:opacity-100 transition-opacity z-20">
                                     <button
                                       type="button"
                                       onClick={(e) => openMessageMenu(e, msg)}
-                                      className="msg-options-btn p-1 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-md transition-all shadow-xs cursor-pointer"
+                                      className="msg-options-btn p-0.5 rounded-full bg-black/10 hover:bg-black/20 dark:bg-white/10 dark:hover:bg-white/20 text-current transition-all shadow-xs cursor-pointer"
                                       title="Message options"
                                     >
-                                      <MoreVertical className="h-3.5 w-3.5 text-white pointer-events-none" />
+                                      <MoreVertical className="h-3 w-3 text-current pointer-events-none" />
                                     </button>
                                   </div>
                                 )}
-                                {!isOwn && activeRoom.type !== 'DIRECT' && (
+                                {!isOwn && activeRoom.type !== 'DIRECT' && isDifferentSender && (
                                   <p
-                                    className="text-[15px] font-bold mb-[6px] leading-[1.2] truncate select-none text-left"
-                                    style={{ color: '#40C4FF' }}
+                                    className="text-[12.5px] font-semibold mb-0.5 leading-tight truncate select-none text-left"
+                                    style={{ color: getSenderNameColor(msg.sender) }}
                                   >
                                     {msg.sender?.name}
                                   </p>
                                 )}
 
                                 {msg.isDeleted ? (
-                                  <div className="flex items-center gap-3">
-                                    <p className="italic text-white/90 text-[18px]">This message was deleted</p>
-                                    <span className="text-[13px] font-medium text-white/85">
+                                  <div className={`flex items-center gap-2 py-0.5 text-[13px] italic ${isOwn ? 'text-white/80' : 'text-[#5f6b73] dark:text-[#8696a0]'}`}>
+                                    <span className="text-[11px]">🚫</span>
+                                    <span>This message was deleted</span>
+                                    <span className="text-[11px] not-italic ml-auto font-normal">
                                       {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                     </span>
                                   </div>
                                 ) : (
                                   <>
                                     {msg.replyTo && (
-                                      <div className="mb-2 p-[8px_10px] rounded-[14px] border-l-[4px] border-white/90 bg-black/20 text-white text-[14px] max-w-full overflow-hidden">
-                                        <p className="font-bold text-[14px] truncate text-white">{msg.replyTo.sender?.name}</p>
-                                        <p className="truncate font-normal mt-0.5 text-white/90">{msg.replyTo.message}</p>
+                                      <div className={`mb-1.5 p-1.5 px-2 rounded-[6px] border-l-[4px] border-white/80 ${isOwn ? 'bg-black/20 text-white' : 'border-[#0f7a52] bg-black/5 dark:bg-white/5'} text-[12.5px] max-w-full overflow-hidden`}>
+                                        <p className="font-semibold text-[11.5px] truncate">{msg.replyTo.sender?.name}</p>
+                                        <p className="truncate font-normal mt-0.5 text-[12px] opacity-80">{msg.replyTo.message}</p>
                                       </div>
                                     )}
 
                                     {/* Attachments */}
                                     {msg.attachmentUrl && (
-                                      <div className="mb-1.5 max-w-full overflow-hidden">
+                                      <div className="mb-1 max-w-full overflow-hidden">
                                         {isVid ? (
-                                          /* ─── VIDEO BUBBLE (Thumbnail + Centered Play Button Overlay) ─── */
+                                          /* ─── VIDEO BUBBLE ─── */
                                           <div
-                                            className="relative group/vid overflow-hidden rounded-[18px] cursor-pointer max-w-full"
+                                            className="relative group/vid overflow-hidden rounded-[6px] cursor-pointer max-w-full"
                                             onClick={() => setLightboxMedia({ url: `${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`, type: 'VIDEO' })}
                                           >
                                             <video
                                               src={`${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`}
                                               preload="metadata"
-                                              className="max-h-72 max-w-full w-auto rounded-[18px] object-cover pointer-events-none"
+                                              className="max-h-64 max-w-full w-auto rounded-[6px] object-cover pointer-events-none"
                                             />
-                                            {/* Centered Play Button Overlay */}
-                                            <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover/vid:bg-black/45 transition-colors rounded-[18px]">
-                                              <div className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white border-2 border-white/90 shadow-xl group-hover/vid:scale-110 transition-transform">
-                                                <Play className="h-6 w-6 fill-current ml-1 text-white" />
+                                            <div className="absolute inset-0 flex items-center justify-center bg-black/25 group-hover/vid:bg-black/35 transition-colors rounded-[6px]">
+                                              <div className="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md flex items-center justify-center text-white border border-white/80 shadow-lg group-hover/vid:scale-110 transition-transform">
+                                                <Play className="h-5 w-5 fill-current ml-0.5 text-white" />
                                               </div>
                                             </div>
                                           </div>
                                         ) : isAudio ? (
-                                          /* ─── AUDIO PLAYER BUBBLE (WhatsApp Desktop Voice/Audio Player) ─── */
+                                          /* ─── AUDIO PLAYER BUBBLE ─── */
                                           <AudioPlayer url={`${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`} />
                                         ) : isImg ? (
-                                          /* ─── IMAGE BUBBLE (Image Preview Only) ─── */
+                                          /* ─── IMAGE BUBBLE ─── */
                                           <div
-                                            className="relative group/img overflow-hidden rounded-[18px] cursor-pointer max-w-full"
+                                            className="relative group/img overflow-hidden rounded-[6px] cursor-pointer max-w-full"
                                             onClick={() => setLightboxMedia({ url: `${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`, type: 'IMAGE' })}
                                           >
                                             <img
                                               src={`${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`}
                                               alt=""
-                                              className="max-h-72 max-w-full w-auto rounded-[18px] object-cover hover:opacity-95 transition-opacity"
+                                              className="max-h-64 max-w-full w-auto rounded-[6px] object-cover hover:opacity-95 transition-opacity"
                                             />
                                           </div>
                                         ) : (
-                                          /* ─── DOCUMENT CARD (PDF, ZIP, DOCX, XLSX, etc.) ─── */
+                                          /* ─── DOCUMENT CARD ─── */
                                           <button
                                             type="button"
                                             onClick={() => downloadChatAttachment(msg)}
-                                            className="flex items-center gap-2.5 p-2.5 rounded-[18px] bg-white/15 text-white hover:bg-white/25 transition-all group/file border border-white/15 w-full max-w-full min-w-0 overflow-hidden text-left cursor-pointer"
+                                            className={`flex items-center gap-2.5 p-2 rounded-[6px] ${isOwn ? 'bg-white/15 hover:bg-white/25 text-white border-white/15' : 'bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 border-black/5 dark:border-white/5'} transition-all group/file border w-full max-w-full min-w-0 overflow-hidden text-left cursor-pointer`}
                                           >
-                                            <div className="w-9 h-9 rounded-[14px] bg-white/20 text-white flex items-center justify-center shrink-0">
-                                              <fileCard.icon className="h-4.5 w-4.5 text-white" />
+                                            <div className="w-8 h-8 rounded-[6px] bg-white/20 text-white flex items-center justify-center shrink-0">
+                                              <fileCard.icon className="h-4 w-4" />
                                             </div>
 
                                             <div className="truncate text-left flex-1 min-w-0 pr-1">
-                                              <p className="text-[15px] font-semibold truncate text-white leading-snug">
+                                              <p className="text-[13.5px] font-medium truncate leading-tight">
                                                 {getCleanFileName(msg)}
                                               </p>
                                               {msg.fileSize && (
-                                                <p className="text-[12px] text-white/85 font-medium mt-0.5 select-none">
+                                                <p className="text-[11px] opacity-80 font-normal mt-0.5 select-none">
                                                   {formatFileSize(msg.fileSize)}
                                                 </p>
                                               )}
                                             </div>
 
-                                            <div className="w-7 h-7 rounded-full bg-white/20 hover:bg-white/35 text-white flex items-center justify-center shrink-0 ml-auto transition-transform group-hover/file:scale-110">
-                                              <Download className="h-3.5 w-3.5 text-white" />
+                                            <div className="w-6.5 h-6.5 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center shrink-0 ml-auto transition-transform group-hover/file:scale-110">
+                                              <Download className="h-3 w-3" />
                                             </div>
                                           </button>
                                         )}
                                       </div>
                                     )}
 
-                                    {/* WhatsApp Inline Text Caption & Timestamp Flow */}
-                                    <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-0.5">
-                                      {isImg || isVid ? (
-                                        captionText ? (
-                                          <span className="break-words text-white text-[18px] leading-[1.45] font-medium tracking-normal mt-1">
-                                            {captionText}
-                                          </span>
-                                        ) : (
-                                          <span className="flex-1" />
-                                        )
-                                      ) : msg.attachmentUrl ? (
-                                        /* For File Attachments with optional user comment */
-                                        captionText ? (
-                                          <span className="break-words text-white text-[16px] leading-[1.4] font-medium tracking-normal mt-1">
-                                            {captionText}
-                                          </span>
-                                        ) : (
-                                          <span className="flex-1" />
-                                        )
-                                      ) : (
-                                        <span className="break-words text-white text-[16px] leading-[1.4] font-medium tracking-normal">
-                                          {msg.message}
-                                        </span>
-                                      )}
-
-                                      <span className="inline-flex items-center gap-1 text-[11px] font-medium select-none ml-auto shrink-0 pb-0.5 translate-y-[2px] text-white/85">
+                                    {/* Text Content & Inline Bottom-Right Timestamp */}
+                                    <div className="text-[14px] leading-[20px] font-normal break-words [word-break:break-word] [overflow-wrap:anywhere] whitespace-pre-wrap select-text">
+                                      {msg.attachmentUrl ? captionText : msg.message}
+                                      <span className={`inline-flex items-center gap-0.5 text-[11px] font-normal select-none float-right ml-3 mt-1.5 -mr-0.5 ${isOwn ? 'text-white/80' : 'text-[#5f6b73] dark:text-[#8696a0]'}`}>
                                         {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                         {isOwn && (
                                           msg.reads && msg.reads.length > 0 ? (
-                                            <CheckCheck className="h-3.5 w-3.5 text-[#D6FFF4] fill-current ml-0.5" title="Read ✓✓" />
+                                            <CheckCheck className="h-3.5 w-3.5 text-[#53bdeb] bg-transparent border-none shadow-none p-0 ml-1 shrink-0" title="Read ✓✓" />
                                           ) : (
-                                            <Check className="h-3.5 w-3.5 text-white/70 ml-0.5" title="Sent ✓" />
+                                            <Check className="h-3.5 w-3.5 text-white/80 bg-transparent border-none shadow-none p-0 ml-1 shrink-0" title="Sent ✓" />
                                           )
                                         )}
                                       </span>
@@ -1721,9 +1797,9 @@ const Chat = () => {
                           <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-primary/10 text-primary border border-primary/20">
                             {(roomDetails?.otherUser?.role || activeRoom.otherUser?.role) === 'ADMIN' ? 'Admin' : (roomDetails?.otherUser?.role || activeRoom.otherUser?.role) === 'TEAM_LEADER' ? 'Team Leader' : (roomDetails?.otherUser?.role || activeRoom.otherUser?.role) || 'User'}
                           </span>
-                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${onlineUserIds.has(roomDetails?.otherUser?.id || activeRoom.otherUser?.id) ? 'bg-primary/10 text-primary border-primary/20' : 'bg-slate-400/10 text-slate-400 border-slate-400/20'
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full border ${isUserOnline(roomDetails?.otherUser?.id || activeRoom.otherUser?.id) ? 'bg-primary/10 text-primary border-primary/20' : 'bg-slate-400/10 text-slate-400 border-slate-400/20'
                             }`}>
-                            {onlineUserIds.has(roomDetails?.otherUser?.id || activeRoom.otherUser?.id) ? '🟢 Online' : '⚪ Offline'}
+                            {isUserOnline(roomDetails?.otherUser?.id || activeRoom.otherUser?.id) ? '🟢 Online' : '⚪ Offline'}
                           </span>
                         </div>
                       </div>
@@ -1866,7 +1942,7 @@ const Chat = () => {
 
                       <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
                         {(roomDetails?.members || activeRoom.members || []).map((m) => {
-                          const isOnline = onlineUserIds.has(m.id);
+                          const isOnline = isUserOnline(m.id);
                           const isTL = roomDetails?.team?.leaderId === m.id || activeRoom.team?.leaderId === m.id || m.role === 'TEAM_LEADER';
 
                           return (
@@ -2369,6 +2445,56 @@ const Chat = () => {
           </div>
         </div>
       )}
+
+      {/* DELETE CHAT GROUP CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {showDeleteGroupModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-card border border-border/80 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 text-left"
+            >
+              <div className="flex items-center gap-3 border-b border-border/60 pb-4">
+                <div className="p-3 rounded-2xl bg-rose-500/10 text-rose-600 border border-rose-500/20">
+                  <Trash2 className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-foreground">Delete Chat Group</h3>
+                  <p className="text-xs text-muted-foreground font-medium">Permanent Deletion Action</p>
+                </div>
+              </div>
+
+              <div className="space-y-3 bg-muted/20 p-4 rounded-2xl border border-border/60 text-xs font-medium text-foreground">
+                <p className="text-muted-foreground leading-relaxed">
+                  Are you sure you want to delete this chat group? This action cannot be undone and all messages in this group will be permanently deleted.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2 border-t border-border/60">
+                <button
+                  type="button"
+                  disabled={deletingGroup}
+                  onClick={() => setShowDeleteGroupModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deletingGroup}
+                  onClick={handleDeleteGroup}
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>{deletingGroup ? 'Deleting...' : 'Delete Group'}</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Toast Notification */}
       {toastMessage && (
