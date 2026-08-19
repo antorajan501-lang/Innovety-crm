@@ -189,6 +189,37 @@ const validateAttendanceWindow = ({ userRole, settings, attendanceRecord, approv
   };
 };
 
+const calculateHaversineDistance = (lat1, lon1, lat2, lon2) => {
+  const numLat1 = parseFloat(lat1);
+  const numLon1 = parseFloat(lon1);
+  const numLat2 = parseFloat(lat2);
+  const numLon2 = parseFloat(lon2);
+
+  if (isNaN(numLat1) || isNaN(numLon1) || isNaN(numLat2) || isNaN(numLon2)) {
+    return NaN;
+  }
+
+  const R = 6371000; // Radius of Earth in meters
+  const dLat = (numLat2 - numLat1) * (Math.PI / 180);
+  const dLon = (numLon2 - numLon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(numLat1 * (Math.PI / 180)) * Math.cos(numLat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c; // Distance in meters
+};
+
+const formatDistance = (meters) => {
+  if (meters === null || meters === undefined || isNaN(meters)) return 'Unknown';
+  const m = Math.round(meters);
+  if (m < 1000) {
+    return `${m} m`;
+  }
+  const km = (m / 1000).toFixed(1);
+  return `${km} km`;
+};
+
 module.exports = {
   format12Hour,
   getSystemTimeZone,
@@ -196,5 +227,8 @@ module.exports = {
   createZonedDate,
   getTodayZonedDate,
   getShiftWindowDates,
-  validateAttendanceWindow
+  validateAttendanceWindow,
+  calculateHaversineDistance,
+  formatDistance
 };
+

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Calendar, ArrowRight, Clock, Users, Check, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar, ArrowRight, Clock, Check, X, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
@@ -31,7 +31,7 @@ const LeaveOverviewCard = ({
   const fetchLeaves = async () => {
     try {
       const res = await api.get('/leaves');
-      const data = Array.isArray(res.data) ? res.data : [];
+      const data = Array.isArray(res.data) ? res.data : (res.data?.leaves || []);
       setLeaveList(data);
     } catch (e) {
       console.error('Failed to refresh leave overview stats:', e);
@@ -55,60 +55,59 @@ const LeaveOverviewCard = ({
   const isAdmin = user?.role === 'ADMIN';
   const isTL = user?.role === 'TEAM_LEADER';
 
-  // Target route for View All
-  const viewAllRoute = isTL ? '/leaves' : '/leave-management';
+  // Target route for View All & Review action
+  const viewAllRoute = isTL ? '/leaves?tab=Sanction' : '/leave-management?tab=Sanction';
 
-  // Filter team-scoped leaves if TL or teamMembers provided
-  const filteredLeaveList = useMemo(() => {
+  // Actionable Pending Leave Requests (Single Source of Truth matching Sanction Approval Queue)
+  const pendingRequests = useMemo(() => {
     return leaveList.filter(l => {
       if (!l) return false;
 
-      // Exclude logged in user's own leave requests on TL dashboard
-      if (isTL) {
-        const isSelf = l.userId === user?.id || l.user?.id === user?.id;
-        if (isSelf) return false;
-      }
+      // Self-approval prevention: exclude user's own leave requests from their approval queue
+      const isSelf = l.userId === user?.id || l.user?.id === user?.id;
+      if (isSelf) return false;
 
-      // If teamMembers array is passed, ensure request user is in team
+      // If teamMembers array is passed (e.g. TL scope), ensure request user is in team
       if (Array.isArray(teamMembers) && teamMembers.length > 0) {
         const teamUserIds = new Set(teamMembers.map(m => m.id || m.userId));
         const reqUserId = l.userId || l.user?.id;
         if (!teamUserIds.has(reqUserId)) return false;
       }
 
-      return true;
-    });
-  }, [leaveList, isTL, user?.id, teamMembers]);
+      // Single Source of Truth for Pending Statuses
+      if (isAdmin || isSuperAdmin) {
+        return ['PENDING_ADMIN_APPROVAL', 'PENDING_TL_APPROVAL', 'PENDING'].includes(l.status);
+      }
+      if (isTL) {
+        return ['PENDING_TL_APPROVAL', 'PENDING'].includes(l.status);
+      }
 
-  const isActionable = (req) => {
-    if (!req || isSuperAdmin) return false;
-    if (isAdmin) return req.status === 'PENDING_ADMIN_APPROVAL';
-    if (isTL) return req.status === 'PENDING_TL_APPROVAL';
-    return false;
-  };
-
-  // 1. Pending Leave Requests (Strict role queue)
-  const pendingRequests = useMemo(() => {
-    return filteredLeaveList.filter(l => {
-      if (isAdmin) return l.status === 'PENDING_ADMIN_APPROVAL';
-      if (isTL) return l.status === 'PENDING_TL_APPROVAL';
-      return ['PENDING_ADMIN_APPROVAL', 'PENDING_TL_APPROVAL'].includes(l.status);
+      return ['PENDING_ADMIN_APPROVAL', 'PENDING_TL_APPROVAL', 'PENDING'].includes(l.status);
     });
-  }, [filteredLeaveList, isAdmin, isTL]);
+  }, [leaveList, isAdmin, isSuperAdmin, isTL, user?.id, teamMembers]);
 
   const pendingCount = pendingRequests.length;
 
-  // 2. Summary Counters (Approved Today, Rejected Today, On Leave Today)
+  const isActionable = (req) => {
+    if (!req || isSuperAdmin) return false;
+    const isSelf = req.userId === user?.id || req.user?.id === user?.id;
+    if (isSelf) return false;
+    if (isAdmin) return ['PENDING_ADMIN_APPROVAL', 'PENDING_TL_APPROVAL', 'PENDING'].includes(req.status);
+    if (isTL) return ['PENDING_TL_APPROVAL', 'PENDING'].includes(req.status);
+    return false;
+  };
+
+  // Summary Counter (On Leave Today)
   const todayStr = new Date().toISOString().split('T')[0];
 
   const onLeaveToday = useMemo(() => {
-    return filteredLeaveList.filter(l => {
+    return leaveList.filter(l => {
       if (l.status !== 'APPROVED') return false;
       const start = new Date(l.startDate).toISOString().split('T')[0];
       const end = new Date(l.endDate || l.startDate).toISOString().split('T')[0];
       return todayStr >= start && todayStr <= end;
     }).length;
-  }, [filteredLeaveList, todayStr]);
+  }, [leaveList, todayStr]);
 
   // Keep activeIndex within valid bounds when pending list changes
   useEffect(() => {
@@ -155,7 +154,7 @@ const LeaveOverviewCard = ({
       isOpen: true,
       type,
       request,
-      remarks: type === 'APPROVE' ? 'Recommended by Team Leader' : '',
+      remarks: type === 'APPROVE' ? 'Recommended by Approver' : '',
       submitting: false,
       error: null
     });
@@ -245,7 +244,7 @@ const LeaveOverviewCard = ({
       <div className="relative w-full h-[62px] rounded-2xl border border-border/50 bg-background/60 p-2 flex items-center justify-between overflow-hidden shadow-xs select-none">
         {pendingRequests.length === 0 ? (
           <div className="w-full text-center text-xs text-muted-foreground font-medium py-2">
-            🎉 No pending leave requests requiring review.
+            No pending leave requests requiring review.
           </div>
         ) : (
           <div className="w-full flex items-center gap-2">
@@ -284,9 +283,9 @@ const LeaveOverviewCard = ({
                       <span className="font-bold text-foreground hover:text-primary transition-colors block text-xs whitespace-nowrap">
                         {activeRequest?.user?.name || 'Employee'}
                       </span>
-                      <span className="text-[10px] text-muted-foreground font-mono block">
-                        {activeRequest?.user?.employeeId || activeRequest?.user?.internId || activeRequest?.user?.id?.substring(0, 8) || 'EM-000'}
-                      </span>
+                        <span className="text-[10px] text-muted-foreground font-mono block">
+                          {activeRequest?.user?.employeeId || activeRequest?.user?.internId || activeRequest?.user?.id?.substring(0, 8) || 'EM-000'}
+                        </span>
                     </div>
                   </div>
 
@@ -305,33 +304,41 @@ const LeaveOverviewCard = ({
                     </span>
                   </div>
 
-                  {/* 3. Duration */}
+                  {/* 3. Duration & Dates */}
                   <div className="shrink-0 flex items-baseline gap-1 text-xs">
                     <span className="font-black text-foreground">{getDurationDisplay(activeRequest).split(' ')[0]}</span>
                     <span className="text-[11px] font-semibold text-muted-foreground">{getDurationDisplay(activeRequest).split(' ')[1] || 'Day'}</span>
+                    <span className="hidden lg:inline text-[10px] font-mono text-muted-foreground ml-1">
+                      ({activeRequest?.startDate ? new Date(activeRequest.startDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ''})
+                    </span>
                   </div>
 
                   {/* 4. Status Badge */}
                   <div className="hidden md:block shrink-0">
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/10 text-amber-600 border border-amber-500/20">
                       <Clock className="h-3 w-3" />
-                      <span>
-                        {activeRequest?.status === 'PENDING_TL_APPROVAL' || activeRequest?.status === 'PENDING'
-                          ? 'Pending Review'
-                          : 'Pending Admin Approval'}
-                      </span>
+                      <span>PENDING</span>
                     </span>
                   </div>
 
-                  {/* 5. Quick Action Buttons */}
+                  {/* 5. Review & Quick Actions */}
                   <div className="shrink-0 flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                    {isActionable(activeRequest) ? (
+                    <button
+                      type="button"
+                      onClick={() => navigate(viewAllRoute)}
+                      className="px-2.5 py-1 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary font-extrabold border border-primary/20 text-[11px] flex items-center gap-1 cursor-pointer transition-all"
+                      title="Review in Leave Management"
+                    >
+                      <Eye className="h-3 w-3" />
+                      <span>Review</span>
+                    </button>
+                    {isActionable(activeRequest) && (
                       <>
                         <button
                           type="button"
                           onClick={(e) => handleOpenActionModal(e, activeRequest, 'APPROVE')}
                           className="h-7 w-7 rounded-full btn-primary text-white flex items-center justify-center shadow-xs transition-all cursor-pointer"
-                          title="Approve / Recommend"
+                          title="Approve / Sanction"
                         >
                           <Check className="h-3.5 w-3.5 stroke-[3]" />
                         </button>
@@ -344,8 +351,6 @@ const LeaveOverviewCard = ({
                           <X className="h-3.5 w-3.5 stroke-[3]" />
                         </button>
                       </>
-                    ) : (
-                      <span className="text-[10px] text-muted-foreground font-semibold px-1">View</span>
                     )}
                   </div>
                 </motion.div>

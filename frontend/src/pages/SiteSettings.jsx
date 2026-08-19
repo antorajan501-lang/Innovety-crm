@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../services/api';
-import { Save, Shield, Clock, Mail, Building, CheckCircle2, MapPin } from 'lucide-react';
+import { Save, Shield, Clock, Mail, Building, CheckCircle2, MapPin, Navigation, AlertCircle } from 'lucide-react';
 
 const SiteSettings = () => {
   const [settings, setSettings] = useState({
@@ -19,7 +19,9 @@ const SiteSettings = () => {
   });
 
   const [loading, setLoading] = useState(false);
+  const [gpsDetecting, setGpsDetecting] = useState(false);
   const [alert, setAlert] = useState(null);
+  const [capturedGps, setCapturedGps] = useState(null);
 
   const fetchSettings = async () => {
     try {
@@ -50,30 +52,65 @@ const SiteSettings = () => {
       setAlert({ type: 'error', message: 'Geolocation is not supported by your browser.' });
       return;
     }
+
+    setGpsDetecting(true);
+    setAlert(null);
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        const lat = parseFloat(position.coords.latitude.toFixed(6));
+        const lon = parseFloat(position.coords.longitude.toFixed(6));
+        
         setSettings(prev => ({
           ...prev,
-          officeLatitude: parseFloat(position.coords.latitude.toFixed(6)),
-          officeLongitude: parseFloat(position.coords.longitude.toFixed(6))
+          officeLatitude: lat,
+          officeLongitude: lon
         }));
-        setAlert({ type: 'success', message: 'GPS coordinates autofilled successfully.' });
+
+        setCapturedGps({ lat, lon });
+        setAlert({
+          type: 'success',
+          message: `Captured current GPS location (Lat: ${lat}, Lon: ${lon}). Click "Save Configuration" to update office geofence.`
+        });
+        setGpsDetecting(false);
       },
       (error) => {
         setAlert({ type: 'error', message: 'Failed to fetch GPS location: ' + error.message });
+        setGpsDetecting(false);
       },
-      { enableHighAccuracy: true }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     try {
       setLoading(true);
       setAlert(null);
 
       const earlyWin = parseInt(settings.earlyWindowMinutes, 10);
       const gracePer = parseInt(settings.gracePeriodMinutes, 10);
+      const lat = parseFloat(settings.officeLatitude);
+      const lon = parseFloat(settings.officeLongitude);
+      const radius = parseFloat(settings.allowedRadiusMeters);
+
+      if (isNaN(lat) || lat < -90 || lat > 90) {
+        setAlert({ type: 'error', message: 'Office Latitude must be a valid number between -90 and 90.' });
+        setLoading(false);
+        return;
+      }
+
+      if (isNaN(lon) || lon < -180 || lon > 180) {
+        setAlert({ type: 'error', message: 'Office Longitude must be a valid number between -180 and 180.' });
+        setLoading(false);
+        return;
+      }
+
+      if (isNaN(radius) || radius <= 0) {
+        setAlert({ type: 'error', message: 'Allowed Radius must be a positive number greater than 0.' });
+        setLoading(false);
+        return;
+      }
 
       if (isNaN(earlyWin) || earlyWin < 0 || earlyWin > 120) {
         setAlert({ type: 'error', message: 'Early Clock-In Window must be between 0 and 120 minutes.' });
@@ -88,16 +125,17 @@ const SiteSettings = () => {
       
       const payload = {
         ...settings,
-        officeLatitude: parseFloat(settings.officeLatitude),
-        officeLongitude: parseFloat(settings.officeLongitude),
-        allowedRadiusMeters: parseFloat(settings.allowedRadiusMeters),
+        officeLatitude: lat,
+        officeLongitude: lon,
+        allowedRadiusMeters: radius,
         earlyWindowMinutes: earlyWin,
         gracePeriodMinutes: gracePer
       };
 
       const res = await api.put('/settings', payload);
       setSettings(res.data);
-      setAlert({ type: 'success', message: 'System settings updated successfully.' });
+      setCapturedGps(null);
+      setAlert({ type: 'success', message: `Office Geofence updated successfully (Lat: ${res.data.officeLatitude}, Lon: ${res.data.officeLongitude}, Radius: ${res.data.allowedRadiusMeters}m).` });
       setLoading(false);
     } catch (err) {
       console.error(err);
@@ -109,9 +147,12 @@ const SiteSettings = () => {
   return (
     <div className="w-full max-w-[1600px] mx-auto space-y-6 animate-in fade-in duration-300 text-left pt-2 pb-10 px-2 sm:px-4">
       {alert && (
-        <div className={`flex items-center justify-between p-4 rounded-2xl border ${alert.type === 'success' ? 'border-primary/30 bg-primary/10 text-primary' : 'border-red-500/30 bg-red-500/10 text-red-500'} text-xs font-semibold`}>
-          <span>{alert.message}</span>
-          <button onClick={() => setAlert(null)} className="font-bold hover:opacity-75">✕</button>
+        <div className={`flex items-center justify-between p-4 rounded-2xl border ${alert.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'border-red-500/30 bg-red-500/10 text-red-500'} text-xs font-semibold`}>
+          <span className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            {alert.message}
+          </span>
+          <button onClick={() => setAlert(null)} className="font-bold hover:opacity-75 cursor-pointer">✕</button>
         </div>
       )}
 
@@ -176,11 +217,29 @@ const SiteSettings = () => {
               <button
                 type="button"
                 onClick={handleGPSAutofill}
-                className="text-[11px] bg-primary/10 hover:bg-primary/20 text-primary font-extrabold px-3.5 py-1.5 rounded-full border border-primary/20 transition-all cursor-pointer"
+                disabled={gpsDetecting}
+                className="flex items-center gap-1.5 text-[11px] bg-primary/10 hover:bg-primary/20 text-primary font-extrabold px-3.5 py-1.5 rounded-full border border-primary/20 transition-all cursor-pointer disabled:opacity-50"
               >
-                Use My Current Location
+                <Navigation className={`w-3.5 h-3.5 ${gpsDetecting ? 'animate-spin' : ''}`} />
+                {gpsDetecting ? 'Detecting GPS...' : 'Use My Current Location'}
               </button>
             </div>
+
+            {capturedGps && (
+              <div className="p-3.5 rounded-2xl border border-primary/30 bg-primary/10 flex items-center justify-between text-xs font-semibold animate-in fade-in">
+                <div className="flex items-center gap-2 text-primary font-bold">
+                  <Navigation className="w-4 h-4" />
+                  <span>Captured Location: Latitude: <code className="font-mono bg-background/80 px-2 py-0.5 rounded-md">{capturedGps.lat}</code> | Longitude: <code className="font-mono bg-background/80 px-2 py-0.5 rounded-md">{capturedGps.lon}</code></span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleSubmit()}
+                  className="px-3 py-1 bg-primary text-white rounded-xl text-[11px] font-black hover:bg-primary-hover transition-all cursor-pointer"
+                >
+                  Save Geofence Now
+                </button>
+              </div>
+            )}
 
             <div className="flex flex-col gap-1.5 mb-2">
               <label className="text-xs font-bold text-muted-foreground">Office Location Name / Address</label>
@@ -189,7 +248,7 @@ const SiteSettings = () => {
                 name="officeLocationName"
                 value={settings.officeLocationName || ''}
                 onChange={handleChange}
-                placeholder="e.g. Innoveity Office, Bangalore"
+                placeholder="e.g. Innoveity Office, Chennai"
                 className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
                 required
               />
@@ -200,11 +259,11 @@ const SiteSettings = () => {
                 <label className="text-xs font-bold text-muted-foreground">Office Latitude</label>
                 <input
                   type="number"
-                  step="0.000001"
+                  step="any"
                   name="officeLatitude"
-                  value={settings.officeLatitude}
+                  value={settings.officeLatitude ?? ''}
                   onChange={handleChange}
-                  placeholder="e.g. 12.971598"
+                  placeholder="e.g. 13.0827"
                   className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
                   required
                 />
@@ -214,11 +273,11 @@ const SiteSettings = () => {
                 <label className="text-xs font-bold text-muted-foreground">Office Longitude</label>
                 <input
                   type="number"
-                  step="0.000001"
+                  step="any"
                   name="officeLongitude"
-                  value={settings.officeLongitude}
+                  value={settings.officeLongitude ?? ''}
                   onChange={handleChange}
-                  placeholder="e.g. 77.594562"
+                  placeholder="e.g. 80.2707"
                   className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
                   required
                 />
@@ -229,7 +288,7 @@ const SiteSettings = () => {
                 <input
                   type="number"
                   name="allowedRadiusMeters"
-                  value={settings.allowedRadiusMeters}
+                  value={settings.allowedRadiusMeters ?? ''}
                   onChange={handleChange}
                   placeholder="e.g. 200"
                   className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
@@ -357,7 +416,7 @@ const SiteSettings = () => {
             <button
               type="submit"
               disabled={loading}
-              className="flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-xs font-bold text-white shadow-md shadow-primary/20 hover:bg-primary-hover active:scale-95 disabled:opacity-50 transition-all"
+              className="flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-xs font-bold text-white shadow-md shadow-primary/20 hover:bg-primary-hover active:scale-95 disabled:opacity-50 transition-all cursor-pointer"
             >
               <Save className="h-4 w-4 text-white" />
               {loading ? 'Saving Changes...' : 'Save Configuration'}

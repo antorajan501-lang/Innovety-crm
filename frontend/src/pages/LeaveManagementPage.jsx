@@ -39,7 +39,7 @@ const LeaveManagementPage = () => {
   return (
     <AdvancedLeaveFilterSuite
       leaves={leaves}
-      userRole={user?.role || 'ADMIN'}
+      userRole={user?.role || 'EMPLOYEE'}
       onRefresh={() => fetchLeaves(false)}
     />
   );

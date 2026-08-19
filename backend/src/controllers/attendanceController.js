@@ -7,7 +7,9 @@ const {
   getTodayZonedDate,
   getZonedParts,
   createZonedDate,
-  validateAttendanceWindow
+  validateAttendanceWindow,
+  calculateHaversineDistance,
+  formatDistance
 } = require('../utils/attendanceUtils');
 
 const parseInputDate = (inputVal, timeZone = 'Asia/Kolkata') => {
@@ -120,7 +122,13 @@ const getClockInStatus = async (req, res) => {
     res.json({
       ...validation,
       existingRecord: existing || null,
-      approvedLeave: approvedLeave || null
+      approvedLeave: approvedLeave || null,
+      geofence: {
+        officeLatitude: settings?.officeLatitude ?? 12.971598,
+        officeLongitude: settings?.officeLongitude ?? 77.594562,
+        allowedRadiusMeters: settings?.allowedRadiusMeters ?? 200.0,
+        officeLocationName: settings?.officeLocationName || 'Innoveity Headquarters'
+      }
     });
   } catch (error) {
     console.error('Get clock-in status error:', error);
@@ -141,14 +149,34 @@ const clockIn = async (req, res) => {
     const userId = req.user.id;
     const now = new Date();
 
-    const { workLocation = 'OFFICE', workLocationOther, location } = req.body;
+    const { latitude, longitude, workLocation = 'OFFICE', workLocationOther, location } = req.body;
+
+    // Validate GPS Coordinates
+    if (latitude === undefined || latitude === null || longitude === undefined || longitude === null || latitude === '' || longitude === '') {
+      return res.status(400).json({
+        success: false,
+        reason: 'LOCATION_REQUIRED',
+        message: 'Location permission is required to verify your location before Clock-In.'
+      });
+    }
+
+    const userLat = parseFloat(latitude);
+    const userLon = parseFloat(longitude);
+
+    if (isNaN(userLat) || isNaN(userLon) || userLat < -90 || userLat > 90 || userLon < -180 || userLon > 180) {
+      return res.status(400).json({
+        success: false,
+        reason: 'LOCATION_REQUIRED',
+        message: 'Unable to determine your current location. Please enable location services and try again.'
+      });
+    }
 
     const validLocations = ['OFFICE', 'HOME', 'OTHER'];
     if (!validLocations.includes(workLocation)) {
       return res.status(400).json({
         success: false,
         reason: 'INVALID_WORK_LOCATION',
-        message: 'Please select a valid work location (Office, Home, or Other).'
+        message: 'Please select a valid work location (Home or Other).'
       });
     }
 
@@ -163,6 +191,27 @@ const clockIn = async (req, res) => {
     const settings = await getOrCreateSystemSettings();
     const timeZone = getSystemTimeZone(settings);
     const todayDate = getTodayZonedDate(now, timeZone);
+
+    // Geofence Validation against Admin Configured Office Location
+    const officeLat = settings.officeLatitude ?? 12.971598;
+    const officeLon = settings.officeLongitude ?? 77.594562;
+    const allowedRadius = settings.allowedRadiusMeters ?? 200.0;
+
+    const distanceMeters = calculateHaversineDistance(userLat, userLon, officeLat, officeLon);
+    const isWithinRadius = !isNaN(distanceMeters) && distanceMeters <= allowedRadius;
+
+    // Security Rule: If outside permitted radius, user cannot claim OFFICE location
+    if (workLocation === 'OFFICE' && !isWithinRadius) {
+      return res.status(400).json({
+        success: false,
+        reason: 'OUTSIDE_GEOFENCE',
+        isOutside: true,
+        distanceMeters: Math.round(distanceMeters),
+        allowedRadiusMeters: allowedRadius,
+        formattedDistance: formatDistance(distanceMeters),
+        message: `You are currently outside the permitted location (${formatDistance(distanceMeters)} away). Allowed radius is ${allowedRadius}m.`
+      });
+    }
 
     // Check if user already clocked in today
     const existing = await prisma.attendance.findUnique({
@@ -248,6 +297,8 @@ const clockIn = async (req, res) => {
     const formattedLocationStr = workLocation === 'OTHER'
       ? workLocationOther.trim()
       : (workLocation === 'HOME' ? 'Home (Remote)' : 'Office');
+    const formattedGeofenceDetails = `Lat: ${userLat.toFixed(6)}, Lon: ${userLon.toFixed(6)} (${formatDistance(distanceMeters)} from Office)`;
+    const clockInLocDisplay = location || `${formattedLocationStr} • ${formattedGeofenceDetails}`;
 
     const attendance = await prisma.attendance.create({
       data: {
@@ -258,7 +309,7 @@ const clockIn = async (req, res) => {
         browser,
         device,
         status: finalStatus,
-        clockInLocation: location || formattedLocationStr,
+        clockInLocation: clockInLocDisplay,
         workLocation,
         workLocationOther: workLocation === 'OTHER' ? workLocationOther.trim() : null,
         lateMinutes,

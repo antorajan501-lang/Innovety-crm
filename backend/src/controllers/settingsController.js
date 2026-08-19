@@ -59,6 +59,17 @@ const updateSettings = async (req, res) => {
       return res.status(400).json({ message: 'Grace Period must be between 0 and 120 minutes.' });
     }
 
+    // Validate geofence location settings
+    if (officeLatitude !== undefined && (isNaN(officeLatitude) || officeLatitude < -90 || officeLatitude > 90)) {
+      return res.status(400).json({ message: 'Office Latitude must be a valid coordinate between -90 and 90.' });
+    }
+    if (officeLongitude !== undefined && (isNaN(officeLongitude) || officeLongitude < -180 || officeLongitude > 180)) {
+      return res.status(400).json({ message: 'Office Longitude must be a valid coordinate between -180 and 180.' });
+    }
+    if (allowedRadiusMeters !== undefined && (isNaN(allowedRadiusMeters) || allowedRadiusMeters <= 0)) {
+      return res.status(400).json({ message: 'Allowed Radius must be a positive number greater than 0 meters.' });
+    }
+
     const updated = await prisma.systemSettings.upsert({
       where: { id: 'GLOBAL' },
       update: {
