@@ -353,8 +353,8 @@ const getProjects = async (req, res) => {
 
     let whereClause = { isDeleted: false };
 
-    // Role-based filtering: non-ADMIN users see projects where they are creator, leader, team member, or project member
-    if (userRole !== 'ADMIN') {
+    // Role-based filtering: non-ADMIN/SUPER_ADMIN users see projects where they are creator, leader, team member, or project member
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
       whereClause = {
         isDeleted: false,
         OR: [
@@ -533,7 +533,7 @@ const updateProject = async (req, res) => {
 
     // Role check: Admin or assigned Project Leader can update
     const isLeader = existingProject.leaderId === req.user.id;
-    const isAdmin = req.user.role === 'ADMIN';
+    const isAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(req.user.role);
 
     if (!isAdmin && !isLeader) {
       return res.status(403).json({ message: 'Only Admins or Project Leaders can update this project.' });
@@ -757,7 +757,7 @@ const deleteProject = async (req, res) => {
       return res.status(404).json({ message: 'Project not found.' });
     }
 
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Admins can delete projects.' });
     }
 

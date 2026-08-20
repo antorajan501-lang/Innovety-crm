@@ -308,57 +308,63 @@ const DashboardLayout = ({ children }) => {
     {
       title: 'Workspaces',
       items: [
-        { label: 'Projects', path: '/projects', icon: FolderOpen, roles: ['ADMIN', 'TEAM_LEADER'] },
-        { label: 'Active Board', path: '/tasks?tab=Board', icon: Layers, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-        { label: 'Roadmap', path: '/tasks?tab=Timeline', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-        { label: 'Repositories', path: '/tasks?tab=Code', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] }
+        { label: 'Projects', path: '/projects', icon: FolderOpen, roles: ['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN'] },
+        { label: 'Active Board', path: '/tasks?tab=Board', icon: Layers, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
+        { label: 'Roadmap', path: '/tasks?tab=Timeline', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
+        { label: 'Repositories', path: '/tasks?tab=Code', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] }
       ]
     },
     {
       title: 'Communication',
       items: [
-        { label: 'Chat', path: '/chat', icon: MessageSquare, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-        { label: 'Announcements', path: '/announcements', icon: Megaphone, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] }
+        { label: 'Chat', path: '/chat', icon: MessageSquare, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
+        { label: 'Announcements', path: '/announcements', icon: Megaphone, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] }
       ]
     },
 
     {
       title: 'Operations',
       items: [
-        { label: 'My Work Logs', path: '/worklogs', icon: Clock, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+        { label: 'My Work Logs', path: '/worklogs', icon: Clock, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
         { label: 'Attendance Portal', path: '/attendance', icon: Clock, roles: ['INTERN', 'TEAM_LEADER', 'EMPLOYEE'] },
-        { label: 'Attendance Audit', path: '/attendance-audit', icon: Clock, roles: ['ADMIN', 'TEAM_LEADER'] },
+        { label: 'Attendance Audit', path: '/attendance-audit', icon: Clock, roles: ['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN'] },
         { label: 'Leave Management', path: '/leave-management', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
         { label: 'Work Calendar', path: '/operations/work-calendar', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
-        { label: 'Ticket Desk', path: '/tickets', icon: Ticket, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
+        { label: 'Ticket Desk', path: '/tickets', icon: Ticket, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
 
-        { label: 'Asset Management', path: '/assets', icon: Laptop, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] }
+        { label: 'Asset Management', path: '/assets', icon: Laptop, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] }
       ]
     },
     {
       title: 'Finance & Payroll',
       items: [
         { label: 'Payroll Dashboard', path: '/payroll/dashboard', icon: BarChart3, roles: ['ADMIN', 'SUPER_ADMIN'] },
-        { label: 'Salary Templates', path: '/payroll/templates', icon: FileText, roles: ['ADMIN'] },
-        { label: 'Salary Structures', path: '/payroll/structures', icon: Users, roles: ['ADMIN'] },
-        { label: 'Payroll Processing', path: '/payroll/processing', icon: Layers, roles: ['ADMIN'] },
-        { label: 'Payslips Desk', path: '/payroll/payslips', icon: FileCode, roles: ['ADMIN'] },
-        { label: 'Holiday Calendar', path: '/payroll/holidays', icon: Calendar, roles: ['ADMIN'] },
+        { label: 'Salary Templates', path: '/payroll/templates', icon: FileText, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Salary Structures', path: '/payroll/structures', icon: Users, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Payroll Processing', path: '/payroll/processing', icon: Layers, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Payslips Desk', path: '/payroll/payslips', icon: FileCode, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Holiday Calendar', path: '/payroll/holidays', icon: Calendar, roles: ['ADMIN', 'SUPER_ADMIN'] },
         { label: 'Payroll Reports', path: '/payroll/reports', icon: BarChart3, roles: ['ADMIN', 'SUPER_ADMIN'] },
-        { label: 'Payroll Settings', path: '/payroll/settings', icon: Settings, roles: ['ADMIN'] },
+        { label: 'Payroll Settings', path: '/payroll/settings', icon: Settings, roles: ['ADMIN', 'SUPER_ADMIN'] },
         { label: 'My Payslips & Salary', path: '/my-payroll', icon: FileText, roles: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'] }
       ]
     },
     {
       title: 'System Control',
       items: [
-        { label: 'Intern Registry', path: '/interns', icon: Users, roles: ['ADMIN'] },
-        { label: 'Employee Registry', path: '/employees', icon: Users, roles: ['ADMIN'] },
-        { label: 'Team Leader Registry', path: '/team-leaders', icon: Users, roles: ['ADMIN'] },
+        { label: 'Intern Registry', path: '/interns', icon: Users, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Employee Registry', path: '/employees', icon: Users, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Team Leader Registry', path: '/team-leaders', icon: Users, roles: ['ADMIN', 'SUPER_ADMIN'] },
         { label: 'Team Hub', path: '/teams', icon: Briefcase, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-        { label: 'Report Center', path: '/reports', icon: BarChart3, roles: ['ADMIN', 'TEAM_LEADER'] },
-        { label: 'Audit Logs', path: '/audit-logs', icon: History, roles: ['ADMIN'] },
-        { label: 'Site Settings', path: '/settings', icon: ShieldCheck, roles: ['ADMIN'] }
+        { label: 'Report Center', path: '/reports', icon: BarChart3, roles: ['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN'] },
+        { label: 'Audit Logs', path: '/audit-logs', icon: History, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Site Settings', path: '/settings', icon: ShieldCheck, roles: ['ADMIN', 'SUPER_ADMIN'] }
+      ]
+    },
+    {
+      title: 'Account',
+      items: [
+        { label: 'My Profile', path: '/profile', icon: UserIcon, roles: ['SUPER_ADMIN'] }
       ]
     }
   ];

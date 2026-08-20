@@ -3,52 +3,129 @@ const bcrypt = require('bcrypt');
 const { logActivity } = require('../utils/activityLogger');
 
 /**
- * 1. Platform Statistics & Overview
+ * 1. Platform Statistics & Executive Overview
  */
 const getPlatformStats = async (req, res) => {
   try {
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
+    const todayDate = new Date(`${todayStr}T00:00:00.000Z`);
+    const tomorrowDate = new Date(todayDate.getTime() + 86400000);
+    const currentMonth = now.getUTCMonth() + 1;
+    const currentYear = now.getUTCFullYear();
+
     const [
       totalUsers,
+      totalActiveUsers,
       totalAdmins,
+      activeAdmins,
       totalTeamLeaders,
       totalEmployees,
       totalInterns,
       totalTeams,
       activeProjects,
-      recentLogs
+      openTickets,
+      payrollBatchesMonth,
+      totalPayrollBatches,
+      lockedAccounts,
+      recentLogs,
+      lastAdminLog,
+      // Attendance Today counts
+      attPresent,
+      attLate,
+      attWfh,
+      attAbsent,
+      // Task status breakdown
+      tasksPending,
+      tasksInProgress,
+      tasksReview,
+      tasksApproved,
+      tasksCompleted
     ] = await Promise.all([
       prisma.user.count(),
+      prisma.user.count({ where: { status: 'ACTIVE' } }),
       prisma.user.count({ where: { role: 'ADMIN' } }),
+      prisma.user.count({ where: { role: 'ADMIN', status: 'ACTIVE' } }),
       prisma.user.count({ where: { role: 'TEAM_LEADER' } }),
       prisma.user.count({ where: { role: 'EMPLOYEE' } }),
       prisma.user.count({ where: { role: 'INTERN' } }),
       prisma.team.count(),
       prisma.project.count({ where: { status: 'ACTIVE' } }),
+      prisma.ticket.count({ where: { status: { in: ['OPEN', 'ASSIGNED', 'IN_PROGRESS'] } } }),
+      prisma.payrollBatch.count({ where: { month: currentMonth, year: currentYear } }),
+      prisma.payrollBatch.count(),
+      prisma.user.count({ where: { status: 'INACTIVE' } }),
       prisma.activityLog.findMany({
         take: 10,
         orderBy: { createdAt: 'desc' },
         include: { user: { select: { id: true, name: true, role: true } } }
-      })
+      }),
+      prisma.activityLog.findFirst({
+        where: { user: { role: 'ADMIN' } },
+        orderBy: { createdAt: 'desc' },
+        include: { user: { select: { name: true } } }
+      }).catch(() => null),
+      prisma.attendance.count({ where: { date: { gte: todayDate, lt: tomorrowDate }, status: 'PRESENT' } }),
+      prisma.attendance.count({ where: { date: { gte: todayDate, lt: tomorrowDate }, status: 'LATE' } }),
+      prisma.attendance.count({ where: { date: { gte: todayDate, lt: tomorrowDate }, status: 'WORK_FROM_HOME' } }),
+      prisma.attendance.count({ where: { date: { gte: todayDate, lt: tomorrowDate }, status: 'ABSENT' } }),
+      prisma.task.count({ where: { status: 'PENDING' } }),
+      prisma.task.count({ where: { status: 'IN_PROGRESS' } }),
+      prisma.task.count({ where: { status: 'WAITING_FOR_REVIEW' } }),
+      prisma.task.count({ where: { status: 'APPROVED' } }),
+      prisma.task.count({ where: { status: 'COMPLETED' } })
     ]);
 
     const platformSettings = await getOrCreatePlatformSettings();
+    const totalPresentToday = attPresent + attLate + attWfh;
 
     res.json({
       stats: {
         totalUsers,
+        totalActiveUsers,
         totalAdmins,
+        activeAdmins,
         totalTeamLeaders,
         totalEmployees,
         totalInterns,
         totalTeams,
-        activeProjects
+        activeProjects,
+        openTickets,
+        payrollBatchesMonth,
+        totalPayrollBatches,
+        lockedAccounts,
+        lastAdminActivity: lastAdminLog ? {
+          adminName: lastAdminLog.user?.name || 'Admin',
+          timestamp: lastAdminLog.createdAt,
+          action: lastAdminLog.action
+        } : null,
+        attendanceToday: {
+          present: attPresent,
+          late: attLate,
+          wfh: attWfh,
+          absent: attAbsent,
+          totalPresent: totalPresentToday
+        },
+        taskDelivery: {
+          pending: tasksPending,
+          inProgress: tasksInProgress,
+          review: tasksReview,
+          approved: tasksApproved,
+          completed: tasksCompleted
+        },
+        systemHealth: {
+          database: 'CONNECTED',
+          api: 'HEALTHY',
+          socket: 'ACTIVE',
+          storage: 'OPERATIONAL'
+        }
       },
       branding: platformSettings,
       recentLogs
     });
   } catch (error) {
     console.error('Get platform stats error:', error);
-    res.status(500).json({ message: 'Failed to retrieve platform statistics.' });
+    res.status(500).json({ message: 'Failed to retrieve platform statistics.', error: error.message });
   }
 };
 

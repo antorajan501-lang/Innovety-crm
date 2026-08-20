@@ -56,7 +56,11 @@ const Login = () => {
 
   useEffect(() => {
     if (user) {
-      navigate('/', { replace: true });
+      if (user.role === 'SUPER_ADMIN') {
+        navigate('/super-admin/dashboard', { replace: true });
+      } else {
+        navigate('/', { replace: true });
+      }
     }
   }, [user, navigate]);
 
@@ -94,7 +98,12 @@ const Login = () => {
     const res = await login(userId, password);
     setLoading(false);
     if (res.success) {
-      navigate('/');
+      const loggedUserRole = res.user?.role || user?.role;
+      if (loggedUserRole === 'SUPER_ADMIN') {
+        navigate('/super-admin/dashboard');
+      } else {
+        navigate('/');
+      }
     } else {
       setError(res.message);
     }
