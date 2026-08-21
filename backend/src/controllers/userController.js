@@ -143,24 +143,20 @@ const createUser = async (req, res) => {
         if (!college && !companyName) return res.status(400).json({ message: 'College/University Name is required for Student.' });
         if (!degree) return res.status(400).json({ message: 'Degree is required for Student.' });
         if (!currentYearSemester) return res.status(400).json({ message: 'Current Year / Semester is required for Student.' });
-        if (!resumePath) return res.status(400).json({ message: 'Resume (PDF/DOC) is required for Student.' });
       } else if (candidateType === 'Graduate') {
         if (!college && !companyName) return res.status(400).json({ message: 'College/University Name is required for Graduate.' });
         if (!degree) return res.status(400).json({ message: 'Degree is required for Graduate.' });
         if (!graduationYear) return res.status(400).json({ message: 'Graduation Year is required for Graduate.' });
-        if (!resumePath) return res.status(400).json({ message: 'Resume (PDF/DOC) is required for Graduate.' });
       } else if (candidateType === 'Intern') {
         // Auto-assign internshipRole fallback without blocking onboarding
       } else if (candidateType === 'Fresher') {
         if (!highestQualification) return res.status(400).json({ message: 'Highest Qualification is required for Fresher.' });
         if (!graduationYear) return res.status(400).json({ message: 'Graduation Year is required for Fresher.' });
         if (!keySkills) return res.status(400).json({ message: 'Key Skills are required for Fresher.' });
-        if (!resumePath) return res.status(400).json({ message: 'Resume (PDF/DOC) is required for Fresher.' });
       } else if (candidateType === 'Professional') {
         if (!companyName && !college) return res.status(400).json({ message: 'Current / Previous Company is required for Professional.' });
         if (!designation) return res.status(400).json({ message: 'Designation is required for Professional.' });
         if (!totalExperience) return res.status(400).json({ message: 'Total Experience is required for Professional.' });
-        if (!resumePath) return res.status(400).json({ message: 'Resume (PDF/DOC) is required for Professional.' });
       }
     }
 
@@ -184,7 +180,7 @@ const createUser = async (req, res) => {
 
     let finalDepartmentName = department || null;
     if (!finalDepartmentName && departmentId) {
-      const deptObj = await prisma.department.findUnique({ where: { id: departmentId } });
+      const deptObj = await prisma.departmentMaster.findUnique({ where: { id: departmentId } });
       if (deptObj) {
         finalDepartmentName = deptObj.name;
       }
@@ -522,7 +518,7 @@ const editUser = async (req, res) => {
     if (departmentId !== undefined) {
       data.departmentId = departmentId || null;
       if (departmentId && !data.department) {
-        const deptObj = await prisma.department.findUnique({ where: { id: departmentId } });
+        const deptObj = await prisma.departmentMaster.findUnique({ where: { id: departmentId } });
         if (deptObj) {
           data.department = deptObj.name;
         }

@@ -352,9 +352,9 @@ const DashboardLayout = ({ children }) => {
     {
       title: 'System Control',
       items: [
-        { label: 'Intern Registry', path: '/interns', icon: Users, roles: ['ADMIN', 'SUPER_ADMIN'] },
-        { label: 'Employee Registry', path: '/employees', icon: Users, roles: ['ADMIN', 'SUPER_ADMIN'] },
-        { label: 'Team Leader Registry', path: '/team-leaders', icon: Users, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Intern Registry', path: '/interns', icon: Users, roles: ['ADMIN'] },
+        { label: 'Employee Registry', path: '/employees', icon: Users, roles: ['ADMIN'] },
+        { label: 'Team Leader Registry', path: '/team-leaders', icon: Users, roles: ['ADMIN'] },
         { label: 'Team Hub', path: '/teams', icon: Briefcase, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
         { label: 'Report Center', path: '/reports', icon: BarChart3, roles: ['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN'] },
         { label: 'Audit Logs', path: '/audit-logs', icon: History, roles: ['ADMIN', 'SUPER_ADMIN'] },

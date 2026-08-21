@@ -349,7 +349,7 @@ const CandidateTypeFields = ({
             {/* RESUME UPLOAD FIELD - spans full width inside grid */}
             <div className="flex flex-col gap-1.5 col-span-2 mt-1">
               <label className="text-xs font-semibold text-muted-foreground">
-                Resume (PDF/DOC/DOCX)
+                Resume (PDF/DOC/DOCX) <span className="text-[10px] font-normal text-muted-foreground/70">(Optional)</span>
               </label>
 
               <div className="relative flex items-center">
@@ -359,7 +359,6 @@ const CandidateTypeFields = ({
                   id="resume-file-input"
                   accept=".pdf,.doc,.docx"
                   onChange={onFileChange}
-                  required={!isEdit && !formData.resume}
                   className="absolute inset-0 opacity-0 cursor-pointer z-10 w-full h-full"
                 />
                 <div className="w-full flex items-center justify-between border border-border/60 bg-muted/30 dark:bg-slate-800/40 hover:border-primary/50 text-foreground px-3 py-2 text-xs rounded-xl transition-all duration-200 min-h-[36px]">
