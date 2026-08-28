@@ -413,6 +413,9 @@ model Attendance {
   shiftStartUsed   String?
   workLocation     String?          // OFFICE, HOME, OTHER
   workLocationOther String?        // Text description if OTHER
+  shiftEndAt       DateTime?
+  autoClockOut     Boolean          @default(false)
+  clockOutReason   String?
 
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -662,6 +665,9 @@ model SystemSettings {
   officeLocationName  String @default("Innoveity Headquarters")
   earlyWindowMinutes Int    @default(30)
   gracePeriodMinutes Int    @default(15)
+  clockInTime         String   @default("09:00") // Format HH:MM
+  clockOutTime        String   @default("18:00") // Format HH:MM
+  autoClockOutEnabled Boolean  @default(true)
   updatedAt        DateTime @updatedAt
 }
 
@@ -947,14 +953,29 @@ model WorkLog {
   hoursWorked  Float
   workDate     DateTime      @default(now())
   status       WorkLogStatus @default(APPROVED)
+  submittedAt  DateTime?
+  isDraft      Boolean       @default(false)
   approvedById String?
   approvedAt   DateTime?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
-  project      Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  task         Task?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project      Project?             @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  task         Task?                @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attachments  WorkLogAttachment[]
+}
+
+model WorkLogAttachment {
+  id         String   @id @default(uuid())
+  workLogId  String
+  fileName   String
+  fileType   String
+  fileSize   Int
+  filePath   String
+  uploadedAt DateTime @default(now())
+
+  workLog WorkLog @relation(fields: [workLogId], references: [id], onDelete: Cascade)
 }
 
 model AIFeedback {

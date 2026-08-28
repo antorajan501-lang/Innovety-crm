@@ -1,5 +1,7 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getSystemTimeZone, getTodayZonedDate, getZonedParts, createZonedDate } = require('../utils/attendanceUtils');
+const { broadcastAttendanceEvent } = require('../socket');
 
 const getSettings = async (req, res) => {
   try {
@@ -14,10 +16,13 @@ const getSettings = async (req, res) => {
           id: 'GLOBAL',
           companyName: 'INNOVEITY',
           senderEmail: 'somusuraj72@gmail.com',
-          internShiftStart: '09:30',
-          internShiftEnd: '18:30',
-          tlShiftStart: '09:30',
-          tlShiftEnd: '18:30',
+          internShiftStart: '09:00',
+          internShiftEnd: '18:00',
+          tlShiftStart: '09:00',
+          tlShiftEnd: '18:00',
+          clockInTime: '09:00',
+          clockOutTime: '18:00',
+          autoClockOutEnabled: true,
           officeLocationName: 'Innoveity Headquarters',
           earlyWindowMinutes: 30,
           gracePeriodMinutes: 15
@@ -25,7 +30,12 @@ const getSettings = async (req, res) => {
       });
     }
 
-    res.json(settings);
+    res.json({
+      ...settings,
+      clockInTime: settings.clockInTime || settings.internShiftStart || '09:00',
+      clockOutTime: settings.clockOutTime || settings.internShiftEnd || '18:00',
+      autoClockOutEnabled: settings.autoClockOutEnabled !== undefined ? settings.autoClockOutEnabled : true
+    });
   } catch (error) {
     console.error('Get settings error:', error);
     res.status(500).json({ message: 'Failed to retrieve system settings.' });
@@ -41,7 +51,10 @@ const updateSettings = async (req, res) => {
       internShiftEnd,
       tlShiftStart,
       tlShiftEnd,
-      officeLocationName
+      officeLocationName,
+      clockInTime,
+      clockOutTime,
+      autoClockOutEnabled
     } = req.body;
 
     const officeLatitude = req.body.officeLatitude !== undefined ? parseFloat(req.body.officeLatitude) : undefined;
@@ -70,15 +83,38 @@ const updateSettings = async (req, res) => {
       return res.status(400).json({ message: 'Allowed Radius must be a positive number greater than 0 meters.' });
     }
 
+    // Validate time format & Clock-Out > Clock-In
+    const timeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+    const effectiveClockIn = clockInTime || internShiftStart || '09:00';
+    const effectiveClockOut = clockOutTime || internShiftEnd || '18:00';
+
+    if (clockInTime !== undefined && !timeRegex.test(clockInTime)) {
+      return res.status(400).json({ message: 'Clock In Time must be in valid HH:MM 24-hour format (e.g. 09:00).' });
+    }
+    if (clockOutTime !== undefined && !timeRegex.test(clockOutTime)) {
+      return res.status(400).json({ message: 'Clock Out Time must be in valid HH:MM 24-hour format (e.g. 18:00).' });
+    }
+
+    const [inH, inM] = effectiveClockIn.split(':').map(Number);
+    const [outH, outM] = effectiveClockOut.split(':').map(Number);
+    if (outH * 60 + outM <= inH * 60 + inM) {
+      return res.status(400).json({ message: 'Clock-Out Time must be chronologically later than Clock-In Time.' });
+    }
+
+    const autoClockOutBool = autoClockOutEnabled !== undefined ? Boolean(autoClockOutEnabled) : undefined;
+
     const updated = await prisma.systemSettings.upsert({
       where: { id: 'GLOBAL' },
       update: {
         companyName,
         senderEmail,
-        internShiftStart,
-        internShiftEnd,
-        tlShiftStart,
-        tlShiftEnd,
+        internShiftStart: internShiftStart || clockInTime,
+        internShiftEnd: internShiftEnd || clockOutTime,
+        tlShiftStart: tlShiftStart || clockInTime,
+        tlShiftEnd: tlShiftEnd || clockOutTime,
+        clockInTime: clockInTime || internShiftStart,
+        clockOutTime: clockOutTime || internShiftEnd,
+        autoClockOutEnabled: autoClockOutBool,
         officeLatitude,
         officeLongitude,
         allowedRadiusMeters,
@@ -90,10 +126,13 @@ const updateSettings = async (req, res) => {
         id: 'GLOBAL',
         companyName: companyName || 'INNOVEITY',
         senderEmail: senderEmail || 'somusuraj72@gmail.com',
-        internShiftStart: internShiftStart || '09:30',
-        internShiftEnd: internShiftEnd || '18:30',
-        tlShiftStart: tlShiftStart || '09:30',
-        tlShiftEnd: tlShiftEnd || '18:30',
+        internShiftStart: internShiftStart || clockInTime || '09:00',
+        internShiftEnd: internShiftEnd || clockOutTime || '18:00',
+        tlShiftStart: tlShiftStart || clockInTime || '09:00',
+        tlShiftEnd: tlShiftEnd || clockOutTime || '18:00',
+        clockInTime: clockInTime || '09:00',
+        clockOutTime: clockOutTime || '18:00',
+        autoClockOutEnabled: autoClockOutBool !== undefined ? autoClockOutBool : true,
         officeLatitude: officeLatitude || 12.971598,
         officeLongitude: officeLongitude || 77.594562,
         allowedRadiusMeters: allowedRadiusMeters || 200.0,
@@ -103,11 +142,31 @@ const updateSettings = async (req, res) => {
       }
     });
 
+    // Synchronize today's active attendance records with the new shiftEndAt
+    const timeZone = getSystemTimeZone(updated);
+    const now = new Date();
+    const todayDate = getTodayZonedDate(now, timeZone);
+    const { year, month, day } = getZonedParts(now, timeZone);
+    const newShiftEndAt = createZonedDate(year, month, day, outH, outM, timeZone);
+
+    await prisma.attendance.updateMany({
+      where: {
+        clockOut: null,
+        date: todayDate
+      },
+      data: {
+        shiftEndAt: newShiftEndAt
+      }
+    });
+
     await logActivity({
       userId: req.user.id,
       action: 'SYSTEM_SETTINGS_UPDATE',
-      details: `Updated settings. Shift timings: Intern (${internShiftStart}-${internShiftEnd}), Admin (${tlShiftStart}-${tlShiftEnd}), Early Window: ${updated.earlyWindowMinutes}m, Grace Period: ${updated.gracePeriodMinutes}m`
+      details: `Updated settings. Clock In: ${updated.clockInTime}, Clock Out: ${updated.clockOutTime}, Auto Clock-Out: ${updated.autoClockOutEnabled ? 'ON' : 'OFF'}`
     });
+
+    broadcastAttendanceEvent('settings_updated', updated);
+    broadcastAttendanceEvent('attendance_updated', { shiftEndAt: newShiftEndAt, clockOutTime: updated.clockOutTime });
 
     res.json(updated);
   } catch (error) {

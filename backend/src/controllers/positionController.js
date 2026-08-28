@@ -211,7 +211,7 @@ const togglePositionStatus = async (req, res) => {
 
 /**
  * DELETE /api/positions/:id
- * Safe Deletion: Allowed only if position is INACTIVE and has ZERO assigned employees
+ * Deletes a position. Automatically unassigns any assigned employees before deleting.
  */
 const deletePosition = async (req, res) => {
   try {
@@ -226,28 +226,36 @@ const deletePosition = async (req, res) => {
       return res.status(404).json({ message: 'Position not found.' });
     }
 
-    if (position._count.users > 0) {
-      return res.status(400).json({
-        message: `Cannot delete position "${position.name}". It is currently assigned to ${position._count.users} employee(s). Please reassign them first.`
-      });
-    }
+    const assignedCount = position._count?.users || 0;
 
-    if (position.status !== 'INACTIVE') {
-      return res.status(400).json({
-        message: `Cannot delete active position "${position.name}". Please deactivate the position first before deleting.`
-      });
-    }
+    let employeesUnassigned = 0;
 
-    await prisma.position.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      // Step 1: Unassign position from all assigned employees
+      const updateResult = await tx.user.updateMany({
+        where: { positionId: id },
+        data: { positionId: null }
+      });
+      employeesUnassigned = updateResult.count || assignedCount;
+
+      // Step 2: Delete position record
+      await tx.position.delete({
+        where: { id }
+      });
+    });
 
     await logActivity({
       userId: req.user.id,
       action: 'POSITION_DELETED',
-      details: `Deleted inactive position "${position.name}" (${position.code})`,
+      details: `Deleted position "${position.name}" (${position.code}), unassigned ${employeesUnassigned} employee(s).`,
       ipAddress: req.ip
     });
 
-    res.json({ message: `Position "${position.name}" deleted successfully.` });
+    res.json({
+      success: true,
+      message: `Position "${position.name}" deleted successfully.`,
+      employeesUnassigned
+    });
   } catch (error) {
     console.error('Delete position error:', error);
     res.status(500).json({ message: 'Failed to delete position.' });

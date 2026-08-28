@@ -1,20 +1,54 @@
 const socketIo = require('socket.io');
+const jwt = require('jsonwebtoken');
 
-const onlineUsers = new Map(); // userId (string) -> { name, role, teamId, socketIds: Set(socketId) }
+const JWT_SECRET = process.env.JWT_SECRET || 'enterprise_internship_crm_super_secret_jwt_key_123!';
+
+// Dual-index presence stores (Backend Single Source of Truth)
+// userId (string) -> { userId: string, name: string, role: string, teamId: string, connectedAt: Date, lastSeen: Date|null, sockets: Set<socketId> }
+const onlineUsers = new Map();
+// socketId (string) -> userId (string)
+const socketToUser = new Map();
 
 let io;
 
 const getOnlineUsersPayload = () => {
-  return Array.from(onlineUsers.entries()).map(([id, info]) => ({
-    id: String(id),
+  return Array.from(onlineUsers.values()).map(info => ({
+    id: String(info.userId),
+    userId: String(info.userId),
     name: info.name,
-    role: info.role
+    role: info.role,
+    connectedAt: info.connectedAt,
+    lastSeen: info.lastSeen
   }));
 };
 
 const broadcastOnlineUsers = () => {
   if (!io) return;
-  io.emit('online_users', getOnlineUsersPayload());
+  const activeList = getOnlineUsersPayload();
+  io.emit('online_users', activeList);
+  console.log(`[ONLINE USERS] count: ${onlineUsers.size}`);
+};
+
+const removeSocket = (socketId, reason = 'transport_close') => {
+  if (!socketToUser.has(socketId)) return;
+  const strUserId = socketToUser.get(socketId);
+  socketToUser.delete(socketId);
+
+  const userEntry = onlineUsers.get(strUserId);
+  if (userEntry) {
+    userEntry.sockets.delete(socketId);
+    console.log(`[SOCKET DISCONNECT] userId: ${strUserId} | socketId: ${socketId} | remainingSockets: ${userEntry.sockets.size} | reason: ${reason}`);
+    
+    if (userEntry.sockets.size === 0) {
+      userEntry.lastSeen = new Date();
+      onlineUsers.delete(strUserId);
+      console.log(`[PRESENCE OFFLINE] userId: ${strUserId} | Total Online: ${onlineUsers.size}`);
+      if (io) {
+        io.emit('user_offline', { id: strUserId, userId: strUserId, lastSeen: userEntry.lastSeen });
+        broadcastOnlineUsers();
+      }
+    }
+  }
 };
 
 const init = (server) => {
@@ -23,52 +57,109 @@ const init = (server) => {
       origin: (origin, callback) => callback(null, true),
       credentials: true,
       methods: ['GET', 'POST']
+    },
+    transports: ['websocket', 'polling']
+  });
+
+  // Socket.IO Handshake Authentication Middleware
+  io.use((socket, next) => {
+    try {
+      const token = socket.handshake.auth?.token ||
+        socket.handshake.headers?.authorization?.replace(/^Bearer\s+/i, '') ||
+        socket.handshake.query?.token;
+
+      if (!token) {
+        console.warn(`[SOCKET AUTH REJECTED] Anonymous connection attempt from socket: ${socket.id}`);
+        return next(new Error('Authentication token required for real-time connection'));
+      }
+
+      const decoded = jwt.verify(token, JWT_SECRET);
+      if (!decoded || !decoded.id) {
+        console.warn(`[SOCKET AUTH REJECTED] Invalid token payload from socket: ${socket.id}`);
+        return next(new Error('Invalid authentication token'));
+      }
+
+      socket.user = decoded;
+      socket.userId = String(decoded.id);
+      console.log(`[SOCKET AUTH SUCCESS] User: ${socket.userId} (${decoded.name || decoded.role}) [socket: ${socket.id}]`);
+      next();
+    } catch (err) {
+      console.warn(`[SOCKET AUTH ERROR] ${err.message} from socket: ${socket.id}`);
+      next(new Error('Authentication failed: ' + err.message));
     }
   });
 
   io.on('connection', (socket) => {
-    console.log(`Socket connected: ${socket.id}`);
+    const strUserId = String(socket.userId);
+    const name = socket.user?.name || 'User';
+    const role = socket.user?.role || 'EMPLOYEE';
+    const teamId = socket.user?.teamId || null;
 
-    // Client registers their identity
-    socket.on('register', ({ userId, name, role, teamId }) => {
-      if (!userId) return;
-      const strUserId = String(userId);
-      socket.userId = strUserId;
-      socket.userName = name;
-      socket.role = role;
-      socket.teamId = teamId;
-
-      if (!onlineUsers.has(strUserId)) {
-        onlineUsers.set(strUserId, {
-          name,
-          role,
-          teamId,
-          socketIds: new Set([socket.id])
-        });
-      } else {
-        const userEntry = onlineUsers.get(strUserId);
-        userEntry.socketIds.add(socket.id);
-        userEntry.name = name || userEntry.name;
-        userEntry.role = role || userEntry.role;
-        userEntry.teamId = teamId || userEntry.teamId;
+    // Disassociate any previous user on this socket ID if it existed
+    if (socketToUser.has(socket.id)) {
+      const prevUserId = socketToUser.get(socket.id);
+      if (prevUserId !== strUserId) {
+        const prevEntry = onlineUsers.get(prevUserId);
+        if (prevEntry) {
+          prevEntry.sockets.delete(socket.id);
+          if (prevEntry.sockets.size === 0) {
+            onlineUsers.delete(prevUserId);
+            io.emit('user_offline', { id: prevUserId, userId: prevUserId, lastSeen: new Date() });
+          }
+        }
       }
+    }
 
-      // Join standard rooms
-      socket.join('global');
-      socket.join(`user_${strUserId}`);
-      if (teamId) {
-        socket.join(`team_${teamId}`);
-      }
-      if (role === 'ADMIN') {
-        socket.join('admins');
-      } else if (role === 'TEAM_LEADER') {
-        socket.join('leaders');
-      }
+    socketToUser.set(socket.id, strUserId);
 
-      const activeList = getOnlineUsersPayload();
-      socket.emit('online_users', activeList);
-      io.emit('online_users', activeList);
-      console.log(`User registered: ${strUserId} (${role}) [socket: ${socket.id}]`);
+    const isFirstSocket = !onlineUsers.has(strUserId);
+    if (isFirstSocket) {
+      onlineUsers.set(strUserId, {
+        userId: strUserId,
+        name,
+        role,
+        teamId,
+        connectedAt: new Date(),
+        lastSeen: null,
+        sockets: new Set([socket.id])
+      });
+      console.log(`[PRESENCE ONLINE] userId: ${strUserId} (${name}) | Total Online: ${onlineUsers.size}`);
+      io.emit('user_online', { id: strUserId, userId: strUserId, name, role, connectedAt: new Date() });
+    } else {
+      const userEntry = onlineUsers.get(strUserId);
+      userEntry.sockets.add(socket.id);
+      userEntry.name = name || userEntry.name;
+      userEntry.role = role || userEntry.role;
+      if (teamId) userEntry.teamId = teamId;
+    }
+
+    console.log(`[SOCKET CONNECT] userId: ${strUserId} | socketId: ${socket.id} | activeSockets: ${onlineUsers.get(strUserId)?.sockets.size}`);
+
+    // Standard room joins
+    socket.join('global');
+    socket.join(`user_${strUserId}`);
+    if (teamId) socket.join(`team_${teamId}`);
+    if (role === 'ADMIN') socket.join('admins');
+    else if (role === 'TEAM_LEADER') socket.join('leaders');
+
+    // Broadcast updated online list
+    const activeList = getOnlineUsersPayload();
+    socket.emit('online_users', activeList);
+    io.emit('online_users', activeList);
+
+    // Explicit request to get online users list
+    socket.on('get_online_users', () => {
+      socket.emit('online_users', getOnlineUsersPayload());
+    });
+
+    // Dynamic register / metadata update
+    socket.on('register', (data) => {
+      if (data && data.teamId) {
+        socket.join(`team_${data.teamId}`);
+        const entry = onlineUsers.get(strUserId);
+        if (entry) entry.teamId = data.teamId;
+      }
+      socket.emit('online_users', getOnlineUsersPayload());
     });
 
     // ─── CHAT MODULE EVENT HANDLERS ──────────────────────────────
@@ -77,7 +168,7 @@ const init = (server) => {
     socket.on('join_chat_room', (roomId) => {
       if (roomId) {
         socket.join(`chat_room_${roomId}`);
-        console.log(`Socket ${socket.id} joined chat_room_${roomId}`);
+        console.log(`Socket ${socket.id} (user: ${strUserId}) joined chat_room_${roomId}`);
       }
     });
 
@@ -85,30 +176,33 @@ const init = (server) => {
     socket.on('leave_chat_room', (roomId) => {
       if (roomId) {
         socket.leave(`chat_room_${roomId}`);
-        console.log(`Socket ${socket.id} left chat_room_${roomId}`);
+        console.log(`Socket ${socket.id} (user: ${strUserId}) left chat_room_${roomId}`);
       }
     });
 
     // Real-time chat message dispatch
     socket.on('send_chat_message', (messageData) => {
       if (messageData && messageData.roomId) {
-        // Broadcast to all sockets in this chat room
+        console.log(`[MESSAGE SENT] From socket: ${socket.id} | Room: ${messageData.roomId} | MessageId: ${messageData.id}`);
         io.to(`chat_room_${messageData.roomId}`).emit('receive_chat_message', messageData);
-        // Also emit room activity refresh signal globally for room ordering
+        if (messageData.receiverId) {
+          io.to(`user_${String(messageData.receiverId)}`).emit('receive_chat_message', messageData);
+        }
         io.emit('chat_room_activity', { roomId: messageData.roomId, lastMessage: messageData });
+        console.log(`[MESSAGE EMITTED] Dispatched to chat_room_${messageData.roomId} and user_${messageData.receiverId || 'all'}`);
       }
     });
 
     // Real-time typing indicators
     socket.on('typing', ({ roomId, userId, userName }) => {
       if (roomId) {
-        socket.to(`chat_room_${roomId}`).emit('user_typing', { roomId, userId, userName: userName || socket.userName });
+        socket.to(`chat_room_${roomId}`).emit('user_typing', { roomId, userId: userId || strUserId, userName: userName || name });
       }
     });
 
     socket.on('stop_typing', ({ roomId, userId }) => {
       if (roomId) {
-        socket.to(`chat_room_${roomId}`).emit('user_stop_typing', { roomId, userId });
+        socket.to(`chat_room_${roomId}`).emit('user_stop_typing', { roomId, userId: userId || strUserId });
       }
     });
 
@@ -129,25 +223,20 @@ const init = (server) => {
     // Real-time message read receipts
     socket.on('message_read', ({ roomId, userId }) => {
       if (roomId) {
-        io.to(`chat_room_${roomId}`).emit('room_messages_read', { roomId, userId, readAt: new Date() });
+        io.to(`chat_room_${roomId}`).emit('room_messages_read', { roomId, userId: userId || strUserId, readAt: new Date() });
       }
+    });
+
+    // Explicit client logout
+    socket.on('logout', () => {
+      console.log(`[SOCKET EXPLICIT LOGOUT] userId: ${strUserId} | socketId: ${socket.id}`);
+      removeSocket(socket.id, 'client_logout');
+      socket.disconnect(true);
     });
 
     // Handle disconnect
     socket.on('disconnect', (reason) => {
-      console.log(`Socket disconnected: ${socket.id} (reason: ${reason})`);
-      if (socket.userId) {
-        const strUserId = String(socket.userId);
-        const userEntry = onlineUsers.get(strUserId);
-        if (userEntry) {
-          userEntry.socketIds.delete(socket.id);
-          if (userEntry.socketIds.size === 0) {
-            onlineUsers.delete(strUserId);
-            broadcastOnlineUsers();
-            console.log(`User unregistered (offline): ${strUserId}`);
-          }
-        }
-      }
+      removeSocket(socket.id, reason);
     });
   });
 
@@ -160,8 +249,8 @@ const sendNotificationToUser = (userId, notification) => {
   const strUserId = String(userId);
   io.to(`user_${strUserId}`).emit('notification', notification);
   const userRecord = onlineUsers.get(strUserId);
-  if (userRecord && userRecord.socketIds) {
-    for (const socketId of userRecord.socketIds) {
+  if (userRecord && userRecord.sockets) {
+    for (const socketId of userRecord.sockets) {
       io.to(socketId).emit('notification', notification);
     }
   }
@@ -182,12 +271,13 @@ const disconnectUserSocket = (userId) => {
   if (!io || !userId) return;
   const strUserId = String(userId);
   const userRecord = onlineUsers.get(strUserId);
-  if (userRecord && userRecord.socketIds) {
-    for (const socketId of userRecord.socketIds) {
+  if (userRecord && userRecord.sockets) {
+    for (const socketId of userRecord.sockets) {
       const sock = io.sockets.sockets.get(socketId);
       if (sock) {
         sock.disconnect(true);
       }
+      socketToUser.delete(socketId);
     }
   }
   onlineUsers.delete(strUserId);
@@ -197,6 +287,12 @@ const disconnectUserSocket = (userId) => {
 // Get list of online user IDs
 const getOnlineUsers = () => {
   return Array.from(onlineUsers.keys());
+};
+
+// Check if user is online
+const isUserOnline = (userId) => {
+  if (!userId) return false;
+  return onlineUsers.has(String(userId));
 };
 
 // Get the io instance
@@ -210,7 +306,7 @@ const broadcastAttendanceEvent = (eventName, data) => {
   io.emit(eventName, data);
 };
 
-// Broadcast team performance update signal (triggers ranking refresh on all dashboards)
+// Broadcast team performance update signal
 const broadcastTeamPerformanceUpdate = () => {
   if (!io) return;
   io.emit('team_performance_updated');
@@ -219,11 +315,12 @@ const broadcastTeamPerformanceUpdate = () => {
 module.exports = {
   init,
   getIo,
+  getIO: getIo,
   sendNotificationToUser,
   sendAnnouncement,
   getOnlineUsers,
+  isUserOnline,
   disconnectUserSocket,
   broadcastAttendanceEvent,
   broadcastTeamPerformanceUpdate
 };
-

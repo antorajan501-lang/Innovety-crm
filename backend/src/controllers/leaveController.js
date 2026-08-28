@@ -275,7 +275,7 @@ const applyLeave = async (req, res) => {
       return res.status(403).json({ message: 'Administrators and Super Admins cannot apply for leave.' });
     }
 
-    const { startDate, endDate, leaveType, payType: inputPayType, type: altType, reason, letterContent, contactPhone } = req.body;
+    const { startDate, endDate, leaveType, payType: inputPayType, type: altType, reason, letterContent, contactPhone, isHalfDay } = req.body;
 
     if (!startDate || !endDate || (!reason && !letterContent)) {
       return res.status(400).json({ message: 'Start date, end date, and reason/letter content are required.' });
@@ -292,7 +292,10 @@ const applyLeave = async (req, res) => {
       return res.status(400).json({ message: 'Start date must be before or equal to end date.' });
     }
 
-    const totalDays = calculateTotalDays(start, end);
+    let totalDays = calculateTotalDays(start, end);
+    if (isHalfDay) {
+      totalDays = 0.5;
+    }
     if (totalDays <= 0) {
       return res.status(400).json({ message: 'Invalid leave duration.' });
     }
@@ -776,10 +779,111 @@ const cancelLeave = async (req, res) => {
   }
 };
 
+// 8. Update Pending Leave Request (Applicant only - while pending)
+const updateLeave = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    const { startDate, endDate, leaveType, payType: inputPayType, type: altType, reason, letterContent, contactPhone, isHalfDay } = req.body;
+
+    const leave = await prisma.leaveRequest.findUnique({
+      where: { id },
+      include: { user: true }
+    });
+
+    if (!leave) {
+      return res.status(404).json({ message: 'Leave request not found.' });
+    }
+
+    if (leave.userId !== userId && userRole !== 'ADMIN') {
+      return res.status(403).json({ message: 'You can only edit your own pending leave requests.' });
+    }
+
+    if (!['PENDING_TL_APPROVAL', 'PENDING_ADMIN_APPROVAL', 'PENDING'].includes(leave.status)) {
+      return res.status(400).json({ message: 'Only pending leave requests can be edited.' });
+    }
+
+    const start = startDate ? new Date(startDate) : leave.startDate;
+    const end = endDate ? new Date(endDate) : leave.endDate;
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({ message: 'Invalid start or end date format.' });
+    }
+
+    if (start > end) {
+      return res.status(400).json({ message: 'Start date must be before or equal to end date.' });
+    }
+
+    let totalDays = calculateTotalDays(start, end);
+    if (isHalfDay) {
+      totalDays = 0.5;
+    }
+
+    const rawType = leaveType || altType || leave.leaveType || 'CASUAL';
+    const normalizedType = String(rawType).toUpperCase();
+    const ALLOWED_TYPES = ['CASUAL', 'SICK', 'EMERGENCY', 'WFH', 'LOP', 'UNPAID', 'LOSS_OF_PAY'];
+
+    if (!ALLOWED_TYPES.includes(normalizedType)) {
+      return res.status(400).json({ message: 'Invalid leave type.' });
+    }
+
+    const determinedPayType = inputPayType
+      ? (String(inputPayType).toUpperCase() === 'UNPAID' ? 'UNPAID' : 'PAID')
+      : (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(normalizedType) ? 'UNPAID' : (leave.payType || 'PAID'));
+
+    // Check for overlaps excluding this leave
+    const overlapping = await prisma.leaveRequest.findFirst({
+      where: {
+        userId: leave.userId,
+        id: { not: id },
+        status: { in: ['PENDING_TL_APPROVAL', 'PENDING_ADMIN_APPROVAL', 'APPROVED'] },
+        AND: [
+          { startDate: { lte: end } },
+          { endDate: { gte: start } }
+        ]
+      }
+    });
+
+    if (overlapping) {
+      return res.status(400).json({
+        message: 'You already have an active leave or WFH request overlapping with the selected date range.'
+      });
+    }
+
+    const updated = await prisma.leaveRequest.update({
+      where: { id },
+      data: {
+        startDate: start,
+        endDate: end,
+        totalDays,
+        leaveType: normalizedType,
+        type: normalizedType === 'WFH' ? 'WFH' : 'LEAVE',
+        payType: determinedPayType,
+        reason: reason || leave.reason,
+        letterContent: letterContent || reason || leave.letterContent,
+        contactPhone: contactPhone !== undefined ? contactPhone : leave.contactPhone
+      }
+    });
+
+    await logActivity({
+      userId,
+      action: 'LEAVE_EDIT',
+      details: `Updated pending leave request (${normalizedType}, ${totalDays} days)`
+    });
+
+    res.json(updated);
+  } catch (error) {
+    console.error('Update leave error:', error);
+    res.status(500).json({ message: 'Failed to update leave request.' });
+  }
+};
+
 module.exports = {
   getLeaves,
   getLeaveBalances,
   applyLeave,
+  updateLeave,
   approveLeaveTL,
   approveLeaveAdmin,
   rejectLeave,

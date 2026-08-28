@@ -2,6 +2,7 @@ const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
 const { ensureCompanyChatRoom } = require('../services/companyChatService');
+const { getIo } = require('../socket');
 const path = require('path');
 const fs = require('fs');
 
@@ -477,11 +478,10 @@ const sendMessage = async (req, res) => {
         where: {
           type: 'DIRECT',
           isArchived: false,
-          members: {
-            every: {
-              userId: { in: [userId, targetUserId] }
-            }
-          }
+          AND: [
+            { members: { some: { userId } } },
+            { members: { some: { userId: targetUserId } } }
+          ]
         },
         include: { members: true }
       });
@@ -521,12 +521,29 @@ const sendMessage = async (req, res) => {
       return res.status(403).json({ message: 'This project chat group is archived and read-only. Sending new messages is not allowed.' });
     }
 
+    // Ensure sender is a member
     let isMember = room.members.some(m => m.userId === userId);
     if (!isMember) {
       await prisma.chatRoomMember.create({
         data: { roomId, userId }
       }).catch(() => { });
     }
+
+    // If targetUserId specified or direct room, ensure target user is also a member
+    if (targetUserId) {
+      const isTargetMember = room.members.some(m => m.userId === targetUserId);
+      if (!isTargetMember) {
+        await prisma.chatRoomMember.create({
+          data: { roomId, userId: targetUserId }
+        }).catch(() => { });
+      }
+    }
+
+    // Refresh members list for accurate socket dispatch
+    room = await prisma.chatRoom.findUnique({
+      where: { id: roomId },
+      include: { members: true }
+    });
 
     const createdMsg = await prisma.chatMessage.create({
       data: {
@@ -614,6 +631,29 @@ const sendMessage = async (req, res) => {
           message: snippet
         });
       }
+    }
+
+    try {
+      const io = getIo();
+      if (io) {
+        console.log(`[MESSAGE SENT] MessageId: ${createdMsg.id} | RoomId: ${createdMsg.roomId} | SenderId: ${userId}`);
+        io.to(`chat_room_${createdMsg.roomId}`).emit('receive_chat_message', createdMsg);
+
+        // Dispatch to all room members' personal user rooms so recipients outside the room update in real time
+        if (room && Array.isArray(room.members)) {
+          for (const m of room.members) {
+            io.to(`user_${String(m.userId)}`).emit('receive_chat_message', createdMsg);
+          }
+        }
+        if (createdMsg.receiverId) {
+          io.to(`user_${String(createdMsg.receiverId)}`).emit('receive_chat_message', createdMsg);
+        }
+
+        io.emit('chat_room_activity', { roomId: createdMsg.roomId, lastMessage: createdMsg });
+        console.log(`[MESSAGE EMITTED] Emitted to chat_room_${createdMsg.roomId} and all ${room?.members?.length || 0} members`);
+      }
+    } catch (e) {
+      console.warn('Backend socket emit on sendMessage warning:', e.message);
     }
 
     res.status(201).json(createdMsg);
@@ -955,12 +995,16 @@ const downloadAttachment = async (req, res) => {
     }
 
     let relPath = msg.attachmentUrl.trim();
+    if (relPath.startsWith('http://') || relPath.startsWith('https://')) {
+      try {
+        relPath = new URL(relPath).pathname;
+      } catch (e) { }
+    }
     if (relPath.startsWith('/') || relPath.startsWith('\\')) {
       relPath = relPath.substring(1);
     }
-
-    if (/^uploads[/\\]/i.test(relPath)) {
-      relPath = relPath.replace(/^uploads[/\\]/i, '');
+    if (/^(api[/\\])?uploads[/\\]/i.test(relPath)) {
+      relPath = relPath.replace(/^(api[/\\])?uploads[/\\]/i, '');
     }
 
     const uploadsDir = path.resolve(__dirname, '../../uploads');

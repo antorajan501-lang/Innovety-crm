@@ -74,10 +74,13 @@ const getOrCreateSystemSettings = async () => {
         id: 'GLOBAL',
         companyName: 'INNOVEITY',
         senderEmail: 'somusuraj72@gmail.com',
-        internShiftStart: '09:30',
-        internShiftEnd: '18:30',
-        tlShiftStart: '09:30',
-        tlShiftEnd: '18:30',
+        internShiftStart: '09:00',
+        internShiftEnd: '18:00',
+        tlShiftStart: '09:00',
+        tlShiftEnd: '18:00',
+        clockInTime: '09:00',
+        clockOutTime: '18:00',
+        autoClockOutEnabled: true,
         officeLocationName: 'Innoveity Headquarters',
         earlyWindowMinutes: 30,
         gracePeriodMinutes: 15
@@ -95,6 +98,36 @@ const getClockInStatus = async (req, res) => {
     const settings = await getOrCreateSystemSettings();
     const timeZone = getSystemTimeZone(settings);
     const todayDate = getTodayZonedDate(now, timeZone);
+
+    // Check user's joiningDate - attendance is strictly active from joiningDate onwards
+    const currentUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, role: true, joiningDate: true }
+    });
+
+    if (currentUser?.joiningDate) {
+      const joiningMidnight = new Date(new Date(currentUser.joiningDate).toISOString().split('T')[0] + 'T00:00:00.000Z');
+      if (todayDate < joiningMidnight) {
+        return res.json({
+          isClockedIn: false,
+          eligibleForAttendance: false,
+          canClockIn: false,
+          joiningDate: currentUser.joiningDate,
+          reason: 'EMPLOYMENT_NOT_STARTED',
+          message: `Your employment starts on ${new Date(currentUser.joiningDate).toLocaleDateString()}. Attendance will be available from your joining date.`,
+          serverTime: now.toISOString(),
+          autoClockOutEnabled: settings?.autoClockOutEnabled !== undefined ? settings.autoClockOutEnabled : true,
+          clockInTime: settings?.clockInTime || settings?.internShiftStart || '09:00',
+          clockOutTime: settings?.clockOutTime || settings?.internShiftEnd || '18:00',
+          geofence: {
+            officeLatitude: settings?.officeLatitude ?? 12.971598,
+            officeLongitude: settings?.officeLongitude ?? 77.594562,
+            allowedRadiusMeters: settings?.allowedRadiusMeters ?? 200.0,
+            officeLocationName: settings?.officeLocationName || 'Innoveity Headquarters'
+          }
+        });
+      }
+    }
 
     // Check existing attendance for today
     const existing = await prisma.attendance.findUnique({
@@ -119,8 +152,42 @@ const getClockInStatus = async (req, res) => {
       now
     });
 
+    const clockOutTimeStr = settings?.clockOutTime || (req.user.role === 'TEAM_LEADER' ? settings?.tlShiftEnd : settings?.internShiftEnd) || '18:00';
+    const [endHour, endMin] = clockOutTimeStr.split(':').map(Number);
+    const { year, month, day } = getZonedParts(now, timeZone);
+    const todayConfiguredShiftEnd = createZonedDate(year, month, day, endHour, endMin, timeZone);
+
+    let shiftEndAt = todayConfiguredShiftEnd;
+    if (existing?.clockOut && existing?.shiftEndAt) {
+      shiftEndAt = existing.shiftEndAt;
+    }
+
+    if (existing && !existing.clockOut && (!existing.shiftEndAt || new Date(existing.shiftEndAt).getTime() !== todayConfiguredShiftEnd.getTime())) {
+      prisma.attendance.update({
+        where: { id: existing.id },
+        data: { shiftEndAt: todayConfiguredShiftEnd }
+      }).catch(e => console.warn('Sync shiftEndAt error:', e));
+    }
+
+    const isClockedIn = Boolean(existing?.clockIn && !existing?.clockOut);
+    const secondsRemaining = (shiftEndAt && !existing?.clockOut)
+      ? Math.max(0, Math.floor((new Date(shiftEndAt).getTime() - now.getTime()) / 1000))
+      : 0;
+
+    const autoClockOutEnabled = settings?.autoClockOutEnabled !== undefined ? settings.autoClockOutEnabled : true;
+
     res.json({
       ...validation,
+      isClockedIn,
+      clockIn: existing?.clockIn || null,
+      clockOut: existing?.clockOut || null,
+      shiftEndAt: shiftEndAt ? new Date(shiftEndAt).toISOString() : null,
+      secondsRemaining,
+      serverTime: now.toISOString(),
+      autoClockOut: Boolean(existing?.autoClockOut),
+      autoClockOutEnabled,
+      clockInTime: settings?.clockInTime || settings?.internShiftStart || '09:00',
+      clockOutTime: clockOutTimeStr,
       existingRecord: existing || null,
       approvedLeave: approvedLeave || null,
       geofence: {
@@ -291,8 +358,13 @@ const clockIn = async (req, res) => {
     }
 
     const shiftStartStr = (req.user.role === 'TEAM_LEADER' || req.user.role === 'ADMIN')
-      ? (settings?.tlShiftStart || '09:30')
-      : (settings?.internShiftStart || '09:30');
+      ? (settings?.tlShiftStart || settings?.clockInTime || '09:00')
+      : (settings?.internShiftStart || settings?.clockInTime || '09:00');
+
+    const clockOutTimeStr = settings?.clockOutTime || (req.user.role === 'TEAM_LEADER' ? settings?.tlShiftEnd : settings?.internShiftEnd) || '18:00';
+    const [endHour, endMin] = clockOutTimeStr.split(':').map(Number);
+    const { year, month, day } = getZonedParts(now, timeZone);
+    const shiftEndAt = createZonedDate(year, month, day, endHour, endMin, timeZone);
 
     const formattedLocationStr = workLocation === 'OTHER'
       ? workLocationOther.trim()
@@ -305,6 +377,7 @@ const clockIn = async (req, res) => {
         userId,
         date: todayDate,
         clockIn: now,
+        shiftEndAt,
         ipAddress,
         browser,
         device,
@@ -397,7 +470,8 @@ const clockOut = async (req, res) => {
         clockOut: now,
         workingHours,
         status,
-        clockOutLocation: location || null
+        clockOutLocation: location || null,
+        clockOutReason: 'MANUAL'
       }
     });
 
@@ -515,7 +589,8 @@ const getAttendanceLogs = async (req, res) => {
         email: true,
         department: true,
         profilePic: true,
-        role: true
+        role: true,
+        joiningDate: true
       },
       orderBy: { name: 'asc' }
     });
@@ -554,9 +629,17 @@ const getAttendanceLogs = async (req, res) => {
 
     for (const dObj of dateList) {
       const dateStr = dObj.toISOString().split('T')[0];
+      const dTime = new Date(`${dateStr}T00:00:00.000Z`).getTime();
       const dayEnded = isShiftEndedForDate(dObj, now, settings);
 
       for (const u of activeUsers) {
+        // STRICT RULE: Attendance audit only starts from each employee's official joining date
+        if (u.joiningDate) {
+          const uJoiningMidnight = new Date(new Date(u.joiningDate).toISOString().split('T')[0] + 'T00:00:00.000Z').getTime();
+          if (dTime < uJoiningMidnight) {
+            continue; // Skip pre-employment date completely (no synthetic ABSENT or NOT_CHECKED_IN)
+          }
+        }
         const key = `${u.id}_${dateStr}`;
         const realAtt = attendanceMap.get(key);
 
@@ -792,10 +875,16 @@ const getAttendanceAnalytics = async (req, res) => {
 
     const activeUsers = await prisma.user.findMany({
       where: { role: { in: ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'] }, status: 'ACTIVE' },
-      select: { id: true }
+      select: { id: true, joiningDate: true }
     });
-    const totalMembersCount = activeUsers.length;
-    const userIds = activeUsers.map(u => u.id);
+    // Filter active users to only those who have joined on or before today
+    const eligibleActiveUsers = activeUsers.filter(u => {
+      if (!u.joiningDate) return true;
+      const uJoining = new Date(new Date(u.joiningDate).toISOString().split('T')[0] + 'T00:00:00.000Z');
+      return uJoining <= startOfToday;
+    });
+    const totalMembersCount = eligibleActiveUsers.length;
+    const userIds = eligibleActiveUsers.map(u => u.id);
 
     const todayAttendances = await prisma.attendance.findMany({
       where: {
@@ -861,6 +950,16 @@ const getAttendanceHistory = async (req, res) => {
     const selMonth = parseInt(month) || (todayZoned.getUTCMonth() + 1);
     const selYear = parseInt(year) || todayZoned.getUTCFullYear();
 
+    // Fetch target user's joiningDate
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, name: true, joiningDate: true }
+    });
+
+    const targetUserJoiningMidnight = targetUser?.joiningDate
+      ? new Date(new Date(targetUser.joiningDate).toISOString().split('T')[0] + 'T00:00:00.000Z')
+      : null;
+
     // 1. Determine month boundaries
     const startOfMonth = new Date(Date.UTC(selYear, selMonth - 1, 1));
     const endOfMonth = new Date(Date.UTC(selYear, selMonth, 0, 23, 59, 59));
@@ -904,6 +1003,13 @@ const getAttendanceHistory = async (req, res) => {
     const curr = new Date(startOfMonth);
     while (curr <= maxDate) {
       const dateStr = curr.toISOString().split('T')[0];
+      const currMidnight = new Date(`${dateStr}T00:00:00.000Z`);
+
+      // STRICT RULE: Calendar history starts from joiningDate onwards
+      if (targetUserJoiningMidnight && currMidnight < targetUserJoiningMidnight) {
+        curr.setUTCDate(curr.getUTCDate() + 1);
+        continue; // Skip pre-joining date (never generate ABSENT, HOLIDAY, or NOT_CHECKED_IN)
+      }
       const dayOfWeek = curr.getUTCDay(); // 0 = Sunday, 6 = Saturday
 
       const isSunday = dayOfWeek === 0;

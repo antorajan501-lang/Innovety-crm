@@ -11,7 +11,8 @@ const {
   bulkImport,
   bulkDelete,
   promoteUser,
-  getUserPromotionHistory
+  getUserPromotionHistory,
+  removeProfilePicture
 } = require('../controllers/userController');
 const { authenticate, requireRole } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -25,6 +26,8 @@ const userUpload = upload.fields([
 router.get('/', authenticate, requireRole(['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getAllUsers);
 router.get('/:id/promotion-history', authenticate, getUserPromotionHistory);
 router.get('/:id', authenticate, requireRole(['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getUserById);
+router.delete('/profile-photo', authenticate, removeProfilePicture);
+router.delete('/profile/picture', authenticate, removeProfilePicture);
 
 // All user creation, modification, promotion, and deletion routes strictly require ADMIN privilege
 router.use(authenticate, requireRole(['ADMIN']));
@@ -33,6 +36,8 @@ router.post('/', userUpload, createUser);
 router.post('/:id/promote', promoteUser);
 router.put('/:id', userUpload, editUser);
 router.delete('/:id', deleteUser);
+router.delete('/:id/profile-picture', removeProfilePicture);
+router.delete('/:id/profile-photo', removeProfilePicture);
 router.put('/:id/status', toggleUserStatus);
 router.put('/:id/reset-password', resetUserPassword);
 router.post('/bulk-import', bulkImport);

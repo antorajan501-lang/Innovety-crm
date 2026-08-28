@@ -506,6 +506,101 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const path = require('path');
+const fs = require('fs');
+
+const removeProfilePicture = async (req, res) => {
+  console.log('[PROFILE REMOVE] Request received from user:', req.user?.id || 'anonymous');
+  try {
+    const targetUserId = req.params?.id || req.user?.id;
+    const isSelf = targetUserId === req.user?.id;
+    const isSuperOrAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(req.user?.role);
+
+    console.log('[PROFILE REMOVE] User authenticated:', { targetUserId, role: req.user?.role, isSelf });
+
+    if (!isSelf && !isSuperOrAdmin) {
+      console.warn('[PROFILE REMOVE] Unauthorized attempt on target:', targetUserId);
+      return res.status(403).json({ success: false, message: 'Unauthorized to remove this profile picture.' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, name: true, profilePic: true }
+    });
+
+    if (!user) {
+      console.warn('[PROFILE REMOVE] Target user not found:', targetUserId);
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    console.log('[PROFILE REMOVE] Current image:', user.profilePic || 'none');
+
+    // If custom upload exists, delete the physical file safely
+    if (user.profilePic && typeof user.profilePic === 'string') {
+      try {
+        let relPath = user.profilePic.trim();
+        if (relPath.startsWith('http://') || relPath.startsWith('https://')) {
+          try {
+            relPath = new URL(relPath).pathname;
+          } catch (e) {}
+        }
+        if (relPath.startsWith('/') || relPath.startsWith('\\')) {
+          relPath = relPath.substring(1);
+        }
+        if (/^(api[/\\])?uploads[/\\]/i.test(relPath)) {
+          relPath = relPath.replace(/^(api[/\\])?uploads[/\\]/i, '');
+        }
+
+        const uploadsDir = path.resolve(__dirname, '../../uploads');
+        const physicalPath = path.resolve(uploadsDir, relPath);
+
+        if (physicalPath.startsWith(uploadsDir) && fs.existsSync(physicalPath)) {
+          fs.unlinkSync(physicalPath);
+          console.log('[PROFILE REMOVE] File deleted:', physicalPath);
+        }
+      } catch (fileErr) {
+        console.warn('[PROFILE REMOVE] File deletion warning (non-fatal):', fileErr.message);
+      }
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: targetUserId },
+      data: { profilePic: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        employeeId: true,
+        role: true,
+        department: true,
+        profilePic: true,
+        phone: true,
+        college: true,
+        joiningDate: true,
+        status: true
+      }
+    });
+
+    console.log('[PROFILE REMOVE] Database updated');
+
+    await logActivity({
+      userId: req.user.id,
+      action: 'PROFILE_PICTURE_REMOVE',
+      details: `Removed profile picture for ${user.name} (${user.id})`
+    }).catch(e => console.warn('Activity log error:', e.message));
+
+    console.log('[PROFILE REMOVE] Response sent 200 OK');
+    return res.status(200).json({
+      success: true,
+      message: 'Profile photo removed successfully.',
+      user: updatedUser
+    });
+  } catch (error) {
+    console.error('[PROFILE REMOVE] Controller error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to remove profile picture.' });
+  }
+};
+
 module.exports = {
   login,
   getProfile,
@@ -513,5 +608,6 @@ module.exports = {
   changePassword,
   forgotPassword,
   verifyResetOtp,
-  resetPassword
+  resetPassword,
+  removeProfilePicture
 };

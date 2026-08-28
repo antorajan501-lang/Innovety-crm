@@ -6,6 +6,6 @@ const { authenticate, requireRole } = require('../middleware/auth');
 router.use(authenticate);
 
 router.get('/', getSettings);
-router.put('/', requireRole(['ADMIN']), updateSettings);
+router.put('/', requireRole(['ADMIN', 'SUPER_ADMIN']), updateSettings);
 
 module.exports = router;

@@ -4,6 +4,7 @@ const {
   getLeaves,
   getLeaveBalances,
   applyLeave,
+  updateLeave,
   approveLeaveTL,
   approveLeaveAdmin,
   rejectLeave,
@@ -14,6 +15,7 @@ const { authenticate } = require('../middleware/auth');
 router.get('/', authenticate, getLeaves);
 router.get('/balances', authenticate, getLeaveBalances);
 router.post('/', authenticate, applyLeave);
+router.put('/:id', authenticate, updateLeave);
 router.put('/:id/tl-approve', authenticate, approveLeaveTL);
 router.put('/:id/admin-approve', authenticate, approveLeaveAdmin);
 router.put('/:id/reject', authenticate, rejectLeave);

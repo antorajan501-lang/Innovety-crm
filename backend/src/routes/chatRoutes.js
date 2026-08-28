@@ -60,7 +60,12 @@ router.post('/upload', upload.single('file'), (req, res) => {
     const fileName = req.file.originalname;
     const fileSize = req.file.size;
     const isImage = req.file.mimetype.startsWith('image/');
-    const messageType = isImage ? 'IMAGE' : 'FILE';
+    const isVideo = req.file.mimetype.startsWith('video/');
+    const isAudio = req.file.mimetype.startsWith('audio/');
+    let messageType = 'FILE';
+    if (isImage) messageType = 'IMAGE';
+    else if (isVideo) messageType = 'VIDEO';
+    else if (isAudio) messageType = 'AUDIO';
 
     res.json({
       attachmentUrl,

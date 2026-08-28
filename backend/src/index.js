@@ -99,15 +99,21 @@ app.get('/api/download-file', authenticate, (req, res) => {
     // Decode URL parameter
     let fileRelPath = decodeURIComponent(rawFile).trim();
 
+    if (fileRelPath.startsWith('http://') || fileRelPath.startsWith('https://')) {
+      try {
+        fileRelPath = new URL(fileRelPath).pathname;
+      } catch (e) { }
+    }
+
     // Normalization & leading slash cleanup
     if (fileRelPath.startsWith('/') || fileRelPath.startsWith('\\')) {
       fileRelPath = fileRelPath.substring(1);
     }
 
-    // Strip optional leading 'uploads/' prefix
+    // Strip optional leading 'api/uploads/' or 'uploads/' prefix
     let targetRelPath = fileRelPath;
-    if (/^uploads[/\\]/i.test(targetRelPath)) {
-      targetRelPath = targetRelPath.replace(/^uploads[/\\]/i, '');
+    if (/^(api[/\\])?uploads[/\\]/i.test(targetRelPath)) {
+      targetRelPath = targetRelPath.replace(/^(api[/\\])?uploads[/\\]/i, '');
     }
 
     const uploadsDir = path.resolve(__dirname, '../uploads');
@@ -188,6 +194,7 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/milestones', milestoneRoutes);
 app.use('/api/task-dependencies', taskDependencyRoutes);
 app.use('/api/worklogs', workLogRoutes);
+app.use('/api/daily-work-log', workLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 const workCalendarRoutes = require('./routes/workCalendarRoutes');
 app.use('/api/work-calendar', workCalendarRoutes);
@@ -222,9 +229,11 @@ app.use((err, req, res, next) => {
 socketManager.init(server);
 
 const { ensureCompanyChatRoom } = require('./services/companyChatService');
+const { initAutoClockOutService } = require('./services/autoClockOutService');
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, async () => {
   console.log(`Enterprise CRM backend server is running on port ${PORT}`);
   await ensureCompanyChatRoom();
+  initAutoClockOutService();
 });

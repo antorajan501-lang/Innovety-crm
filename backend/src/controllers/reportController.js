@@ -14,12 +14,20 @@ const getAttendanceReport = async (req, res) => {
     const logs = await prisma.attendance.findMany({
       where,
       include: {
-        user: { select: { name: true, employeeId: true, email: true, department: true } }
+        user: { select: { name: true, employeeId: true, email: true, department: true, joiningDate: true } }
       },
       orderBy: { date: 'asc' }
     });
 
-    const reportData = logs.map((log) => ({
+    // STRICT RULE: Attendance reports strictly exclude any records before each employee's joining date
+    const filteredLogs = logs.filter(log => {
+      if (!log.user?.joiningDate) return true;
+      const jStr = new Date(log.user.joiningDate).toISOString().split('T')[0];
+      const dStr = new Date(log.date).toISOString().split('T')[0];
+      return dStr >= jStr;
+    });
+
+    const reportData = filteredLogs.map((log) => ({
       'Employee ID': log.user.employeeId,
       'Name': log.user.name,
       'Email': log.user.email,
