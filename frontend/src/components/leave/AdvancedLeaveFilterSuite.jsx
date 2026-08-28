@@ -1,5 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
+  CalendarPlus,
+  Edit3,
+  Trash2,
   Calendar,
   Search,
   Check,
@@ -18,6 +21,7 @@ import {
 } from 'lucide-react';
 import UserAvatar from '../common/UserAvatar';
 import api from '../../services/api';
+import ApplyLeaveModal from './ApplyLeaveModal';
 import { useAuth } from '../../context/AuthContext';
 
 const DEPARTMENTS = [
@@ -100,6 +104,25 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
 
   const [mainTab, setMainTab] = useState(getInitialTab);
   const [viewingLetter, setViewingLetter] = useState(null);
+  const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const [leaveToEdit, setLeaveToEdit] = useState(null);
+  const [toast, setToast] = useState({ type: '', text: '' });
+
+  const showToast = (text, type = 'success') => {
+    setToast({ type, text });
+    setTimeout(() => setToast({ type: '', text: '' }), 4000);
+  };
+
+  const handleCancelPending = async (leave) => {
+    if (!window.confirm('Are you sure you want to cancel this pending leave request?')) return;
+    try {
+      await api.put(`/leaves/${leave.id}/cancel`);
+      showToast('Leave request cancelled successfully.', 'success');
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to cancel leave request.', 'error');
+    }
+  };
 
   useEffect(() => {
     if (!canSanction) {
@@ -353,8 +376,17 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
           </div>
         </div>
 
-        {/* Action Export Buttons */}
-        <div className="flex items-center gap-2 shrink-0 print:hidden">
+        {/* Action Export & Apply Leave Buttons */}
+        <div className="flex flex-wrap items-center gap-2 shrink-0 print:hidden">
+          {['INTERN', 'EMPLOYEE', 'TEAM_LEADER'].includes(userRole) && (
+            <button
+              onClick={() => { setLeaveToEdit(null); setIsLeaveModalOpen(true); }}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md hover:shadow-lg transition-all cursor-pointer w-full sm:w-auto"
+            >
+              <CalendarPlus className="h-4 w-4" />
+              <span>Apply Leave</span>
+            </button>
+          )}
           <button
             onClick={() => handleExport()}
             className="flex items-center gap-1.5 bg-card hover:bg-muted text-foreground border border-border/70 px-3.5 py-2 rounded-xl text-xs font-bold shadow-2xs transition-all cursor-pointer"
@@ -704,6 +736,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
                         <th className="py-4 px-4">Leave Duration</th>
                         <th className="py-4 px-4 w-72 max-w-[320px]">Reason</th>
                         <th className="py-4 px-5">Status</th>
+                        <th className="py-4 px-5 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/40 text-xs sm:text-sm">
@@ -789,6 +822,42 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
                                     : statusVal}
                                 </span>
                               </span>
+                            </td>
+
+                            {/* Actions Column */}
+                            <td className="py-4 px-5 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                {(leave.userId === currentUser?.id || leave.user?.id === currentUser?.id) &&
+                                ['PENDING_TL_APPROVAL', 'PENDING_ADMIN_APPROVAL', 'PENDING'].includes(statusVal) ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => { setLeaveToEdit(leave); setIsLeaveModalOpen(true); }}
+                                      className="p-1.5 rounded-lg border border-primary/30 text-primary hover:bg-primary/10 transition-colors"
+                                      title="Edit Pending Application"
+                                    >
+                                      <Edit3 className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCancelPending(leave)}
+                                      className="p-1.5 rounded-lg border border-rose-500/30 text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                      title="Cancel Pending Application"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingLetter(leave)}
+                                    className="p-1.5 rounded-lg border border-border/70 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                                    title="View Details"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1062,6 +1131,40 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* 5. Shared Apply Leave Modal */}
+      <ApplyLeaveModal
+        isOpen={isLeaveModalOpen}
+        onClose={() => {
+          setIsLeaveModalOpen(false);
+          setLeaveToEdit(null);
+        }}
+        onSuccess={(msg) => {
+          showToast(msg || 'Leave request submitted successfully.', 'success');
+          if (onRefresh) onRefresh();
+        }}
+        leaveToEdit={leaveToEdit}
+        userRole={userRole}
+      />
+
+      {/* Floating Toast Notification */}
+      {toast.text && (
+        <div className="fixed bottom-6 right-6 z-50 animate-in slide-in-from-bottom-5 fade-in duration-200">
+          <div
+            className={`p-4 rounded-2xl text-xs font-bold flex items-center gap-2.5 shadow-2xl border backdrop-blur-md ${
+              toast.type === 'success'
+                ? 'bg-emerald-950/90 text-emerald-200 border-emerald-500/40'
+                : 'bg-rose-950/90 text-rose-200 border-rose-500/40'
+            }`}
+          >
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertCircle className="h-4 w-4 text-rose-400 shrink-0" />
+            )}
+            <span>{toast.text}</span>
           </div>
         </div>
       )}

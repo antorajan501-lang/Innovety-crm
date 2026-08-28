@@ -1,7 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api, { getSocket } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import ClockInModal from '../components/attendance/ClockInModal';
+import ClockOutReminderModal from '../components/worklog/ClockOutReminderModal';
+import useClockOutWithReminder from '../hooks/useClockOutWithReminder';
+import useShiftCountdown from '../hooks/useShiftCountdown';
+import { getTargetShiftHours, getShiftProgressColor } from '../utils/shiftProgress';
 import AttendanceHistorySection from '../components/attendance/AttendanceHistorySection';
 import {
   Clock,
@@ -24,6 +29,43 @@ const Attendance = () => {
   const [settings, setSettings] = useState(null);
   const [currentCoords, setCurrentCoords] = useState(null);
   const [clockInStatus, setClockInStatus] = useState(null);
+
+  const isClockedIn = Boolean(clockedRecord && clockedRecord.clockIn && !clockedRecord.clockOut);
+
+  // Live Working Hours calculation for Attendance page
+  const currentWorkingHours = useMemo(() => {
+    if (!clockedRecord) return 0;
+    if (clockedRecord.clockOut) return clockedRecord.workingHours || 0;
+    if (clockedRecord.clockIn) {
+      const diff = (time - new Date(clockedRecord.clockIn)) / (1000 * 3600);
+      return Math.max(0, Math.round(diff * 10) / 10);
+    }
+    return 0;
+  }, [clockedRecord, time]);
+
+  const targetShiftHours = useMemo(() => {
+    return getTargetShiftHours(clockInStatus?.clockInTime || '09:00', clockInStatus?.clockOutTime || '18:00');
+  }, [clockInStatus?.clockInTime, clockInStatus?.clockOutTime]);
+
+  const shiftProgressPercent = useMemo(() => {
+    if (!isClockedIn && !clockedRecord?.clockOut) return 0;
+    return Math.min(100, Math.round((currentWorkingHours / targetShiftHours) * 100));
+  }, [isClockedIn, clockedRecord?.clockOut, currentWorkingHours, targetShiftHours]);
+
+  const progressColor = useMemo(() => {
+    return getShiftProgressColor(shiftProgressPercent);
+  }, [shiftProgressPercent]);
+
+  const shiftCountdown = useShiftCountdown({
+    shiftEndAt: clockedRecord?.shiftEndAt || clockInStatus?.shiftEndAt,
+    serverTime: clockInStatus?.serverTime,
+    autoClockOutEnabled: clockInStatus?.autoClockOutEnabled,
+    isClockedIn,
+    onShiftEnd: () => {
+      fetchAttendanceStatus();
+      fetchClockInStatus();
+    }
+  });
   const [historyRefreshTrigger, setHistoryRefreshTrigger] = useState(0);
 
   // Local Browser Telemetry Preview
@@ -61,6 +103,26 @@ const Attendance = () => {
     return () => clearInterval(timer);
   }, []);
 
+  const lastFetchTimestampRef = useRef(0);
+  const debounceFetchTimerRef = useRef(null);
+
+  const safeRefreshAttendance = useCallback(() => {
+    const now = Date.now();
+    if (now - lastFetchTimestampRef.current < 2000) {
+      return;
+    }
+    if (debounceFetchTimerRef.current) {
+      clearTimeout(debounceFetchTimerRef.current);
+    }
+    debounceFetchTimerRef.current = setTimeout(() => {
+      lastFetchTimestampRef.current = Date.now();
+      console.log('[AutoClockOut] Executing single attendance page refresh');
+      fetchClockInStatus();
+      fetchAttendanceStatus();
+      setHistoryRefreshTrigger(prev => prev + 1);
+    }, 150);
+  }, []);
+
   useEffect(() => {
     fetchClockInStatus();
     fetchAttendanceStatus();
@@ -68,21 +130,29 @@ const Attendance = () => {
 
     const socket = getSocket();
     if (socket) {
-      const handleAttendanceEvent = () => {
-        fetchClockInStatus();
-        fetchAttendanceStatus();
-        setHistoryRefreshTrigger(prev => prev + 1);
+      const handleAttendanceEvent = (payload) => {
+        console.log('[Socket] Attendance event received on Attendance page:', payload?.record?.id || payload);
+        safeRefreshAttendance();
       };
+
+      socket.off('attendance_clock_in', handleAttendanceEvent);
+      socket.off('attendance_clock_out', handleAttendanceEvent);
+      socket.off('attendance_updated', handleAttendanceEvent);
+      socket.off('settings_updated', handleAttendanceEvent);
+
       socket.on('attendance_clock_in', handleAttendanceEvent);
       socket.on('attendance_clock_out', handleAttendanceEvent);
       socket.on('attendance_updated', handleAttendanceEvent);
+      socket.on('settings_updated', handleAttendanceEvent);
+
       return () => {
         socket.off('attendance_clock_in', handleAttendanceEvent);
         socket.off('attendance_clock_out', handleAttendanceEvent);
         socket.off('attendance_updated', handleAttendanceEvent);
+        socket.off('settings_updated', handleAttendanceEvent);
       };
     }
-  }, []);
+  }, [safeRefreshAttendance]);
 
   const fetchAttendanceStatus = async () => {
     try {
@@ -169,13 +239,14 @@ const Attendance = () => {
     return () => clearInterval(pollInterval);
   }, []);
 
+  const navigate = useNavigate();
   const [isClockInModalOpen, setIsClockInModalOpen] = useState(false);
 
   const handleClockIn = () => {
     setIsClockInModalOpen(true);
   };
 
-  const handleClockOut = async () => {
+  const executeClockOut = async () => {
     try {
       setLoading(true);
       const coords = await getCoordinatesObj();
@@ -197,6 +268,14 @@ const Attendance = () => {
       setLoading(false);
     }
   };
+
+  const {
+    reminderModal,
+    handleClockOut,
+    closeModal,
+    handleCompleteWorkLog,
+    handleClockOutAnyway
+  } = useClockOutWithReminder(user, executeClockOut);
 
 
 
@@ -332,20 +411,63 @@ const Attendance = () => {
           </p>
 
           {/* Active status indicator */}
-          <div className="mt-4">
+          <div className="mt-4 flex flex-col items-center gap-2">
             {!clockedRecord ? (
               <span className="text-[10px] bg-red-500/10 text-red-500 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
                 Offline • Not Clocked In
               </span>
             ) : clockedRecord.clockOut ? (
-              <span className="text-[10px] bg-slate-500/10 text-slate-500 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
-                Shift Ended • Clocked Out
-              </span>
+              <div className="flex items-center gap-2">
+                {clockedRecord.autoClockOut && (
+                  <span className="text-[10px] bg-blue-500/10 text-blue-600 px-3 py-1 rounded-full font-bold uppercase tracking-wider border border-blue-500/20">
+                    Automatically Clocked Out
+                  </span>
+                )}
+                <span className="text-[10px] bg-slate-500/10 text-slate-500 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
+                  Shift Ended • Clocked Out
+                </span>
+              </div>
             ) : (
-              <span className="text-[10px] bg-primary/10 text-primary px-3 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary pulse-active" />
-                <span>On Shift • Clocked In ({clockedRecord.status})</span>
-              </span>
+              <div className="flex flex-col items-center gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] bg-primary/10 text-primary px-3 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary pulse-active" />
+                    <span>On Shift • Clocked In ({clockedRecord.status})</span>
+                  </span>
+                  <span className={`inline-flex items-center gap-1.5 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border ${
+                    shiftCountdown.autoClockOutEnabled
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${shiftCountdown.autoClockOutEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                    {shiftCountdown.autoClockOutEnabled ? 'Auto Clock-Out' : 'Manual Clock-Out'}
+                  </span>
+                </div>
+                <div className="text-xs font-semibold text-muted-foreground flex items-center gap-2">
+                  <span>Shift Countdown: <strong className="text-primary font-mono">{shiftCountdown.isExpired ? (shiftCountdown.autoClockOutEnabled ? 'Auto Clocked Out' : 'Shift Ended') : shiftCountdown.formattedRemaining}</strong></span>
+                  <span>•</span>
+                  <span>Ends: <strong className="text-foreground">{shiftCountdown.targetEndTimeFormatted}</strong></span>
+                </div>
+
+                {/* Live Dynamic Shift Completion Progress Bar */}
+                <div className="w-full max-w-xs space-y-1.5 pt-2">
+                  <div className="flex justify-between text-[11px] font-bold">
+                    <span className="text-muted-foreground">Shift Progress ({currentWorkingHours.toFixed(1)} hrs)</span>
+                    <span className={`font-mono font-bold transition-colors duration-500 ${progressColor.text}`}>
+                      {shiftProgressPercent}% ({targetShiftHours.toFixed(1)}h Target)
+                    </span>
+                  </div>
+                  <div className="w-full h-2 rounded-full bg-muted overflow-hidden p-0.5 border border-border/40">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ease-out ${shiftProgressPercent > 0 ? progressColor.bg : 'bg-transparent'}`}
+                      style={{
+                        width: `${shiftProgressPercent}%`,
+                        backgroundColor: shiftProgressPercent > 0 ? progressColor.hex : 'transparent'
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
             )}
           </div>
 
@@ -360,7 +482,10 @@ const Attendance = () => {
             </button>
 
             <button
-              onClick={handleClockOut}
+              onClick={() => {
+              console.log("[CLOCKOUT] Button clicked");
+              handleClockOut();
+            }}
               disabled={loading || !clockInStatus?.canClockOut}
               className="flex-1 flex items-center justify-center gap-2 rounded-xl text-white py-3 text-sm font-semibold active:scale-95 disabled:opacity-40 shadow-lg shadow-red-500/25 transition-all cursor-pointer bg-[linear-gradient(135deg,#FF6B6B_0%,#EF4444_55%,#DC2626_100%)] hover:bg-[linear-gradient(135deg,#EF4444_0%,#DC2626_100%)] border-none"
             >
@@ -481,6 +606,16 @@ const Attendance = () => {
           setHistoryRefreshTrigger(prev => prev + 1);
         }}
         user={user}
+      />
+
+      {/* Clock Out Reminder Modal */}
+      <ClockOutReminderModal
+        isOpen={reminderModal.isOpen}
+        isDraft={reminderModal.isDraft}
+        hasWorkLog={reminderModal.hasWorkLog}
+        onClose={closeModal}
+        onCompleteWorkLog={handleCompleteWorkLog}
+        onClockOutAnyway={handleClockOutAnyway}
       />
     </div>
   );

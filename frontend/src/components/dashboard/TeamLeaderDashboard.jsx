@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
@@ -8,6 +8,11 @@ import UserAvatar from '../common/UserAvatar';
 import TeamLeaderLeaveWidget from './TeamLeaderLeaveWidget';
 import LeaveOverviewCard from './LeaveOverviewCard';
 import ClockInModal from '../attendance/ClockInModal';
+import ApplyLeaveModal from '../leave/ApplyLeaveModal';
+import useShiftCountdown from '../../hooks/useShiftCountdown';
+import { getTargetShiftHours, getShiftProgressColor } from '../../utils/shiftProgress';
+import ClockOutReminderModal from '../worklog/ClockOutReminderModal';
+import useClockOutWithReminder from '../../hooks/useClockOutWithReminder';
 import {
   Clock,
   CheckCircle2,
@@ -114,6 +119,29 @@ export const TeamLeaderDashboard = () => {
   // Attendance Card Segmented View Tab ('MY_SHIFT' or 'TEAM_SUMMARY')
   const [attendanceTab, setAttendanceTab] = useState('MY_SHIFT');
 
+  const isClockedIn = Boolean(clockedRecord && clockedRecord.clockIn && !clockedRecord.clockOut);
+
+  const shiftCountdown = useShiftCountdown({
+    shiftEndAt: clockedRecord?.shiftEndAt || clockStatus?.shiftEndAt,
+    serverTime: clockStatus?.serverTime,
+    autoClockOutEnabled: clockStatus?.autoClockOutEnabled,
+    isClockedIn,
+    onShiftEnd: () => {
+      fetchTLDashboardData();
+    }
+  });
+
+  useEffect(() => {
+    if (clockStatus || clockedRecord) {
+      console.log('[ShiftCountdown]', {
+        isClockedIn: clockStatus?.isClockedIn || isClockedIn,
+        shiftEndAt: clockStatus?.shiftEndAt || clockedRecord?.shiftEndAt,
+        serverTime: clockStatus?.serverTime,
+        countdown: shiftCountdown.formattedTime || shiftCountdown.formattedRemaining
+      });
+    }
+  }, [clockStatus, clockedRecord, isClockedIn, shiftCountdown.formattedRemaining]);
+
   // Data States (Strictly Database Fetched & Team Leader Scoped)
   const [teamTasks, setTeamTasks] = useState([]);
   const [teamProjects, setTeamProjects] = useState([]);
@@ -180,24 +208,52 @@ export const TeamLeaderDashboard = () => {
     return () => clearInterval(timer);
   }, []);
 
+  const lastFetchTimestampRef = useRef(0);
+  const debounceFetchTimerRef = useRef(null);
+
+  const safeRefreshTLDashboard = useCallback(() => {
+    const now = Date.now();
+    if (now - lastFetchTimestampRef.current < 2000) {
+      return;
+    }
+    if (debounceFetchTimerRef.current) {
+      clearTimeout(debounceFetchTimerRef.current);
+    }
+    debounceFetchTimerRef.current = setTimeout(() => {
+      lastFetchTimestampRef.current = Date.now();
+      console.log('[AutoClockOut] Executing single TL attendance state refresh');
+      fetchTLDashboardData();
+    }, 150);
+  }, []);
+
   useEffect(() => {
     fetchTLDashboardData();
 
     const socket = getSocket();
     if (socket) {
-      const handleAttendanceEvent = () => {
-        fetchTLDashboardData();
+      const handleAttendanceEvent = (payload) => {
+        console.log('[Socket] Attendance event received:', payload?.record?.id || payload);
+        safeRefreshTLDashboard();
       };
+
+      socket.off('attendance_clock_in', handleAttendanceEvent);
+      socket.off('attendance_clock_out', handleAttendanceEvent);
+      socket.off('attendance_updated', handleAttendanceEvent);
+      socket.off('settings_updated', handleAttendanceEvent);
+
       socket.on('attendance_clock_in', handleAttendanceEvent);
       socket.on('attendance_clock_out', handleAttendanceEvent);
       socket.on('attendance_updated', handleAttendanceEvent);
+      socket.on('settings_updated', handleAttendanceEvent);
+
       return () => {
         socket.off('attendance_clock_in', handleAttendanceEvent);
         socket.off('attendance_clock_out', handleAttendanceEvent);
         socket.off('attendance_updated', handleAttendanceEvent);
+        socket.off('settings_updated', handleAttendanceEvent);
       };
     }
-  }, [user]);
+  }, [user, safeRefreshTLDashboard]);
 
   const fetchLeaveBalances = async () => {
     try {
@@ -286,7 +342,7 @@ export const TeamLeaderDashboard = () => {
     setIsClockInModalOpen(true);
   };
 
-  const handleClockOut = async () => {
+  const executeClockOut = async () => {
     try {
       setClockLoading(true);
       setAttendanceAlert('');
@@ -295,11 +351,19 @@ export const TeamLeaderDashboard = () => {
       setAttendanceAlert('Successfully clocked out for today!');
       fetchTLDashboardData();
     } catch (err) {
-      setAttendanceAlert(err.response?.data?.message || 'Clock out failed.');
+      setAttendanceAlert(err.response?.data?.message || 'Failed to clock out.');
     } finally {
       setClockLoading(false);
     }
   };
+
+  const {
+    reminderModal,
+    handleClockOut,
+    closeModal,
+    handleCompleteWorkLog,
+    handleClockOutAnyway
+  } = useClockOutWithReminder(user, executeClockOut);
 
   const handleApplyLeaveSubmit = async (e) => {
     e.preventDefault();
@@ -445,6 +509,20 @@ export const TeamLeaderDashboard = () => {
     const diffMs = Math.max(0, end - start);
     return (diffMs / (1000 * 60 * 60)).toFixed(1);
   }, [clockedRecord, time]);
+
+  // Target Shift Hours & Dynamic Progress Calculation
+  const targetShiftHours = useMemo(() => {
+    return getTargetShiftHours(clockStatus?.clockInTime || '09:00', clockStatus?.clockOutTime || '18:00');
+  }, [clockStatus?.clockInTime, clockStatus?.clockOutTime]);
+
+  const shiftProgressPercent = useMemo(() => {
+    if (!isClockedIn && !clockedRecord?.clockOut) return 0;
+    return Math.min(100, Math.round((parseFloat(currentWorkingHours) / targetShiftHours) * 100));
+  }, [isClockedIn, clockedRecord?.clockOut, currentWorkingHours, targetShiftHours]);
+
+  const progressColor = useMemo(() => {
+    return getShiftProgressColor(shiftProgressPercent);
+  }, [shiftProgressPercent]);
 
   const breakHours = useMemo(() => {
     if (!clockedRecord?.breakMinutes) return '0.0';
@@ -640,7 +718,10 @@ export const TeamLeaderDashboard = () => {
                 <span>Clock In</span>
               </button>
               <button
-                onClick={handleClockOut}
+                onClick={() => {
+                console.log("[CLOCKOUT] Button clicked");
+                handleClockOut();
+              }}
                 disabled={clockLoading || !clockStatus?.canClockOut}
                 className="flex items-center justify-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md transition-all active:scale-95 cursor-pointer disabled:opacity-50"
               >
@@ -771,16 +852,28 @@ export const TeamLeaderDashboard = () => {
             {/* TAB VIEW 1: MY SHIFT SUMMARY */}
             {attendanceTab === 'MY_SHIFT' && (
               <div className="space-y-4 animate-in fade-in duration-200">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground font-semibold">Shift Status:</span>
-                  <span className={`px-3 py-1 rounded-full text-xs font-black border ${
-                    clockedRecord && !clockedRecord.clockOut
-                      ? 'bg-success/10 text-success border-success/20'
-                      : clockedRecord?.clockOut
-                      ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
-                      : 'bg-muted text-muted-foreground border-border/60'
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-semibold">Shift Status:</span>
+                    <span className={`px-3 py-1 rounded-full text-xs font-black border ${
+                      clockedRecord && !clockedRecord.clockOut
+                        ? (shiftCountdown.isExpired && !shiftCountdown.autoClockOutEnabled ? 'bg-amber-500/10 text-amber-600 border-amber-500/20' : 'bg-success/10 text-success border-success/20')
+                        : clockedRecord?.clockOut
+                        ? 'bg-blue-500/10 text-blue-600 border-blue-500/20'
+                        : 'bg-muted text-muted-foreground border-border/60'
+                    }`}>
+                      {clockedRecord && !clockedRecord.clockOut ? (shiftCountdown.isExpired && !shiftCountdown.autoClockOutEnabled ? 'Shift Ended (Manual Clock-Out Required)' : 'Shift Active') : clockedRecord?.clockOut ? 'Shift Completed' : 'Not Clocked In'}
+                    </span>
+                  </div>
+
+                  {/* Auto Clock-Out Status Badge */}
+                  <span className={`inline-flex items-center gap-1.5 text-[11px] font-extrabold px-2.5 py-0.5 rounded-full border ${
+                    shiftCountdown.autoClockOutEnabled
+                      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                      : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
                   }`}>
-                    {clockedRecord && !clockedRecord.clockOut ? 'Shift Active' : clockedRecord?.clockOut ? 'Shift Completed' : 'Not Clocked In'}
+                    <span className={`w-1.5 h-1.5 rounded-full ${shiftCountdown.autoClockOutEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+                    {shiftCountdown.autoClockOutEnabled ? 'Automatic Clock-Out Enabled' : 'Manual Clock-Out Required'}
                   </span>
                 </div>
 
@@ -792,11 +885,55 @@ export const TeamLeaderDashboard = () => {
                     </span>
                   </div>
 
-                  <div className="p-3 rounded-2xl bg-muted/30 border border-border/50">
-                    <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">Check-Out</span>
-                    <span className="text-sm font-bold text-foreground mt-1 block">
-                      {clockedRecord?.clockOut ? new Date(clockedRecord.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
-                    </span>
+                  <div className={`p-3 rounded-2xl border ${
+                    isClockedIn
+                      ? (shiftCountdown.isExpired && !shiftCountdown.autoClockOutEnabled ? 'bg-amber-500/10 border-amber-500/20' : 'bg-primary/10 border-primary/20')
+                      : 'bg-muted/30 border-border/50'
+                  }`}>
+                    <span className={`text-[10px] font-extrabold uppercase block ${isClockedIn ? 'text-primary' : 'text-muted-foreground'}`}>Check-Out</span>
+                    {clockedRecord?.clockOut ? (
+                      <>
+                        <span className="text-sm font-bold text-foreground mt-1 block">
+                          {new Date(clockedRecord.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        <span className="text-[9px] text-muted-foreground font-medium block mt-0.5">
+                          {clockedRecord.autoClockOut ? 'Automatically Clocked Out' : 'Shift Completed'}
+                        </span>
+                      </>
+                    ) : isClockedIn ? (
+                      shiftCountdown.isExpired ? (
+                        shiftCountdown.autoClockOutEnabled ? (
+                          <>
+                            <span className="text-sm font-bold text-foreground mt-1 block">
+                              {shiftCountdown.targetEndTimeFormatted}
+                            </span>
+                            <span className="text-[9px] text-emerald-600 font-bold block mt-0.5">
+                              Automatically Clocked Out
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-xs font-bold text-amber-600 block mt-1">
+                              Shift Ended
+                            </span>
+                            <span className="text-[9px] text-amber-600 font-medium block mt-0.5">
+                              Please clock out manually.
+                            </span>
+                          </>
+                        )
+                      ) : (
+                        <>
+                          <span className="text-sm font-black font-mono text-primary mt-1 block">
+                            {shiftCountdown.formattedRemaining}
+                          </span>
+                          <span className="text-[9px] text-muted-foreground font-semibold block mt-0.5">
+                            Shift Ends: {shiftCountdown.targetEndTimeFormatted}
+                          </span>
+                        </>
+                      )
+                    ) : (
+                      <span className="text-sm font-bold text-foreground mt-1 block">--:--</span>
+                    )}
                   </div>
 
                   <div className="p-3 rounded-2xl bg-primary/10 border border-primary/20">
@@ -819,14 +956,17 @@ export const TeamLeaderDashboard = () => {
                 <div className="space-y-1.5 pt-2 border-t border-border/30">
                   <div className="flex justify-between text-xs font-bold">
                     <span className="text-muted-foreground">My Shift Completion ({currentWorkingHours} hrs)</span>
-                    <span className="text-primary">
-                      {Math.min(100, Math.round((parseFloat(currentWorkingHours) / 8.0) * 100))}% (8.0 Hrs Target)
+                    <span className={`font-mono font-bold transition-colors duration-500 ${isClockedIn || clockedRecord?.clockOut ? progressColor.text : 'text-muted-foreground'}`}>
+                      {shiftProgressPercent}% ({targetShiftHours.toFixed(1)} Hrs Target)
                     </span>
                   </div>
-                  <div className="w-full h-2.5 rounded-full bg-muted overflow-hidden">
+                  <div className="w-full h-2.5 rounded-full bg-muted overflow-hidden p-0.5 border border-border/40">
                     <div
-                      className="h-full bg-primary rounded-full transition-all duration-500"
-                      style={{ width: `${Math.min(100, (parseFloat(currentWorkingHours) / 8.0) * 100)}%` }}
+                      className={`h-full rounded-full transition-all duration-500 ease-out ${shiftProgressPercent > 0 ? progressColor.bg : 'bg-transparent'}`}
+                      style={{
+                        width: `${shiftProgressPercent}%`,
+                        backgroundColor: shiftProgressPercent > 0 ? progressColor.hex : 'transparent'
+                      }}
                     />
                   </div>
                 </div>
@@ -1226,103 +1366,16 @@ export const TeamLeaderDashboard = () => {
         </div>
       </motion.div>
 
-      {/* 5. Apply Leave Modal (Routing to Admin for Sanction) */}
-      <AnimatePresence>
-        {isLeaveModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-lg rounded-[28px] border border-border bg-card p-6 shadow-xl text-left space-y-4"
-            >
-              <div className="flex items-center justify-between border-b border-border/40 pb-3">
-                <h3 className="text-lg font-bold text-foreground">Apply for Leave / WFH Letter</h3>
-                <button onClick={() => setIsLeaveModalOpen(false)} className="p-1 rounded-lg hover:bg-muted text-muted-foreground cursor-pointer">
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              {leaveSuccess && (
-                <div className={`p-3 rounded-xl text-xs font-semibold ${
-                  leaveSuccess.startsWith('Error') ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20' : 'bg-success/10 text-success border border-success/20'
-                }`}>
-                  {leaveSuccess}
-                </div>
-              )}
-
-              <form onSubmit={handleApplyLeaveSubmit} className="space-y-4 text-xs font-semibold">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-muted-foreground mb-1">Start Date</label>
-                    <input
-                      type="date"
-                      value={leaveForm.startDate}
-                      onChange={(e) => setLeaveForm({ ...leaveForm, startDate: e.target.value })}
-                      required
-                      className="w-full rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-foreground focus:ring-2 focus:ring-primary/20"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-muted-foreground mb-1">End Date</label>
-                    <input
-                      type="date"
-                      value={leaveForm.endDate}
-                      onChange={(e) => setLeaveForm({ ...leaveForm, endDate: e.target.value })}
-                      required
-                      className="w-full rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-foreground focus:ring-2 focus:ring-primary/20"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-muted-foreground mb-1">Leave Type</label>
-                  <select
-                    value={leaveForm.type}
-                    onChange={(e) => setLeaveForm({ ...leaveForm, type: e.target.value })}
-                    className="w-full rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-foreground focus:ring-2 focus:ring-primary/20"
-                  >
-                    <option value="CASUAL">Casual Leave</option>
-                    <option value="SICK">Sick Leave</option>
-                    <option value="EMERGENCY">Emergency Leave</option>
-                    <option value="WFH">Work From Home (WFH)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-muted-foreground mb-1">Reason & Application Letter</label>
-                  <textarea
-                    rows={3}
-                    placeholder="Provide details about your leave application..."
-                    value={leaveForm.reason}
-                    onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })}
-                    required
-                    className="w-full rounded-xl border border-border/60 bg-muted/30 px-3 py-2 text-foreground focus:ring-2 focus:ring-primary/20"
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsLeaveModalOpen(false)}
-                    className="px-4 py-2 rounded-xl border border-border text-muted-foreground hover:bg-muted font-bold cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={leaveSubmitting}
-                    className="flex items-center gap-2 bg-primary hover:bg-primary-hover text-white px-5 py-2 rounded-xl font-bold shadow-md shadow-primary/20 disabled:opacity-50 cursor-pointer"
-                  >
-                    <Send className="h-4 w-4" />
-                    <span>{leaveSubmitting ? 'Submitting...' : 'Submit Application'}</span>
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {/* 5. Shared Apply Leave Modal */}
+      <ApplyLeaveModal
+        isOpen={isLeaveModalOpen}
+        onClose={() => setIsLeaveModalOpen(false)}
+        onSuccess={() => {
+          fetchTLDashboardData();
+          fetchLeaveBalances();
+        }}
+        userRole={user?.role || 'TEAM_LEADER'}
+      />
 
       {/* Clock In Modal */}
       <ClockInModal
@@ -1330,6 +1383,16 @@ export const TeamLeaderDashboard = () => {
         onClose={() => setIsClockInModalOpen(false)}
         onSuccess={() => fetchTLDashboardData()}
         user={user}
+      />
+
+      {/* Clock Out Reminder Modal */}
+      <ClockOutReminderModal
+        isOpen={reminderModal.isOpen}
+        isDraft={reminderModal.isDraft}
+        hasWorkLog={reminderModal.hasWorkLog}
+        onClose={closeModal}
+        onCompleteWorkLog={handleCompleteWorkLog}
+        onClockOutAnyway={handleClockOutAnyway}
       />
     </motion.div>
   );

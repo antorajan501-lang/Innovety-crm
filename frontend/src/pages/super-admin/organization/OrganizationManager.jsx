@@ -32,6 +32,7 @@ const OrganizationManager = () => {
   const [posSearch, setPosSearch] = useState('');
   const [posStatusFilter, setPosStatusFilter] = useState('ALL');
   const [posModalOpen, setPosModalOpen] = useState(false);
+  const [posDeleteModal, setPosDeleteModal] = useState({ open: false, pos: null, loading: false });
   const [editingPos, setEditingPos] = useState(null);
   const [posForm, setPosForm] = useState({
     name: '',
@@ -265,24 +266,31 @@ const OrganizationManager = () => {
     }
   };
 
-  const handleDeletePos = async (pos) => {
-    if (pos.totalEmployees > 0) {
-      showAlert('error', `Cannot delete "${pos.name}". It is assigned to ${pos.totalEmployees} active employee(s). Please reassign them first.`);
-      return;
-    }
-    if (pos.status !== 'INACTIVE') {
-      showAlert('error', `Cannot delete active position "${pos.name}". Deactivate it first.`);
-      return;
-    }
+  const handleDeletePos = (pos) => {
+    setPosDeleteModal({ open: true, pos, loading: false });
+  };
 
-    if (!window.confirm(`Are you sure you want to permanently delete inactive position "${pos.name}"?`)) return;
+  const executeDeletePos = async () => {
+    const pos = posDeleteModal.pos;
+    if (!pos) return;
 
     try {
-      await api.delete(`/positions/${pos.id}`);
-      showAlert('success', `Position "${pos.name}" deleted.`);
+      setPosDeleteModal(prev => ({ ...prev, loading: true }));
+      const res = await api.delete(`/positions/${pos.id}`);
+      const unassignedCount = res.data?.employeesUnassigned ?? 0;
+
+      if (unassignedCount > 0) {
+        showAlert('success', `Position "${pos.name}" deleted successfully. ${unassignedCount} employee${unassignedCount === 1 ? '' : 's'} were automatically unassigned.`);
+      } else {
+        showAlert('success', `Position "${pos.name}" deleted successfully.`);
+      }
+
+      setPosDeleteModal({ open: false, pos: null, loading: false });
       fetchPositions();
+      fetchTree();
     } catch (err) {
       showAlert('error', err.response?.data?.message || 'Failed to delete position.');
+      setPosDeleteModal(prev => ({ ...prev, loading: false }));
     }
   };
 
@@ -544,7 +552,7 @@ const OrganizationManager = () => {
                             <button
                               onClick={() => handleDeletePos(pos)}
                               className="p-1.5 rounded-lg border border-border hover:bg-red-500/10 text-red-500 cursor-pointer"
-                              title="Delete Position (Only inactive with 0 employees)"
+                              title="Delete Position"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -775,6 +783,72 @@ const OrganizationManager = () => {
         )}
       </AnimatePresence>
 
+      {/* DELETE POSITION CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {posDeleteModal.open && posDeleteModal.pos && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-card border border-border/80 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 text-left"
+            >
+              <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-red-500/10 text-red-500 border border-red-500/20">
+                    <AlertTriangle className="h-5 w-5" />
+                  </div>
+                  <h3 className="text-base font-extrabold text-foreground">Delete Position?</h3>
+                </div>
+                <button
+                  onClick={() => setPosDeleteModal({ open: false, pos: null, loading: false })}
+                  className="text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  <XCircle className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="space-y-2 text-xs font-medium text-muted-foreground">
+                {posDeleteModal.pos.totalEmployees > 0 ? (
+                  <p>
+                    <strong className="text-foreground font-bold">{posDeleteModal.pos.name}</strong> is currently assigned to{' '}
+                    <strong className="text-foreground font-bold">{posDeleteModal.pos.totalEmployees} employee{posDeleteModal.pos.totalEmployees === 1 ? '' : 's'}</strong>.
+                    <br /><br />
+                    Those employees will automatically become <strong className="text-foreground font-bold">Unassigned</strong>, and the position will be permanently deleted.
+                  </p>
+                ) : (
+                  <p>
+                    Are you sure you want to delete <strong className="text-foreground font-bold">{posDeleteModal.pos.name}</strong>?
+                    <br /><br />
+                    This action cannot be undone.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/60">
+                <button
+                  type="button"
+                  disabled={posDeleteModal.loading}
+                  onClick={() => setPosDeleteModal({ open: false, pos: null, loading: false })}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={posDeleteModal.loading}
+                  onClick={executeDeletePos}
+                  className="px-5 py-2 rounded-xl bg-red-600 text-white text-xs font-bold hover:bg-red-700 shadow-md cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {posDeleteModal.loading && <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+                  <span>Delete Position</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* MASTER CREATION MODAL (ADD DEPARTMENT) */}
       <AnimatePresence>
         {masterModal.open && (
@@ -934,12 +1008,26 @@ const OrganizationManager = () => {
                     <p className="text-xs text-muted-foreground font-medium">Manage department details, assigned staff, and new member additions.</p>
                   </div>
                 </div>
-                <button
-                  onClick={() => setSelectedDepartment(null)}
-                  className="p-1 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
-                >
-                  <X className="h-5 w-5" />
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleDeleteDepartmentClick}
+                    className="p-1.5 text-red-500 hover:text-red-600 transition-colors duration-200 cursor-pointer"
+                    title="Delete Department"
+                    aria-label="Delete Department"
+                  >
+                    <Trash2 className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDepartment(null)}
+                    className="p-1 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                    title="Close"
+                    aria-label="Close"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
               </div>
 
               {/* Section 1 — Department Information */}
@@ -1106,35 +1194,24 @@ const OrganizationManager = () => {
               </div>
 
               {/* Section 4 — Actions */}
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-4 border-t border-border/60">
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-border/60">
                 <button
                   type="button"
-                  onClick={handleDeleteDepartmentClick}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 border border-rose-500/30 text-xs font-bold transition-all cursor-pointer"
+                  onClick={() => setSelectedDepartment(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted cursor-pointer"
                 >
-                  <Trash2 className="h-4 w-4" />
-                  <span>Delete Department</span>
+                  Cancel
                 </button>
 
-                <div className="flex items-center justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedDepartment(null)}
-                    className="px-4 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={saveLoading}
-                    onClick={handleSaveAllDeptChanges}
-                    className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50"
-                  >
-                    <Save className="h-4 w-4" />
-                    <span>{saveLoading ? 'Saving...' : 'Save Changes'}</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  disabled={saveLoading}
+                  onClick={handleSaveAllDeptChanges}
+                  className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+                  <span>{saveLoading ? 'Saving...' : 'Save Changes'}</span>
+                </button>
               </div>
             </motion.div>
           </div>

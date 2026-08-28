@@ -202,8 +202,13 @@ export default function AttendanceHistorySection({ user, refreshTrigger }) {
       const isSunday = dayDateObj.getUTCDay() === 0;
       const rec = dateRecordMap.get(dateStr);
 
+      const userJoiningDateStr = user?.joiningDate ? new Date(user.joiningDate).toISOString().split('T')[0] : '';
+      const isBeforeJoining = Boolean(userJoiningDateStr && dateStr < userJoiningDateStr);
+
       let cellBg = 'bg-card border-border/50';
-      if (rec) {
+      if (isBeforeJoining) {
+        cellBg = 'bg-muted/10 border-border/20 opacity-50 cursor-not-allowed';
+      } else if (rec) {
         if (rec.status === 'PRESENT' || rec.status === 'WORK_FROM_HOME') cellBg = 'bg-emerald-500/5 border-emerald-500/30';
         else if (rec.status === 'LATE') cellBg = 'bg-amber-500/5 border-amber-500/30';
         else if (rec.status === 'ABSENT') cellBg = 'bg-rose-500/5 border-rose-500/30';
@@ -226,7 +231,11 @@ export default function AttendanceHistorySection({ user, refreshTrigger }) {
             {isSunday && <span className="text-[9px] font-semibold text-muted-foreground">Sun</span>}
           </div>
 
-          {rec ? (
+          {isBeforeJoining ? (
+            <span className="text-[9px] font-bold text-muted-foreground/60 uppercase tracking-tight">
+              Before Joining
+            </span>
+          ) : rec ? (
             <div className="space-y-1 text-left">
               <div className="scale-90 origin-left">
                 {getStatusBadge(rec)}

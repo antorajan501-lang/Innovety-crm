@@ -1103,6 +1103,7 @@ const UserWizardModal = ({
                     onChange={handleChange}
                     className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-border bg-card cursor-pointer"
                   >
+                    <option value="">Unassigned (No Position)</option>
                     {orgTree?.positions?.map(pos => (
                       <option key={pos.id} value={pos.id}>
                         Level {pos.level} • {pos.name} ({pos.code})

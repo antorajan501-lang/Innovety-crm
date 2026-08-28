@@ -100,6 +100,8 @@ const Projects = () => {
 
   // Form State
   const [wizardStep, setWizardStep] = useState(1);
+  const [wizardSubmitAttempted, setWizardSubmitAttempted] = useState(false);
+  const [wizardTouched, setWizardTouched] = useState({});
   const [draggedStageIndex, setDraggedStageIndex] = useState(null);
   const [dragOverStageIndex, setDragOverStageIndex] = useState(null);
   const [formData, setFormData] = useState({
@@ -222,19 +224,19 @@ const Projects = () => {
 
   const getStepValidation = (step) => {
     if (step === 1) {
-      if (!formData.name.trim()) return { valid: false, error: 'Project Name is required.' };
-      if (!formData.estimatedStartDate) return { valid: false, error: 'Start Date is required.' };
-      if (!formData.estimatedEndDate) return { valid: false, error: 'End Date is required.' };
+      if (!formData.name.trim()) return { valid: false, error: 'Project Name is required.', field: 'name' };
+      if (!formData.estimatedStartDate) return { valid: false, error: 'Start Date is required.', field: 'estimatedStartDate' };
+      if (!formData.estimatedEndDate) return { valid: false, error: 'End Date is required.', field: 'estimatedEndDate' };
       if (new Date(formData.estimatedEndDate) < new Date(formData.estimatedStartDate)) {
-        return { valid: false, error: 'End Date must be greater than or equal to Start Date.' };
+        return { valid: false, error: 'End Date must be greater than or equal to Start Date.', field: 'estimatedEndDate' };
       }
-      if (!formData.leaderId) return { valid: false, error: 'Project Leader selection is required.' };
+      if (!formData.leaderId) return { valid: false, error: 'Project Leader selection is required.', field: 'leaderId' };
       return { valid: true };
     }
 
     if (step === 2) {
       if (formData.memberIds.length === 0) {
-        return { valid: false, error: 'At least one project member or leader must be assigned.' };
+        return { valid: false, error: 'At least one project member or leader must be assigned.', field: 'memberIds' };
       }
       return { valid: true };
     }
@@ -242,19 +244,19 @@ const Projects = () => {
     if (step === 3) {
       const stages = formData.workflowStages || [];
       if (stages.length < 2 || stages.length > 10) {
-        return { valid: false, error: 'Workflow must contain between 2 and 10 stages.' };
+        return { valid: false, error: 'Workflow must contain between 2 and 10 stages.', field: 'workflowStages' };
       }
       const names = new Set();
       let completedCount = 0;
       for (const stg of stages) {
         const name = (stg.name || '').trim();
-        if (!name) return { valid: false, error: 'All workflow stage names must be non-empty.' };
-        if (names.has(name.toLowerCase())) return { valid: false, error: `Duplicate stage name "${name}".` };
+        if (!name) return { valid: false, error: 'All workflow stage names must be non-empty.', field: 'workflowStages' };
+        if (names.has(name.toLowerCase())) return { valid: false, error: `Duplicate stage name "${name}".`, field: 'workflowStages' };
         names.add(name.toLowerCase());
         if (stg.isCompletedStage) completedCount++;
       }
       if (completedCount !== 1) {
-        return { valid: false, error: 'Select exactly one completed stage.' };
+        return { valid: false, error: 'Select exactly one completed stage.', field: 'workflowStages' };
       }
       return { valid: true };
     }
@@ -262,7 +264,7 @@ const Projects = () => {
     if (step === 4) {
       for (const stg of formData.workflowStages || []) {
         if (stg.requiresApproval && !stg.approverRole && !stg.approverId) {
-          return { valid: false, error: `Select an approver for approval-required stage "${stg.name}".` };
+          return { valid: false, error: `Select an approver for approval-required stage "${stg.name}".`, field: 'workflowStages' };
         }
       }
       return { valid: true };
@@ -338,6 +340,8 @@ const Projects = () => {
       ]
     });
     setWizardStep(1);
+    setWizardSubmitAttempted(false);
+    setWizardTouched({});
     setCreateModalOpen(true);
   };
 
@@ -748,8 +752,19 @@ const Projects = () => {
                       required
                       placeholder="e.g. Enterprise Website Redesign"
                       value={formData.name}
-                      onChange={e => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full px-4 py-2.5 rounded-2xl bg-muted/30 border border-border/80 text-sm text-foreground placeholder:text-muted-foreground/50 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                      onChange={e => {
+                        const val = e.target.value;
+                        setFormData({ ...formData, name: val });
+                        if (val.trim()) {
+                          setWizardTouched(prev => ({ ...prev, name: true }));
+                        }
+                      }}
+                      onBlur={() => setWizardTouched(prev => ({ ...prev, name: true }))}
+                      className={`w-full px-4 py-2.5 rounded-2xl bg-muted/30 border text-sm text-foreground placeholder:text-muted-foreground/50 focus:bg-background focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all ${
+                        (wizardSubmitAttempted || wizardTouched.name) && !formData.name.trim()
+                          ? 'border-rose-500/80 ring-2 ring-rose-500/10'
+                          : 'border-border/80'
+                      }`}
                     />
                   </div>
 
@@ -1199,12 +1214,15 @@ const Projects = () => {
               {(() => {
                 const stepCheck = getStepValidation(wizardStep);
                 if (!stepCheck.valid) {
-                  return (
-                    <div className="px-4 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 shrink-0" />
-                      <span>{stepCheck.error}</span>
-                    </div>
-                  );
+                  const shouldShow = wizardSubmitAttempted || (stepCheck.field && wizardTouched[stepCheck.field]);
+                  if (shouldShow) {
+                    return (
+                      <div className="px-4 py-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 shrink-0" />
+                        <span>{stepCheck.error}</span>
+                      </div>
+                    );
+                  }
                 }
                 return null;
               })()}
@@ -1213,8 +1231,12 @@ const Projects = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    if (wizardStep > 1) setWizardStep(wizardStep - 1);
-                    else setCreateModalOpen(false);
+                    if (wizardStep > 1) {
+                      setWizardStep(wizardStep - 1);
+                      setWizardSubmitAttempted(false);
+                    } else {
+                      setCreateModalOpen(false);
+                    }
                   }}
                   className="px-4 py-2.5 rounded-xl border border-border/80 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all cursor-pointer"
                 >
@@ -1224,16 +1246,19 @@ const Projects = () => {
                 {wizardStep < 5 ? (
                   <button
                     type="button"
-                    disabled={!getStepValidation(wizardStep).valid}
                     onClick={() => {
                       const check = getStepValidation(wizardStep);
                       if (!check.valid) {
-                        setAlertMsg(check.error);
+                        setWizardSubmitAttempted(true);
+                        if (check.field) {
+                          setWizardTouched(prev => ({ ...prev, [check.field]: true }));
+                        }
                         return;
                       }
+                      setWizardSubmitAttempted(false);
                       setWizardStep(wizardStep + 1);
                     }}
-                    className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover disabled:opacity-40 text-primary-foreground text-xs font-extrabold shadow-md shadow-primary/20 transition-all flex items-center gap-1.5 cursor-pointer"
+                    className="px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-primary-foreground text-xs font-extrabold shadow-md shadow-primary/20 transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <span>Next Step</span>
                     <ChevronRight className="w-4 h-4" />
@@ -1241,9 +1266,38 @@ const Projects = () => {
                 ) : (
                   <button
                     type="button"
-                    disabled={!getStepValidation(1).valid || !getStepValidation(2).valid || !getStepValidation(3).valid || !getStepValidation(4).valid}
-                    onClick={handleCreateSubmit}
-                    className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white text-xs font-extrabold shadow-md shadow-emerald-600/20 hover:scale-[1.01] transition-all flex items-center gap-2 cursor-pointer"
+                    onClick={(e) => {
+                      const check1 = getStepValidation(1);
+                      if (!check1.valid) {
+                        setWizardStep(1);
+                        setWizardSubmitAttempted(true);
+                        if (check1.field) setWizardTouched(prev => ({ ...prev, [check1.field]: true }));
+                        return;
+                      }
+                      const check2 = getStepValidation(2);
+                      if (!check2.valid) {
+                        setWizardStep(2);
+                        setWizardSubmitAttempted(true);
+                        if (check2.field) setWizardTouched(prev => ({ ...prev, [check2.field]: true }));
+                        return;
+                      }
+                      const check3 = getStepValidation(3);
+                      if (!check3.valid) {
+                        setWizardStep(3);
+                        setWizardSubmitAttempted(true);
+                        if (check3.field) setWizardTouched(prev => ({ ...prev, [check3.field]: true }));
+                        return;
+                      }
+                      const check4 = getStepValidation(4);
+                      if (!check4.valid) {
+                        setWizardStep(4);
+                        setWizardSubmitAttempted(true);
+                        if (check4.field) setWizardTouched(prev => ({ ...prev, [check4.field]: true }));
+                        return;
+                      }
+                      handleCreateSubmit(e);
+                    }}
+                    className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-md shadow-emerald-600/20 hover:scale-[1.01] transition-all flex items-center gap-2 cursor-pointer"
                   >
                     <Sparkles className="w-4 h-4 text-white" /> Launch Project & Workflow
                   </button>

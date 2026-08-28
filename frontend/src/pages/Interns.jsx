@@ -712,9 +712,9 @@ const Interns = () => {
                         <span>{item.position.name}</span>
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-indigo-500/10 text-indigo-600 border border-indigo-500/20">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">
                         <Award className="h-3 w-3" />
-                        <span>Intern</span>
+                        <span>Unassigned</span>
                       </span>
                     )}
                   </td>

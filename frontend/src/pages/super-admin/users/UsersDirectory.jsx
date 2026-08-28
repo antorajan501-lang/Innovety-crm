@@ -340,7 +340,10 @@ const UsersDirectory = () => {
                         <span>{u.position.name}</span>
                       </span>
                     ) : (
-                      <span className="text-xs text-muted-foreground font-medium">Standard</span>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">
+                        <Award className="h-3 w-3" />
+                        <span>Unassigned</span>
+                      </span>
                     )}
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">

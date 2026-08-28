@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
-import api, { getSocket } from '../services/api';
+import api, { getSocket, disconnectSocket } from '../services/api';
 
 const SocketContext = createContext(null);
 
@@ -44,14 +44,15 @@ export const SocketProvider = ({ children }) => {
     if (!user || !token) {
       setOnlineUsers([]);
       setSocket(null);
+      disconnectSocket();
       return;
     }
 
     const sharedSocket = getSocket();
+    if (!sharedSocket) return;
     setSocket(sharedSocket);
 
     const handleRegister = () => {
-      console.log('Registering identity on shared real-time socket...');
       const teamId = user.teamMembers?.[0]?.teamId || null;
       sharedSocket.emit('register', {
         userId: user.id,
@@ -59,6 +60,7 @@ export const SocketProvider = ({ children }) => {
         role: user.role,
         teamId
       });
+      sharedSocket.emit('get_online_users');
     };
 
     if (sharedSocket.connected) {
@@ -84,20 +86,57 @@ export const SocketProvider = ({ children }) => {
       setAnnouncements((prev) => [newAnnounce, ...prev]);
     };
 
-    // Listen for changes in online users status list
-    const handleOnlineUsers = (userIdsList) => {
-      setOnlineUsers(userIdsList);
+    // Presence: Synchronize bulk list
+    const handleOnlineUsers = (usersList) => {
+      console.log('[CLIENT RECEIVED] online_users:', usersList);
+      if (Array.isArray(usersList)) {
+        setOnlineUsers(usersList);
+      }
     };
+
+    // Presence: Single user online
+    const handleUserOnline = (userObj) => {
+      console.log('[CLIENT RECEIVED] user_online:', userObj);
+      if (!userObj) return;
+      const idStr = String(userObj.userId || userObj.id || '');
+      if (!idStr) return;
+      setOnlineUsers((prev) => {
+        if (prev.some((u) => String(u.userId || u.id) === idStr)) return prev;
+        return [...prev, { id: idStr, userId: idStr, name: userObj.name, role: userObj.role }];
+      });
+    };
+
+    // Presence: Single user offline
+    const handleUserOffline = (userObj) => {
+      console.log('[CLIENT RECEIVED] user_offline:', userObj);
+      if (!userObj) return;
+      const idStr = String(userObj.userId || userObj.id || '');
+      if (!idStr) return;
+      setOnlineUsers((prev) => prev.filter((u) => String(u.userId || u.id) !== idStr));
+    };
+
+    sharedSocket.off('notification', handleNotification);
+    sharedSocket.off('announcement', handleAnnouncement);
+    sharedSocket.off('online_users', handleOnlineUsers);
+    sharedSocket.off('user_online', handleUserOnline);
+    sharedSocket.off('user_offline', handleUserOffline);
 
     sharedSocket.on('notification', handleNotification);
     sharedSocket.on('announcement', handleAnnouncement);
     sharedSocket.on('online_users', handleOnlineUsers);
+    sharedSocket.on('user_online', handleUserOnline);
+    sharedSocket.on('user_offline', handleUserOffline);
+
+    // Initial fetch of online users
+    sharedSocket.emit('get_online_users');
 
     return () => {
       sharedSocket.off('connect', handleRegister);
       sharedSocket.off('notification', handleNotification);
       sharedSocket.off('announcement', handleAnnouncement);
       sharedSocket.off('online_users', handleOnlineUsers);
+      sharedSocket.off('user_online', handleUserOnline);
+      sharedSocket.off('user_offline', handleUserOffline);
     };
   }, [user, token]);
 
@@ -148,9 +187,11 @@ export const SocketProvider = ({ children }) => {
     }
   };
 
-  const isUserOnline = (userId) => {
-    return onlineUsers.some((u) => u.id === userId);
-  };
+  const isUserOnline = useCallback((userId) => {
+    if (!userId) return false;
+    const targetStr = String(userId);
+    return onlineUsers.some((u) => String(u?.userId || u?.id) === targetStr);
+  }, [onlineUsers]);
 
   const value = {
     notifications,

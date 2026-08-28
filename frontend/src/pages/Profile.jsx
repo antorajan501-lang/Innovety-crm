@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api, { getUploadUrl } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
 import {
+  Trash2,
+  X,
   User,
   Phone,
   School,
@@ -23,7 +26,7 @@ import {
 } from 'lucide-react';
 
 const Profile = () => {
-  const { user, updateProfile, changePassword } = useAuth();
+  const { user, updateProfile, removeProfilePicture, changePassword } = useAuth();
   const location = useLocation();
 
   // Basic Profile form
@@ -35,6 +38,8 @@ const Profile = () => {
   });
   const [avatar, setAvatar] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
+  const [removingPic, setRemovingPic] = useState(false);
 
   // Password change form
   const [passwordForm, setPasswordForm] = useState({
@@ -155,6 +160,39 @@ const Profile = () => {
     }
   };
 
+  const handleRemoveButtonClick = () => {
+    const hasCustomPhoto = Boolean(user?.profilePic || user?.profilePhoto || user?.profileImage || previewUrl);
+    if (!hasCustomPhoto) {
+      setAlert({ type: 'info', text: 'No profile photo to remove.' });
+      return;
+    }
+    setShowRemoveModal(true);
+  };
+
+  const handleConfirmRemovePhoto = async () => {
+    setRemovingPic(true);
+    try {
+      console.log('[Profile] handleConfirmRemovePhoto clicked');
+      const res = await removeProfilePicture();
+      console.log('[Profile] removeProfilePicture result:', res);
+      setShowRemoveModal(false);
+
+      if (res && res.success) {
+        setPreviewUrl(null);
+        setAvatar(null);
+        setAlert({ type: 'success', text: res.message || 'Profile photo removed successfully.' });
+      } else {
+        setAlert({ type: 'error', text: res?.message || 'Failed to remove profile photo.' });
+      }
+    } catch (err) {
+      console.error('[Profile] Unexpected remove photo error:', err);
+      setShowRemoveModal(false);
+      setAlert({ type: 'error', text: err.response?.data?.message || err.message || 'Failed to remove profile photo.' });
+    } finally {
+      setRemovingPic(false);
+    }
+  };
+
   const handleAvatarChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -195,7 +233,7 @@ const Profile = () => {
       )}
 
       {alert.text && (
-        <div className={`flex items-center justify-between p-4 rounded-2xl border ${alert.type === 'success' ? 'border-primary/30 bg-primary/10 text-primary' : 'border-red-500/30 bg-red-500/10 text-red-500'} text-xs font-semibold`}>
+        <div className={`flex items-center justify-between p-4 rounded-2xl border ${alert.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : alert.type === 'info' ? 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400' : 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400'} text-xs font-semibold`}>
           <span>{alert.text}</span>
           <button onClick={() => setAlert({ type: '', text: '' })} className="hover:opacity-75">✕</button>
         </div>
@@ -224,22 +262,37 @@ const Profile = () => {
               accept="image/*"
               onChange={handleAvatarChange}
             />
-            <label
-              htmlFor="avatar-upload"
-              className="absolute -bottom-2 -right-2 p-2.5 bg-primary hover:bg-primary-hover text-white rounded-xl cursor-pointer shadow-md hover:scale-105 transition-all flex items-center justify-center"
-              title="Click to upload new profile photo"
-            >
-              <Upload className="h-4 w-4" />
-            </label>
           </div>
 
-          <h3 className="mt-4 font-black text-lg text-foreground">{user?.name}</h3>
+          {/* Action Buttons: Upload (Green) | Remove (Red) — Always Visible */}
+          <div className="flex items-center justify-center gap-2.5 mt-4">
+            <label
+              htmlFor="avatar-upload"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs font-bold shadow-sm hover:shadow-md transition-all cursor-pointer"
+              title="Upload new profile photo"
+            >
+              <Upload className="h-4 w-4" />
+              <span>Upload</span>
+            </label>
+
+            <button
+              type="button"
+              onClick={handleRemoveButtonClick}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold shadow-sm hover:shadow-md transition-all cursor-pointer"
+              title="Remove profile photo"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>Remove</span>
+            </button>
+          </div>
+
+          <h3 className="mt-3 font-black text-lg text-foreground">{user?.name}</h3>
           <p className="text-xs text-muted-foreground font-semibold mt-0.5">
             {user?.employeeId || 'ID-001'} • <span className="capitalize text-primary font-bold">{user?.role === 'ADMIN' ? 'Admin' : user?.role?.toLowerCase().replace('_', ' ')}</span>
           </p>
 
           {/* Position Badge */}
-          {fullUserDetails?.position && (
+          {fullUserDetails?.position ? (
             <div className="mt-2.5">
               <span
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold shadow-xs"
@@ -247,6 +300,13 @@ const Profile = () => {
               >
                 <Award className="h-3.5 w-3.5" />
                 <span>{fullUserDetails.position.name} (Level {fullUserDetails.position.level})</span>
+              </span>
+            </div>
+          ) : (
+            <div className="mt-2.5">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold bg-slate-500/10 text-slate-600 dark:text-slate-400 border border-slate-500/20">
+                <Award className="h-3.5 w-3.5" />
+                <span>Unassigned</span>
               </span>
             </div>
           )}
@@ -542,6 +602,73 @@ const Profile = () => {
           </div>
         </div>
       </div>
+      {/* Remove Profile Picture Confirmation Modal */}
+      <AnimatePresence>
+        {showRemoveModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.2 }}
+              className="w-full max-w-md rounded-3xl border border-border/70 bg-card p-6 shadow-2xl space-y-4 text-left font-sans"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between border-b border-border/40 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 rounded-2xl bg-rose-500/10 text-rose-600 border border-rose-500/20">
+                    <Trash2 className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-foreground">Remove Profile Photo?</h3>
+                    <p className="text-xs text-muted-foreground font-medium">Revert to default avatar</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowRemoveModal(false)}
+                  className="p-1.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <p className="text-xs text-muted-foreground leading-relaxed font-medium">
+                This will restore your default avatar across the entire CRM.
+              </p>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border/40">
+                <button
+                  type="button"
+                  onClick={() => setShowRemoveModal(false)}
+                  disabled={removingPic}
+                  className="px-4 py-2 rounded-xl border border-border/70 bg-card hover:bg-muted text-foreground text-xs font-bold transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmRemovePhoto}
+                  disabled={removingPic}
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 active:scale-95 text-white text-xs font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {removingPic ? (
+                    <>
+                      <div className="h-3.5 w-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <span>Removing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Remove</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

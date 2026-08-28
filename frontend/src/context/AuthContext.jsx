@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import api from '../services/api';
+import api, { disconnectSocket } from '../services/api';
 
 const AuthContext = createContext(null);
 
@@ -75,6 +75,29 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const removeProfilePicture = async () => {
+    try {
+      console.log('[AuthContext] Sending DELETE /users/profile-photo request...');
+      const res = await api.delete('/users/profile-photo');
+      console.log('[AuthContext] DELETE response received:', res.data);
+      const updatedUser = {
+        ...(user || JSON.parse(localStorage.getItem('user') || '{}')),
+        profilePic: null,
+        profilePhoto: null,
+        profileImage: null,
+        avatar: null
+      };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      return { success: true, message: res.data?.message || 'Profile photo removed successfully.', user: updatedUser };
+    } catch (error) {
+      console.error('[AuthContext] DELETE request failed:', error);
+      const msg = error.response?.data?.message || error.message || 'Failed to remove profile photo.';
+      return { success: false, message: msg };
+    }
+  };
+
+
   const changePassword = async (currentPassword, newPassword) => {
     try {
       await api.put('/auth/change-password', { currentPassword, newPassword });
@@ -118,12 +141,15 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     user,
+    setUser,
     token,
     loading,
     isTempPassword,
     login,
     logout,
     updateProfile,
+    removeProfilePicture,
+    removeProfilePhoto: removeProfilePicture,
     changePassword,
     requestPasswordReset,
     verifyResetOtp,

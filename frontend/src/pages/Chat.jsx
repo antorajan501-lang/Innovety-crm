@@ -492,7 +492,7 @@ const Chat = () => {
     if (!msg) return;
     let contentToCopy = msg.message || '';
     if (msg.attachmentUrl) {
-      contentToCopy = `${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`;
+      contentToCopy = getUploadUrl(msg.attachmentUrl);
     }
     navigator.clipboard.writeText(contentToCopy);
     showToast('Copied to clipboard');
@@ -513,7 +513,7 @@ const Chat = () => {
   const handleShareAction = (msg) => {
     if (!msg) return;
     const shareUrl = msg.attachmentUrl
-      ? `${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`
+      ? getUploadUrl(msg.attachmentUrl)
       : window.location.href;
     const titleText = getCleanFileName(msg) || 'Shared Message';
 
@@ -672,12 +672,41 @@ const Chat = () => {
   }, []);
 
   const handleOnlineUsers = useCallback((usersList) => {
-    setOnlineUserIds(new Set(usersList.map(u => String(u.id))));
+    if (Array.isArray(usersList)) {
+      const ids = usersList.map(u => String(u.userId || u.id || '')).filter(Boolean);
+      console.log('[Chat Page] Setting online user IDs:', ids);
+      setOnlineUserIds(new Set(ids));
+    }
+  }, []);
+
+  const handleUserOnline = useCallback((data) => {
+    if (data) {
+      const idStr = String(data.userId || data.id || '');
+      if (idStr) {
+        console.log('[Chat Page] User online:', idStr);
+        setOnlineUserIds(prev => new Set(prev).add(idStr));
+      }
+    }
+  }, []);
+
+  const handleUserOffline = useCallback((data) => {
+    if (data) {
+      const idStr = String(data.userId || data.id || '');
+      if (idStr) {
+        console.log('[Chat Page] User offline:', idStr);
+        setOnlineUserIds(prev => {
+          const next = new Set(prev);
+          next.delete(idStr);
+          return next;
+        });
+      }
+    }
   }, []);
 
   const isUserOnline = useCallback((userId) => {
     if (!userId) return false;
-    return onlineUserIds.has(String(userId));
+    const targetStr = String(userId);
+    return onlineUserIds.has(targetStr);
   }, [onlineUserIds]);
 
   const handleUserTyping = useCallback(({ roomId, userId, userName }) => {
@@ -713,6 +742,8 @@ const Chat = () => {
     onRoomsUpdated: handleRoomsUpdated,
     onGroupDeleted: handleGroupDeleted,
     onOnlineUsers: handleOnlineUsers,
+    onUserOnline: handleUserOnline,
+    onUserOffline: handleUserOffline,
     onUserTyping: handleUserTyping,
     onUserStopTyping: handleUserStopTyping
   });
@@ -1560,10 +1591,10 @@ const Chat = () => {
                                           /* ─── VIDEO BUBBLE ─── */
                                           <div
                                             className="relative group/vid overflow-hidden rounded-[6px] cursor-pointer max-w-full"
-                                            onClick={() => setLightboxMedia({ url: `${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`, type: 'VIDEO' })}
+                                            onClick={() => setLightboxMedia({ url: getUploadUrl(msg.attachmentUrl), type: 'VIDEO' })}
                                           >
                                             <video
-                                              src={`${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`}
+                                              src={getUploadUrl(msg.attachmentUrl)}
                                               preload="metadata"
                                               className="max-h-64 max-w-full w-auto rounded-[6px] object-cover pointer-events-none"
                                             />
@@ -1575,15 +1606,15 @@ const Chat = () => {
                                           </div>
                                         ) : isAudio ? (
                                           /* ─── AUDIO PLAYER BUBBLE ─── */
-                                          <AudioPlayer url={`${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`} />
+                                          <AudioPlayer url={getUploadUrl(msg.attachmentUrl)} />
                                         ) : isImg ? (
                                           /* ─── IMAGE BUBBLE ─── */
                                           <div
                                             className="relative group/img overflow-hidden rounded-[6px] cursor-pointer max-w-full"
-                                            onClick={() => setLightboxMedia({ url: `${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`, type: 'IMAGE' })}
+                                            onClick={() => setLightboxMedia({ url: getUploadUrl(msg.attachmentUrl), type: 'IMAGE' })}
                                           >
                                             <img
-                                              src={`${api.defaults.baseURL.replace('/api', '')}${msg.attachmentUrl}`}
+                                              src={getUploadUrl(msg.attachmentUrl)}
                                               alt=""
                                               className="max-h-64 max-w-full w-auto rounded-[6px] object-cover hover:opacity-95 transition-opacity"
                                             />

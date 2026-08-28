@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getSocket } from '../services/api';
 
 /**
@@ -14,6 +14,8 @@ export const useChatSocket = ({
   onRoomsUpdated,
   onGroupDeleted,
   onOnlineUsers,
+  onUserOnline,
+  onUserOffline,
   onUserTyping,
   onUserStopTyping
 }) => {
@@ -27,6 +29,8 @@ export const useChatSocket = ({
     onRoomsUpdated,
     onGroupDeleted,
     onOnlineUsers,
+    onUserOnline,
+    onUserOffline,
     onUserTyping,
     onUserStopTyping
   });
@@ -39,6 +43,8 @@ export const useChatSocket = ({
       onRoomsUpdated,
       onGroupDeleted,
       onOnlineUsers,
+      onUserOnline,
+      onUserOffline,
       onUserTyping,
       onUserStopTyping
     };
@@ -49,6 +55,8 @@ export const useChatSocket = ({
     onRoomsUpdated,
     onGroupDeleted,
     onOnlineUsers,
+    onUserOnline,
+    onUserOffline,
     onUserTyping,
     onUserStopTyping
   ]);
@@ -74,6 +82,7 @@ export const useChatSocket = ({
         role: currentUser.role,
         teamId: currentUser.teamMembers?.[0]?.teamId
       });
+      socket.emit('get_online_users');
       if (activeRoomIdRef.current && !activeRoomIdRef.current.startsWith('virtual_')) {
         socket.emit('join_chat_room', activeRoomIdRef.current);
       }
@@ -83,17 +92,29 @@ export const useChatSocket = ({
       setIsSocketConnected(false);
     };
 
-    // Register user identity
+    // Register user identity and request online users
     socket.emit('register', {
       userId: currentUser.id,
       name: currentUser.name,
       role: currentUser.role,
       teamId: currentUser.teamMembers?.[0]?.teamId
     });
+    socket.emit('get_online_users');
 
-    // 1. Online Users
+    // 1. Online Users Handlers
     const handleOnlineUsers = (usersList) => {
+      console.log('[CHAT SOCKET] online_users:', usersList);
       callbacksRef.current.onOnlineUsers?.(usersList);
+    };
+
+    const handleUserOnline = (data) => {
+      console.log('[CHAT SOCKET] user_online:', data);
+      callbacksRef.current.onUserOnline?.(data);
+    };
+
+    const handleUserOffline = (data) => {
+      console.log('[CHAT SOCKET] user_offline:', data);
+      callbacksRef.current.onUserOffline?.(data);
     };
 
     // 2. Incoming Chat Message
@@ -129,10 +150,28 @@ export const useChatSocket = ({
       callbacksRef.current.onGroupDeleted?.(data);
     };
 
+    // Clean previous listeners before attaching
+    socket.off('connect', handleConnect);
+    socket.off('disconnect', handleDisconnect);
+    socket.off('online_users', handleOnlineUsers);
+    socket.off('user_online', handleUserOnline);
+    socket.off('user_offline', handleUserOffline);
+    socket.off('receive_chat_message', handleReceiveMessage);
+    socket.off('chat_room_activity', handleRoomsUpdated);
+    socket.off('chat_rooms_updated', handleRoomsUpdated);
+    socket.off('user_typing', handleUserTyping);
+    socket.off('user_stop_typing', handleUserStopTyping);
+    socket.off('message_edited', handleMessageEdited);
+    socket.off('message_deleted', handleMessageDeleted);
+    socket.off('group_deleted', handleGroupDeleted);
+    socket.off('chat_room_deleted', handleGroupDeleted);
+
     // Attach listeners
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('online_users', handleOnlineUsers);
+    socket.on('user_online', handleUserOnline);
+    socket.on('user_offline', handleUserOffline);
     socket.on('receive_chat_message', handleReceiveMessage);
     socket.on('chat_room_activity', handleRoomsUpdated);
     socket.on('chat_rooms_updated', handleRoomsUpdated);
@@ -147,6 +186,8 @@ export const useChatSocket = ({
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
       socket.off('online_users', handleOnlineUsers);
+      socket.off('user_online', handleUserOnline);
+      socket.off('user_offline', handleUserOffline);
       socket.off('receive_chat_message', handleReceiveMessage);
       socket.off('chat_room_activity', handleRoomsUpdated);
       socket.off('chat_rooms_updated', handleRoomsUpdated);
@@ -159,68 +200,48 @@ export const useChatSocket = ({
     };
   }, [currentUser?.id]);
 
-  // Manage room joining/leaving when activeRoomId changes
-  const prevRoomIdRef = useRef(null);
-  useEffect(() => {
+  // Actions
+  const emitSendMessage = (messageData) => {
     const socket = getSocket();
-    if (!socket) return;
-
-    const currentRoomId = activeRoomId;
-    const prevRoomId = prevRoomIdRef.current;
-
-    if (prevRoomId && prevRoomId !== currentRoomId && !prevRoomId.startsWith('virtual_')) {
-      socket.emit('leave_chat_room', prevRoomId);
+    if (socket && socket.connected) {
+      socket.emit('send_chat_message', messageData);
     }
+  };
 
-    if (currentRoomId && !currentRoomId.startsWith('virtual_')) {
-      socket.emit('join_chat_room', currentRoomId);
-    }
-
-    prevRoomIdRef.current = currentRoomId;
-  }, [activeRoomId]);
-
-  // Socket Emitters
-  const emitSendMessage = useCallback((msgData) => {
+  const emitTyping = (roomId) => {
     const socket = getSocket();
-    if (socket) {
-      socket.emit('send_chat_message', msgData);
+    if (socket && socket.connected && currentUser) {
+      socket.emit('typing', { roomId, userId: currentUser.id, userName: currentUser.name });
     }
-  }, []);
+  };
 
-  const emitTyping = useCallback((roomId, userId, userName) => {
+  const emitStopTyping = (roomId) => {
     const socket = getSocket();
-    if (socket && roomId) {
-      socket.emit('typing', { roomId, userId, userName });
+    if (socket && socket.connected && currentUser) {
+      socket.emit('stop_typing', { roomId, userId: currentUser.id });
     }
-  }, []);
+  };
 
-  const emitStopTyping = useCallback((roomId, userId) => {
+  const emitMessageEdited = (messageData) => {
     const socket = getSocket();
-    if (socket && roomId) {
-      socket.emit('stop_typing', { roomId, userId });
+    if (socket && socket.connected) {
+      socket.emit('message_edited', messageData);
     }
-  }, []);
+  };
 
-  const emitMessageEdited = useCallback((msgData) => {
+  const emitMessageDeleted = (messageData) => {
     const socket = getSocket();
-    if (socket) {
-      socket.emit('message_edited', msgData);
+    if (socket && socket.connected) {
+      socket.emit('message_deleted', messageData);
     }
-  }, []);
+  };
 
-  const emitMessageDeleted = useCallback((msgData) => {
+  const emitGroupDeleted = (roomId) => {
     const socket = getSocket();
-    if (socket) {
-      socket.emit('message_deleted', msgData);
+    if (socket && socket.connected) {
+      socket.emit('chat_room_deleted', { roomId });
     }
-  }, []);
-
-  const emitGroupDeleted = useCallback((roomId) => {
-    const socket = getSocket();
-    if (socket && roomId) {
-      socket.emit('group_deleted', { roomId });
-    }
-  }, []);
+  };
 
   return {
     isSocketConnected,

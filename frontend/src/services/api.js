@@ -148,7 +148,13 @@ export const downloadFile = async (filePath, customFileName) => {
 import { io } from 'socket.io-client';
 
 let socketInstance = null;
+
 export const getSocket = () => {
+  const token = localStorage.getItem('token');
+  if (!token) {
+    return null;
+  }
+
   if (!socketInstance) {
     let backendServer = '';
     if (API_URL.startsWith('http://') || API_URL.startsWith('https://')) {
@@ -158,14 +164,45 @@ export const getSocket = () => {
     }
 
     socketInstance = io(backendServer, {
-      transports: ['polling', 'websocket'],
+      auth: {
+        token
+      },
+      transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 20,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000
     });
+
+    socketInstance.on('connect', () => {
+      console.log('[CLIENT CONNECT] Socket connected:', socketInstance.id);
+    });
+
+    socketInstance.on('connect_error', (err) => {
+      console.warn('[CLIENT CONNECT ERROR]', err.message);
+    });
+
+    socketInstance.on('disconnect', (reason) => {
+      console.log('[CLIENT DISCONNECT] Socket disconnected:', reason);
+    });
+  } else if (socketInstance.disconnected) {
+    socketInstance.auth = { token };
+    socketInstance.connect();
   }
+
   return socketInstance;
+};
+
+export const disconnectSocket = () => {
+  if (socketInstance) {
+    try {
+      socketInstance.emit('logout');
+      socketInstance.disconnect();
+    } catch (e) {
+      console.warn('Socket disconnect error:', e);
+    }
+    socketInstance = null;
+  }
 };
 
 export default api;

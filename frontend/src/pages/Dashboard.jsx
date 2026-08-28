@@ -6,6 +6,8 @@ import { useSocket } from '../context/SocketContext';
 import api, { getSocket } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
 import ClockInModal from '../components/attendance/ClockInModal';
+import ClockOutReminderModal from '../components/worklog/ClockOutReminderModal';
+import useClockOutWithReminder from '../hooks/useClockOutWithReminder';
 import EmployeeDashboard from '../components/dashboard/EmployeeDashboard';
 import TeamLeaderDashboard from '../components/dashboard/TeamLeaderDashboard';
 import LeaveOverviewCard from '../components/dashboard/LeaveOverviewCard';
@@ -369,7 +371,7 @@ const Dashboard = () => {
     setIsClockInModalOpen(true);
   };
 
-  const handleClockOut = async () => {
+  const executeClockOut = async () => {
     try {
       setClockLoading(true);
       setAttendanceAlert('');
@@ -389,20 +391,21 @@ const Dashboard = () => {
       await api.post('/attendance/clock-out', { location: locationStr });
       setClockedRecord(null);
       fetchDashboardData();
-
-      const fetchStatus = async () => {
-        try {
-          const sRes = await api.get('/attendance/status');
-          setClockInStatus(sRes.data);
-        } catch (e) { console.error(e); }
-      };
-      fetchStatus();
+      api.get('/attendance/status').then(res => setClockInStatus(res.data)).catch(() => {});
     } catch (err) {
-      setAttendanceAlert(err.response?.data?.message || 'Clock-out failed.');
+      setAttendanceAlert(err.response?.data?.message || 'Clock out failed.');
     } finally {
       setClockLoading(false);
     }
   };
+
+  const {
+    reminderModal,
+    handleClockOut,
+    closeModal,
+    handleCompleteWorkLog,
+    handleClockOutAnyway
+  } = useClockOutWithReminder(user, executeClockOut);
 
   // Personal clock-in portal is reserved for Employee, Intern & Team Leader role views (excluded for Admin and Super Admin)
   const canUserClockIn = ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'].includes(user?.role) && !['ADMIN', 'SUPER_ADMIN'].includes(user?.role);
@@ -484,7 +487,10 @@ const Dashboard = () => {
             </button>
           ) : (
             <button
-              onClick={handleClockOut}
+              onClick={() => {
+              console.log("[CLOCKOUT] Button clicked");
+              handleClockOut();
+            }}
               disabled={clockLoading}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
             >
@@ -1030,6 +1036,16 @@ const Dashboard = () => {
           api.get('/attendance/status').then(res => setClockInStatus(res.data)).catch(() => {});
         }}
         user={user}
+      />
+
+      {/* Clock Out Reminder Modal */}
+      <ClockOutReminderModal
+        isOpen={reminderModal.isOpen}
+        isDraft={reminderModal.isDraft}
+        hasWorkLog={reminderModal.hasWorkLog}
+        onClose={closeModal}
+        onCompleteWorkLog={handleCompleteWorkLog}
+        onClockOutAnyway={handleClockOutAnyway}
       />
     </motion.div>
   );
