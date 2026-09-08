@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const prisma = require('../utils/db');
 const { sendWelcomeEmail } = require('../services/email');
 const { logActivity } = require('../utils/activityLogger');
+const { getOrganizationWhere } = require('../utils/organizationScope');
 const { addUserToCompanyChat, removeUserFromCompanyChat } = require('../services/companyChatService');
 const { disconnectUserSocket } = require('../socket');
 
@@ -105,6 +106,37 @@ const createUser = async (req, res) => {
       finalRole = 'EMPLOYEE';
     }
 
+    // Multi-Tenant Organization Resolution
+    let finalOrganizationId = req.body.organizationId;
+    if (finalOrganizationId) {
+      const targetOrg = await prisma.organization.findUnique({
+        where: { id: finalOrganizationId },
+        include: { subscriptionPlan: true }
+      });
+      if (!targetOrg) {
+        return res.status(400).json({ message: 'Selected organization does not exist.' });
+      }
+      if (targetOrg.status === 'SUSPENDED') {
+        return res.status(400).json({ message: 'Cannot assign user to a suspended organization.' });
+      }
+
+      // Check Organization User Quota Limit
+      if (targetOrg.slug !== 'innoveity' && req.user?.role !== 'SUPER_ADMIN') {
+        const currentUserCount = await prisma.user.count({
+          where: { organizationId: finalOrganizationId }
+        });
+        const maxUsersAllowed = targetOrg.subscriptionPlan?.maxUsers || 25;
+        if (currentUserCount >= maxUsersAllowed) {
+          return res.status(403).json({
+            message: `Your organization has reached its user limit (${maxUsersAllowed}) for the ${targetOrg.subscriptionPlan?.name || 'Starter'} plan.`
+          });
+        }
+      }
+    } else {
+      const defaultOrg = await prisma.organization.findUnique({ where: { slug: 'innoveity' } });
+      finalOrganizationId = defaultOrg?.id || null;
+    }
+
     if (!name || !email || !dob) {
       return res.status(400).json({ message: 'Name, email, and date of birth are required.' });
     }
@@ -193,6 +225,13 @@ const createUser = async (req, res) => {
       return res.status(400).json({ message: 'User with this email already exists.' });
     }
 
+    if (positionId) {
+      const targetPos = await prisma.position.findUnique({ where: { id: positionId } });
+      if (targetPos && targetPos.organizationId && targetPos.organizationId !== finalOrganizationId) {
+        return res.status(400).json({ message: 'Employee and Position belong to different organizations.' });
+      }
+    }
+
     const tempPasswordText = formatDobToPassword(dob);
     const hashedPassword = await bcrypt.hash(tempPasswordText, 10);
 
@@ -230,6 +269,7 @@ const createUser = async (req, res) => {
             companyName: companyName || college || null,
             designation: designation || null,
             totalExperience: totalExperience || null,
+            organizationId: finalOrganizationId,
             positionId: positionId || null,
             branchId: branchId || null,
             departmentId: departmentId || null,
@@ -263,7 +303,7 @@ const createUser = async (req, res) => {
     });
 
     // Sync user with Company Chat Room
-    await addUserToCompanyChat(newUser.id);
+    await addUserToCompanyChat(newUser.id, newUser.organizationId);
 
     // Send automated email in background
     sendWelcomeEmail(newUser, tempPasswordText).catch((err) => {
@@ -287,7 +327,7 @@ const createUser = async (req, res) => {
 
 const getAllUsers = async (req, res) => {
   try {
-    const { role, status, teamId, search, department, position, page = 1, limit = 50, excludeSuperAdmin = 'true', excludeSelf } = req.query;
+    const { role, status, teamId, search, department, position, page = 1, limit = 50, excludeSuperAdmin = 'true', excludeSelf, organizationId } = req.query;
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -295,6 +335,15 @@ const getAllUsers = async (req, res) => {
 
     // Filter clauses
     const where = {};
+
+    // Multi-tenant Organization Scoping
+    if (req.user?.role === 'SUPER_ADMIN') {
+      if (organizationId && organizationId !== 'all') {
+        where.organizationId = organizationId;
+      }
+    } else {
+      where.organizationId = req.user?.organizationId || null;
+    }
 
     // Always exclude Super Admin account from registry listings
     if (excludeSuperAdmin === 'true' || role?.includes('ADMIN') || role?.includes('TEAM_LEADER')) {
@@ -362,6 +411,7 @@ const getAllUsers = async (req, res) => {
         take: limitNum,
         orderBy: { createdAt: 'desc' },
         include: {
+          organization: { select: { id: true, name: true, slug: true, logo: true, companyCode: true, timezone: true } },
           position: true,
           branch: true,
           departmentRef: true,
@@ -403,9 +453,10 @@ const getAllUsers = async (req, res) => {
 const getUserById = async (req, res) => {
   try {
     const { id } = req.params;
-    const user = await prisma.user.findUnique({
-      where: { id },
+    const user = await prisma.user.findFirst({
+      where: getOrganizationWhere(req, { id }),
       include: {
+        organization: { select: { id: true, name: true, slug: true, logo: true, companyCode: true, timezone: true } },
         position: true,
         branch: true,
         departmentRef: true,
@@ -505,6 +556,17 @@ const editUser = async (req, res) => {
       status
     };
 
+    if (req.user?.role === 'SUPER_ADMIN' && req.body.organizationId !== undefined && req.body.organizationId !== null && req.body.organizationId !== '') {
+      const targetOrg = await prisma.organization.findUnique({ where: { id: req.body.organizationId } });
+      if (!targetOrg) {
+        return res.status(400).json({ message: 'Selected organization does not exist.' });
+      }
+      if (targetOrg.status === 'SUSPENDED') {
+        return res.status(400).json({ message: 'Cannot assign user to a suspended organization.' });
+      }
+      data.organizationId = req.body.organizationId;
+    }
+
     if (candidateType !== undefined) data.candidateType = candidateType || null;
     if (degree !== undefined) data.degree = degree || null;
     if (currentYearSemester !== undefined) data.currentYearSemester = currentYearSemester || null;
@@ -539,6 +601,12 @@ const editUser = async (req, res) => {
 
     // Track Position History if positionId changes
     if (positionId !== undefined && positionId !== existingUser.positionId) {
+      if (positionId) {
+        const targetPos = await prisma.position.findUnique({ where: { id: positionId } });
+        if (targetPos && targetPos.organizationId && targetPos.organizationId !== existingUser.organizationId) {
+          return res.status(400).json({ message: 'Employee and Position belong to different organizations.' });
+        }
+      }
       data.positionId = positionId || null;
 
       await prisma.positionHistory.create({
@@ -644,6 +712,23 @@ const deleteUser = async (req, res) => {
 
     if (user.role === 'SUPER_ADMIN' || user.email === 'admin@enterprise-crm.com' || user.employeeId === 'AD-0001') {
       return res.status(403).json({ success: false, message: 'Super Admin account cannot be modified or deleted.' });
+    }
+
+    if (user.role === 'ADMIN' && user.organizationId) {
+      const activeAdminCount = await prisma.user.count({
+        where: {
+          organizationId: user.organizationId,
+          role: 'ADMIN',
+          status: 'ACTIVE',
+          NOT: { id: user.id }
+        }
+      });
+      if (activeAdminCount === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Cannot delete the primary Company Admin. Please assign another Company Admin to this organization first.'
+        });
+      }
     }
 
     // Wrap the complete deletion inside an atomic Prisma transaction
@@ -971,6 +1056,9 @@ const promoteUser = async (req, res) => {
     if (!targetPosition) {
       return res.status(400).json({ message: 'Selected target position does not exist.' });
     }
+    if (targetPosition.organizationId && targetPosition.organizationId !== existingUser.organizationId) {
+      return res.status(400).json({ message: 'Employee and Position belong to different organizations.' });
+    }
 
     const newEmployeeId = convertEmployeeId(existingUser.employeeId, targetRole);
     const promoEffectiveDate = effectiveDate ? new Date(effectiveDate) : new Date();
@@ -1214,6 +1302,72 @@ const removeProfilePicture = async (req, res) => {
   }
 };
 
+const completeWelcomePopup = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: 'Authentication required.' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { welcomePopupSeen: true }
+    });
+
+    await logActivity({
+      userId,
+      action: 'WELCOME_POPUP_COMPLETED',
+      details: 'Marked first-time welcome popup as completed'
+    }).catch(e => console.warn('Activity log error:', e.message));
+
+    const { password: _, ...userWithoutPassword } = updatedUser;
+    return res.json({
+      success: true,
+      message: 'Welcome onboarding popup completed.',
+      user: {
+        ...userWithoutPassword,
+        profilePhoto: userWithoutPassword.profilePic || null
+      }
+    });
+  } catch (error) {
+    console.error('Complete welcome popup error:', error);
+    return res.status(500).json({ message: 'Failed to record welcome popup status.' });
+  }
+};
+
+const resetWelcomePopup = async (req, res) => {
+  try {
+    const targetUserId = req.params.id || req.body.userId;
+    if (!targetUserId) {
+      return res.status(400).json({ message: 'User ID is required.' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: targetUserId },
+      data: { welcomePopupSeen: false }
+    });
+
+    await logActivity({
+      userId: req.user?.id || targetUserId,
+      action: 'WELCOME_POPUP_RESET',
+      details: `Reset welcome popup status for user ${targetUserId}`
+    }).catch(e => console.warn('Activity log error:', e.message));
+
+    const { password: _, ...userWithoutPassword } = updatedUser;
+    return res.json({
+      success: true,
+      message: 'Welcome popup reset successfully.',
+      user: {
+        ...userWithoutPassword,
+        profilePhoto: userWithoutPassword.profilePic || null
+      }
+    });
+  } catch (error) {
+    console.error('Reset welcome popup error:', error);
+    return res.status(500).json({ message: 'Failed to reset welcome popup status.' });
+  }
+};
+
 module.exports = {
   createUser,
   getAllUsers,
@@ -1226,5 +1380,7 @@ module.exports = {
   bulkDelete,
   promoteUser,
   getUserPromotionHistory,
-  removeProfilePicture
+  removeProfilePicture,
+  completeWelcomePopup,
+  resetWelcomePopup
 };

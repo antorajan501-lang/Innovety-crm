@@ -13,6 +13,8 @@ import api, { getSocket, downloadChatAttachment, getUploadUrl } from '../service
 import { useAuth } from '../context/AuthContext';
 import UserAvatar from '../components/common/UserAvatar';
 import useChatSocket from '../hooks/useChatSocket';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 
 const EMOJI_LIST = ['😊', '👍', '🔥', '🎉', '❤️', '🙌', '🚀', '✅', '😂', '💡', '👏', '🎯', '💯', '🙏', '✨', '⚡'];
 
@@ -301,6 +303,9 @@ const Chat = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user: authUser } = useAuth();
+  const isSuperAdmin = authUser?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || authUser?.organizationId);
 
   // Core State
   const [currentUser, setCurrentUser] = useState(authUser || null);
@@ -829,9 +834,13 @@ const Chat = () => {
   };
 
   // Fetch unified WhatsApp-style chat list (Company Room ALWAYS #1)
-  const fetchRooms = async () => {
+  const fetchRooms = async (overrideOrgId) => {
     try {
-      const res = await api.get('/chat/rooms');
+      const orgId = overrideOrgId !== undefined ? overrideOrgId : targetOrg;
+      const apiParams = {};
+      if (orgId) apiParams.organizationId = orgId;
+
+      const res = await api.get('/chat/rooms', { params: apiParams });
       const allRooms = res.data || [];
       setRooms(allRooms);
 
@@ -841,7 +850,7 @@ const Chat = () => {
       const targetProjectId = params.get('projectId') || params.get('project') || params.get('proj');
 
       if (targetDmUserId) {
-        const dmRes = await api.post('/chat/rooms/direct', { targetUserId: targetDmUserId });
+        const dmRes = await api.post('/chat/rooms/direct', { targetUserId: targetDmUserId, organizationId: orgId });
         setActiveRoom(dmRes.data);
       } else if (targetRoomId) {
         const found = allRooms.find(r => r.id === targetRoomId);
@@ -849,10 +858,11 @@ const Chat = () => {
           setActiveRoom(found);
         } else {
           try {
-            const roomRes = await api.get(`/chat/rooms/${targetRoomId}`);
+            const roomRes = await api.get(`/chat/rooms/${targetRoomId}`, { params: apiParams });
             if (roomRes.data) setActiveRoom(roomRes.data);
           } catch (e) {
-            if (allRooms.length > 0 && !activeRoom) setActiveRoom(allRooms[0]);
+            if (allRooms.length > 0) setActiveRoom(allRooms[0]);
+            else setActiveRoom(null);
           }
         }
       } else if (targetProjectId) {
@@ -868,10 +878,10 @@ const Chat = () => {
           setActiveRoom(foundByProject);
         } else {
           try {
-            const projChatRes = await api.get(`/chat/rooms/project/${targetProjectId}`);
+            const projChatRes = await api.get(`/chat/rooms/project/${targetProjectId}`, { params: apiParams });
             if (projChatRes.data) {
               setActiveRoom(projChatRes.data);
-              const freshRoomsRes = await api.get('/chat/rooms');
+              const freshRoomsRes = await api.get('/chat/rooms', { params: apiParams });
               const updatedRooms = freshRoomsRes.data || [];
               setRooms(updatedRooms);
               const reFound = updatedRooms.find(r => r.id === projChatRes.data.id || r.projectId === targetProjectId);
@@ -879,11 +889,14 @@ const Chat = () => {
             }
           } catch (projErr) {
             console.error('Failed to access project chat room:', projErr);
-            if (allRooms.length > 0 && !activeRoom) setActiveRoom(allRooms[0]);
+            if (allRooms.length > 0) setActiveRoom(allRooms[0]);
+            else setActiveRoom(null);
           }
         }
-      } else if (allRooms.length > 0 && !activeRoom) {
+      } else if (allRooms.length > 0) {
         setActiveRoom(allRooms[0]);
+      } else {
+        setActiveRoom(null);
       }
     } catch (err) {
       console.error('Failed to fetch chat rooms:', err);
@@ -892,9 +905,11 @@ const Chat = () => {
 
   useEffect(() => {
     if (currentUser) {
-      fetchRooms();
+      setActiveRoom(null);
+      setMessages([]);
+      fetchRooms(targetOrg);
     }
-  }, [currentUser, location.search]);
+  }, [currentUser, targetOrg, authUser?.organizationId, location.search]);
 
   // Fetch messages when activeRoom changes
   useEffect(() => {
@@ -1091,7 +1106,8 @@ const Chat = () => {
   });
 
   return (
-    <div className="h-[calc(100svh-7.5rem)] max-w-[1600px] w-full mx-auto flex flex-col font-sans select-none animate-in fade-in duration-300">
+    <div className="h-[calc(100svh-7.5rem)] max-w-[1600px] w-full mx-auto flex flex-col font-sans select-none animate-in fade-in duration-300 gap-4">
+      <CompanyScopeSelector />
 
       {/* 2-COLUMN WHATSAPP-STYLE CONTAINER */}
       <div className="flex-1 flex bg-card dark:bg-slate-900 border border-border/80 rounded-3xl shadow-xl overflow-hidden">

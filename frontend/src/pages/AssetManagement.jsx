@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api, { getUploadUrl } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import UserAvatar from '../components/common/UserAvatar';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 import { motion } from 'framer-motion';
 import {
   Laptop,
@@ -60,6 +62,11 @@ const DEFAULT_CATEGORIES = [
 
 const AssetManagement = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
   const [assets, setAssets] = useState([]);
   const [assetStats, setAssetStats] = useState({ totalAssets: 0, availableAssets: 0, assignedAssets: 0, maintenanceAssets: 0 });
   const [totalCount, setTotalCount] = useState(0);
@@ -126,7 +133,7 @@ const AssetManagement = () => {
     onConfirm: null
   });
 
-  const isManagementRole = ['ADMIN', 'TEAM_LEADER'].includes(user.role);
+  const isManagementRole = ['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(user?.role);
 
   const getFinalCategoryToSave = () => {
     if (isCustomCategoryMode || assetForm.category === 'OTHER' || assetForm.category === 'ADD_NEW') {
@@ -146,6 +153,7 @@ const AssetManagement = () => {
   const fetchAssets = async () => {
     try {
       setLoading(true);
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
       const res = await api.get('/assets', {
         params: {
           page,
@@ -153,7 +161,8 @@ const AssetManagement = () => {
           category: categoryFilter,
           status: statusFilter,
           brand: brandFilter,
-          limit: 15
+          limit: 15,
+          organizationId: targetOrg
         }
       });
       const fetchedAssets = res.data.assets || [];
@@ -178,7 +187,10 @@ const AssetManagement = () => {
 
   const fetchUsers = async () => {
     try {
-      const res = await api.get('/users?limit=1000&status=ACTIVE');
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const params = { limit: 1000, status: 'ACTIVE' };
+      if (targetOrg) params.organizationId = targetOrg;
+      const res = await api.get('/users', { params });
       setAllUsers(res.data.users || []);
     } catch (err) {
       console.error(err);
@@ -186,9 +198,11 @@ const AssetManagement = () => {
   };
 
   const fetchAssetAnalytics = async () => {
-    if (!['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(user.role)) return;
+    if (!['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(user?.role)) return;
     try {
-      const res = await api.get('/assets/analytics');
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get('/assets/analytics', { params });
       if (res.data) {
         setAssetStats({
           totalAssets: res.data.totalAssets || 0,
@@ -202,15 +216,15 @@ const AssetManagement = () => {
   };
 
   useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setAssets([]);
+    if (orgsLoading) return;
     fetchAssets();
-  }, [page, categoryFilter, statusFilter, brandFilter]);
-
-  useEffect(() => {
+    fetchUsers();
     if (isManagementRole) {
-      fetchUsers();
       fetchAssetAnalytics();
     }
-  }, [user]);
+  }, [page, statusFilter, categoryFilter, brandFilter, targetOrg, user?.organizationId, orgsLoading]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -260,6 +274,10 @@ const AssetManagement = () => {
           formData.append(key, assetForm[key]);
         }
       });
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      if (targetOrg) {
+        formData.append('organizationId', targetOrg);
+      }
       if (billFile) {
         formData.append('billPhoto', billFile);
       }
@@ -461,8 +479,10 @@ const AssetManagement = () => {
       message: `Are you sure you want to delete asset "${asset.name}" (${asset.assetId})? This action cannot be undone.`,
       onConfirm: async () => {
         try {
-          await api.delete(`/assets/${asset.id}`);
-          setAlertMsg({ type: 'success', text: 'Asset deleted successfully.' });
+          const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+          const params = targetOrg ? { organizationId: targetOrg } : {};
+          await api.delete(`/assets/${asset.id}`, { params });
+          setAlertMsg({ type: 'success', text: `Asset "${asset.name}" (${asset.assetId}) deleted successfully.` });
           fetchAssets();
           fetchAssetAnalytics();
         } catch (err) {
@@ -471,6 +491,8 @@ const AssetManagement = () => {
       }
     });
   };
+
+  const confirmDeleteAsset = handleDelete;
 
   const openDetailsModal = async (asset) => {
     try {
@@ -485,7 +507,7 @@ const AssetManagement = () => {
   const triggerExportCSV = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/assets', { params: { limit: 1000 } });
+      const res = await api.get('/assets', { params: { limit: 1000, organizationId: selectedOrgId } });
       const exportList = res.data.assets || [];
 
       const headers = ['Asset ID', 'Name', 'Category', 'Brand', 'Model', 'Serial Number', 'Assigned User', 'Role', 'Department', 'Status', 'Purchase Date', 'Warranty Expiry', 'Cost'];
@@ -550,6 +572,8 @@ const AssetManagement = () => {
       initial="hidden"
       animate="visible"
     >
+      <CompanyScopeSelector />
+
       {/* Alert Header Banner */}
       {alertMsg.text && (
         <motion.div variants={itemVariants} className={`flex items-center gap-2 p-4 rounded-[20px] border ${alertMsg.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-500'}`}>
@@ -782,7 +806,7 @@ const AssetManagement = () => {
                           ) : null}
 
                           <button
-                            onClick={() => confirmDeleteAsset(item)}
+                            onClick={() => handleDelete(item)}
                             className="p-1.5 rounded-lg hover:bg-red-50 text-red-500 transition-all"
                             title="Delete Asset"
                           >

@@ -7,9 +7,10 @@ const {
   lockPayrollBatch,
   reviewPayrollBatch,
   publishPayrollBatch,
-  rollbackPayrollBatch
+  rollbackPayrollBatch,
+  resetPayrollData
 } = require('../controllers/payrollController');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireRole } = require('../middleware/auth');
 
 // Status dispatcher middleware helper
 const updateBatchStatusHandler = async (req, res, next) => {
@@ -20,6 +21,9 @@ const updateBatchStatusHandler = async (req, res, next) => {
   if (status === 'ROLLED_BACK') return rollbackPayrollBatch(req, res, next);
   return lockPayrollBatch(req, res, next);
 };
+
+// 0. Reset Payroll Module Data
+router.post('/reset', authenticate, requireRole(['ADMIN', 'SUPER_ADMIN']), resetPayrollData);
 
 // 1. Process Batch Endpoints
 router.post('/process', authenticate, processPayrollBatch);

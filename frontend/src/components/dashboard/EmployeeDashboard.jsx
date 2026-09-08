@@ -9,7 +9,6 @@ import ClockInModal from '../attendance/ClockInModal';
 import ApplyLeaveModal from '../leave/ApplyLeaveModal';
 import ClockOutReminderModal from '../worklog/ClockOutReminderModal';
 import useClockOutWithReminder from '../../hooks/useClockOutWithReminder';
-import { calculateAttendanceStreak, formatStreakDays } from '../../utils/streakCalculator';
 import useShiftCountdown from '../../hooks/useShiftCountdown';
 import { getTargetShiftHours, getShiftProgressColor } from '../../utils/shiftProgress';
 import {
@@ -32,9 +31,7 @@ import {
   MessageSquare,
   Megaphone,
   Activity,
-  Search,
   MapPin,
-  Flame,
   Shield,
   Layers,
   ArrowUpRight,
@@ -452,11 +449,6 @@ export const EmployeeDashboard = () => {
     return Math.round((presentCount / thisMonthLogs.length) * 100);
   }, [attendanceLogs]);
 
-  // Real Attendance Streak (consecutive days)
-  const attendanceStreak = useMemo(() => {
-    return calculateAttendanceStreak(attendanceLogs, holidays);
-  }, [attendanceLogs, holidays]);
-
   // Leave Balances (12 Casual, 8 Sick, 3 Emergency default limits minus approved)
   const leaveStats = useMemo(() => {
     const approved = leaves.filter(l => l.status === 'APPROVED');
@@ -712,7 +704,7 @@ export const EmployeeDashboard = () => {
       </motion.div>
 
       {/* 12. Employee Statistics Strip Cards (Dynamic Database Values) */}
-      <motion.div variants={itemVariants} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+      <motion.div variants={itemVariants} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm flex flex-col justify-between text-left">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Total Tasks</span>
           <div className="flex items-baseline justify-between mt-2">
@@ -756,15 +748,6 @@ export const EmployeeDashboard = () => {
             <Briefcase className="h-5 w-5 text-blue-500 opacity-80" />
           </div>
           <span className="text-[10px] text-muted-foreground mt-1">Active workspaces</span>
-        </div>
-
-        <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm flex flex-col justify-between text-left">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Streak</span>
-          <div className="flex items-baseline justify-between mt-2">
-            <span className="text-2xl font-black text-amber-500">{formatStreakDays(attendanceStreak)}</span>
-            <span className="text-xl shrink-0">🔥</span>
-          </div>
-          <span className="text-[10px] text-muted-foreground mt-1">On-time checkins</span>
         </div>
       </motion.div>
 

@@ -2,6 +2,7 @@ const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
 const { ensureCompanyChatRoom } = require('../services/companyChatService');
+const { getOrganizationWhere } = require('../utils/organizationScope');
 const { getIo } = require('../socket');
 const path = require('path');
 const fs = require('fs');
@@ -17,9 +18,10 @@ const getRooms = async (req, res) => {
   try {
     const userId = req.user.id;
     const userRole = req.user.role;
+    const targetOrgId = req.query.organizationId || req.user?.organizationId;
 
-    // A. Ensure default Company Chat Room exists and user is a member
-    const companyRoomRecord = await ensureCompanyChatRoom();
+    // A. Ensure default Company Chat Room exists for target organization and user is a member
+    const companyRoomRecord = await ensureCompanyChatRoom(targetOrgId);
     if (companyRoomRecord) {
       await prisma.chatRoomMember.upsert({
         where: { roomId_userId: { roomId: companyRoomRecord.id, userId } },
@@ -29,15 +31,21 @@ const getRooms = async (req, res) => {
     }
 
     // B. Fetch DB ChatRooms where user is a member (including archived project rooms for history browsing)
+    const roomsWhere = {
+      type: { not: 'TEAM' },
+      members: { some: { userId } },
+      OR: [
+        { isArchived: false, status: 'ACTIVE' },
+        { type: 'PROJECT' }
+      ]
+    };
+
+    if (targetOrgId) {
+      roomsWhere.organizationId = targetOrgId;
+    }
+
     const roomsList = await prisma.chatRoom.findMany({
-      where: {
-        type: { not: 'TEAM' },
-        members: { some: { userId } },
-        OR: [
-          { isArchived: false, status: 'ACTIVE' },
-          { type: 'PROJECT' }
-        ]
-      },
+      where: roomsWhere,
       include: {
         team: {
           include: {
@@ -156,12 +164,12 @@ const getRooms = async (req, res) => {
       });
     }
 
-    // User Synchronization: Fetch all active CRM users not in existingDirectUserIds
+    // User Synchronization: Fetch all active CRM users in the same organization not in existingDirectUserIds
     const allUsers = await prisma.user.findMany({
-      where: {
+      where: getOrganizationWhere(req, {
         status: 'ACTIVE',
         id: { not: userId }
-      },
+      }),
       select: { id: true, name: true, email: true, role: true, profilePic: true, employeeId: true, createdAt: true }
     });
 
@@ -891,28 +899,33 @@ const markRoomAsRead = async (req, res) => {
 // 9. Unified Global Chat Search
 const searchChat = async (req, res) => {
   try {
-    const query = (req.query.q || '').trim();
-    if (!query) {
-      return res.json({ users: [], rooms: [], messages: [], files: [] });
-    }
+    const { getEffectiveOrgId } = require('../utils/organizationScope');
+    const targetOrgId = getEffectiveOrgId(req);
+
+    const usersWhere = getOrganizationWhere(req, {
+      OR: [
+        { name: { contains: query, mode: 'insensitive' } },
+        { email: { contains: query, mode: 'insensitive' } },
+        { employeeId: { contains: query, mode: 'insensitive' } }
+      ]
+    });
 
     const users = await prisma.user.findMany({
-      where: {
-        OR: [
-          { name: { contains: query, mode: 'insensitive' } },
-          { email: { contains: query, mode: 'insensitive' } },
-          { employeeId: { contains: query, mode: 'insensitive' } }
-        ]
-      },
+      where: usersWhere,
       select: { id: true, name: true, email: true, role: true, profilePic: true, employeeId: true },
       take: 10
     });
 
+    const roomsWhere = {
+      name: { contains: query, mode: 'insensitive' },
+      isArchived: false
+    };
+    if (targetOrgId) {
+      roomsWhere.organizationId = targetOrgId;
+    }
+
     const rooms = await prisma.chatRoom.findMany({
-      where: {
-        name: { contains: query, mode: 'insensitive' },
-        isArchived: false
-      },
+      where: roomsWhere,
       take: 10
     });
 

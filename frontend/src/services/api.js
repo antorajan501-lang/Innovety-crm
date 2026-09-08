@@ -1,3 +1,6 @@
+import axios from 'axios';
+import { io } from 'socket.io-client';
+
 const getApiUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
   if (envUrl) return envUrl;
@@ -10,8 +13,6 @@ const getApiUrl = () => {
 
 const API_URL = getApiUrl();
 
-import axios from 'axios';
-
 const api = axios.create({
   baseURL: API_URL
 });
@@ -22,6 +23,8 @@ api.interceptors.request.use(
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    } else {
+      delete config.headers.Authorization;
     }
     return config;
   },
@@ -30,15 +33,54 @@ api.interceptors.request.use(
   }
 );
 
-// Intercept 401 Unauthorized responses to logout user
+// Intercept 401 Unauthorized responses to attempt silent token renewal
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response && error.response.status === 401) {
+  async (error) => {
+    const originalRequest = error.config;
+
+    // Only attempt refresh if 401 Unauthorized, request has not already retried, and is not an auth request itself
+    if (
+      error.response &&
+      error.response.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry &&
+      !originalRequest.url?.includes('/auth/login') &&
+      !originalRequest.url?.includes('/auth/refresh')
+    ) {
+      originalRequest._retry = true;
+      const savedToken = localStorage.getItem('token');
+      const savedRefreshToken = localStorage.getItem('refreshToken');
+
+      if (savedToken || savedRefreshToken) {
+        try {
+          const refreshRes = await axios.post(`${API_URL}/auth/refresh`, {
+            token: savedToken,
+            refreshToken: savedRefreshToken
+          });
+
+          if (refreshRes.data && refreshRes.data.token) {
+            const newToken = refreshRes.data.token;
+            localStorage.setItem('token', newToken);
+            if (refreshRes.data.refreshToken) {
+              localStorage.setItem('refreshToken', refreshRes.data.refreshToken);
+            }
+            if (refreshRes.data.user) {
+              localStorage.setItem('user', JSON.stringify(refreshRes.data.user));
+            }
+
+            originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
+            return api(originalRequest);
+          }
+        } catch (refreshErr) {
+          console.warn('[API Auth] Silent token renewal failed:', refreshErr?.message);
+        }
+      }
+
+      // If token renewal failed or no token exists, log out user
       console.log('Session expired or unauthorized. Logging out...');
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      // If we are not on the login page, redirect
+      localStorage.clear();
+      sessionStorage.clear();
       if (!window.location.pathname.includes('/login')) {
         window.location.href = '/login?expired=true';
       }
@@ -55,7 +97,6 @@ export const getUploadUrl = (path) => {
 
   let cleanPath = path.startsWith('/') ? path : `/${path}`;
 
-  // Prepend /api if path starts with /uploads/ so reverse proxies (like Nginx) routing /api pass requests to backend
   if (cleanPath.startsWith('/uploads/')) {
     cleanPath = `/api${cleanPath}`;
   }
@@ -103,7 +144,6 @@ export const downloadChatAttachment = async (messageOrPath, customFileName) => {
       throw new Error(`Download HTTP error! status: ${response.status}`);
     }
 
-    // Extract original filename from Content-Disposition header (supports filename*=UTF-8'' and filename="...")
     let filename = '';
     const disposition = response.headers.get('content-disposition');
     if (disposition) {
@@ -122,7 +162,6 @@ export const downloadChatAttachment = async (messageOrPath, customFileName) => {
       filename = defaultName || 'download';
     }
 
-    // Clean any surrounding quotes
     filename = filename.replace(/^"|"$/g, '').trim();
 
     const blob = await response.blob();
@@ -144,8 +183,6 @@ export const downloadChatAttachment = async (messageOrPath, customFileName) => {
 export const downloadFile = async (filePath, customFileName) => {
   return downloadChatAttachment(filePath, customFileName);
 };
-
-import { io } from 'socket.io-client';
 
 let socketInstance = null;
 

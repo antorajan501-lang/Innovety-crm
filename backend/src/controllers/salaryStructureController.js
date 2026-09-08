@@ -1,5 +1,6 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getEffectiveOrgId, assertOrganizationAccess } = require('../utils/organizationScope');
 
 // 1. Get Salary Structure for User
 const getSalaryStructure = async (req, res) => {
@@ -18,11 +19,23 @@ const getSalaryStructure = async (req, res) => {
       }
     }
 
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, organizationId: true }
+    });
+    if (!targetUser) {
+      return res.status(404).json({ message: 'Target user not found.' });
+    }
+
+    if (['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
+      assertOrganizationAccess(targetUser, req);
+    }
+
     const structure = await prisma.salaryStructure.findUnique({
       where: { userId: targetUserId },
       include: {
         template: true,
-        user: { select: { id: true, name: true, email: true, employeeId: true, role: true, department: true } }
+        user: { select: { id: true, name: true, email: true, employeeId: true, role: true, department: true, organizationId: true } }
       }
     });
 
@@ -32,6 +45,7 @@ const getSalaryStructure = async (req, res) => {
 
     res.json(structure);
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ message: error.message });
     console.error('Get salary structure error:', error);
     res.status(500).json({ message: 'Failed to retrieve salary structure.' });
   }
@@ -44,10 +58,19 @@ const getAllSalaryStructures = async (req, res) => {
       return res.status(403).json({ message: 'Insufficient permissions to view salary structures.' });
     }
 
+    const targetOrgId = getEffectiveOrgId(req);
+
+    const whereClause = {
+      status: 'ACTIVE',
+      role: { in: ['ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN'] }
+    };
+
+    if (targetOrgId) {
+      whereClause.organizationId = targetOrgId;
+    }
+
     const users = await prisma.user.findMany({
-      where: {
-        role: { in: ['ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN'] }
-      },
+      where: whereClause,
       select: {
         id: true,
         name: true,
@@ -56,6 +79,7 @@ const getAllSalaryStructures = async (req, res) => {
         role: true,
         department: true,
         profilePic: true,
+        organizationId: true,
         salaryStructure: {
           include: { template: true }
         }
@@ -70,12 +94,14 @@ const getAllSalaryStructures = async (req, res) => {
   }
 };
 
-// 3. Assign or Update Salary Structure (Admin Only)
+// 3. Assign or Update Salary Structure (Admin & Super Admin)
 const saveSalaryStructure = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can assign or modify salary structures.' });
     }
+
+    const targetOrgId = getEffectiveOrgId(req);
 
     const {
       userId, templateId, basicSalary, hra, da,
@@ -92,6 +118,10 @@ const saveSalaryStructure = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'Target user not found.' });
     }
+
+    assertOrganizationAccess(user, req);
+
+    const userOrgId = user.organizationId || targetOrgId;
 
     const basic = Number(basicSalary) || 0;
     if (basic < 0) {
@@ -124,6 +154,7 @@ const saveSalaryStructure = async (req, res) => {
       const changeAmount = net - existingStructure.netSalary;
       await prisma.salaryRevision.create({
         data: {
+          organizationId: userOrgId,
           userId,
           previousSalary: existingStructure.netSalary,
           newSalary: net,
@@ -136,6 +167,7 @@ const saveSalaryStructure = async (req, res) => {
     } else {
       await prisma.salaryRevision.create({
         data: {
+          organizationId: userOrgId,
           userId,
           previousSalary: 0,
           newSalary: net,
@@ -150,6 +182,7 @@ const saveSalaryStructure = async (req, res) => {
     const structure = await prisma.salaryStructure.upsert({
       where: { userId },
       update: {
+        organizationId: userOrgId,
         templateId: templateId || null,
         basicSalary: basic,
         hra: h,
@@ -169,6 +202,7 @@ const saveSalaryStructure = async (req, res) => {
         effectiveFrom: effectiveFrom ? new Date(effectiveFrom) : new Date()
       },
       create: {
+        organizationId: userOrgId,
         userId,
         templateId: templateId || null,
         basicSalary: basic,
@@ -192,12 +226,14 @@ const saveSalaryStructure = async (req, res) => {
 
     await logActivity({
       userId: req.user.id,
+      organizationId: userOrgId,
       action: 'SALARY_STRUCTURE_SAVE',
       details: `Saved salary structure for ${user.name} (Net: ₹${net})`
     });
 
     res.json(structure);
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ message: error.message });
     console.error('Save salary structure error:', error);
     res.status(500).json({ message: 'Failed to save salary structure.' });
   }
@@ -213,10 +249,22 @@ const getSalaryRevisions = async (req, res) => {
       return res.status(403).json({ message: 'Access denied.' });
     }
 
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, organizationId: true }
+    });
+    if (!targetUser) {
+      return res.status(404).json({ message: 'Target user not found.' });
+    }
+
+    if (['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
+      assertOrganizationAccess(targetUser, req);
+    }
+
     const revisions = await prisma.salaryRevision.findMany({
       where: { userId: targetUserId },
       include: {
-        user: { select: { id: true, name: true, role: true, employeeId: true } },
+        user: { select: { id: true, name: true, role: true, employeeId: true, organizationId: true } },
         revisedBy: { select: { id: true, name: true, role: true } }
       },
       orderBy: { createdAt: 'desc' }
@@ -224,17 +272,20 @@ const getSalaryRevisions = async (req, res) => {
 
     res.json(revisions);
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ message: error.message });
     console.error('Get salary revisions error:', error);
     res.status(500).json({ message: 'Failed to retrieve salary revision history.' });
   }
 };
 
-// 5. Bulk Assign Salary Structures (Admin Only)
+// 5. Bulk Assign Salary Structures (Admin & Super Admin)
 const bulkAssignSalaryStructures = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can bulk assign salary structures.' });
     }
+
+    const targetOrgId = getEffectiveOrgId(req);
 
     const {
       userIds, templateId, basicSalary, hra, da,
@@ -272,12 +323,21 @@ const bulkAssignSalaryStructures = async (req, res) => {
     const results = [];
 
     for (const userId of userIds) {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (!user) continue;
+
+      if (targetOrgId && user.organizationId && user.organizationId !== targetOrgId) {
+        continue; // Skip users outside target organization scope
+      }
+
+      const userOrgId = user.organizationId || targetOrgId;
       const existingStructure = await prisma.salaryStructure.findUnique({ where: { userId } });
 
       if (existingStructure) {
         const changeAmount = net - existingStructure.netSalary;
         await prisma.salaryRevision.create({
           data: {
+            organizationId: userOrgId,
             userId,
             previousSalary: existingStructure.netSalary,
             newSalary: net,
@@ -291,6 +351,7 @@ const bulkAssignSalaryStructures = async (req, res) => {
       } else {
         await prisma.salaryRevision.create({
           data: {
+            organizationId: userOrgId,
             userId,
             previousSalary: 0,
             newSalary: net,
@@ -306,6 +367,7 @@ const bulkAssignSalaryStructures = async (req, res) => {
       const struct = await prisma.salaryStructure.upsert({
         where: { userId },
         update: {
+          organizationId: userOrgId,
           templateId: templateId || null,
           basicSalary: basic,
           hra: h,
@@ -325,6 +387,7 @@ const bulkAssignSalaryStructures = async (req, res) => {
           effectiveFrom: effectiveDate
         },
         create: {
+          organizationId: userOrgId,
           userId,
           templateId: templateId || null,
           basicSalary: basic,
@@ -361,12 +424,14 @@ const bulkAssignSalaryStructures = async (req, res) => {
 
     await logActivity({
       userId: req.user.id,
+      organizationId: targetOrgId,
       action: 'BULK_SALARY_STRUCTURE_SAVE',
-      details: `Assigned salary structure to ${userIds.length} employees (Net Pay: ₹${net})`
+      details: `Assigned salary structure to ${results.length} employees (Net Pay: ₹${net})`
     });
 
     res.json({ message: `Successfully assigned structure to ${results.length} employees.`, count: results.length });
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ message: error.message });
     console.error('Bulk save salary structure error:', error);
     res.status(500).json({ message: 'Failed to bulk assign salary structures.' });
   }

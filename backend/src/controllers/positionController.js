@@ -1,18 +1,52 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { logActivity } = require('../utils/activityLogger');
+const { setCompanyOrder, sortPositionsForCompany, removePositionFromCompanyOrder } = require('../utils/companyPositionStore');
+
+/**
+ * Robust helper to resolve non-empty organizationId from request body, query, or user session
+ */
+const resolveOrgId = (req) => {
+  if (req.user?.role === 'SUPER_ADMIN') {
+    const bodyOrg = req.body?.organizationId;
+    const queryOrg = req.query?.organizationId;
+    const userOrg = req.user?.organizationId;
+
+    if (bodyOrg && typeof bodyOrg === 'string' && bodyOrg.trim() !== '' && bodyOrg.trim() !== 'all') {
+      return bodyOrg.trim();
+    }
+    if (queryOrg && typeof queryOrg === 'string' && queryOrg.trim() !== '' && queryOrg.trim() !== 'all') {
+      return queryOrg.trim();
+    }
+    if (userOrg && typeof userOrg === 'string' && userOrg.trim() !== '') {
+      return userOrg.trim();
+    }
+    return null;
+  }
+  return req.user?.organizationId || null;
+};
 
 /**
  * GET /api/positions
- * Get all positions with employee counts sorted by hierarchy level
+ * Get positions for a specific organization with employee counts sorted by hierarchy level
  */
 const getPositions = async (req, res) => {
   try {
+    const organizationId = resolveOrgId(req);
+
+    const whereClause = organizationId ? { organizationId } : {};
+    const whereUsers = organizationId ? { organizationId } : {};
+
     const positions = await prisma.position.findMany({
+      where: whereClause,
       orderBy: { level: 'asc' },
       include: {
         _count: {
-          select: { users: true }
+          select: {
+            users: {
+              where: whereUsers
+            }
+          }
         }
       }
     });
@@ -22,7 +56,9 @@ const getPositions = async (req, res) => {
       totalEmployees: pos._count.users
     }));
 
-    res.json(formatted);
+    const sortedPositions = sortPositionsForCompany(formatted, organizationId);
+
+    res.json(sortedPositions);
   } catch (error) {
     console.error('Fetch positions error:', error);
     res.status(500).json({ message: 'Failed to fetch positions.' });
@@ -31,11 +67,24 @@ const getPositions = async (req, res) => {
 
 /**
  * POST /api/positions
- * Create a new Position (Super Admin only)
+ * Create a new Position within a specific company (Super Admin / Admin)
  */
 const createPosition = async (req, res) => {
   try {
     const { name, code, level, description, color, textColor, icon, priority, sortOrder } = req.body;
+    const organizationId = resolveOrgId(req);
+
+    if (!organizationId) {
+      return res.status(400).json({ message: 'Valid organizationId is required to create a position.' });
+    }
+
+    // Validate organization exists
+    const orgExists = await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+    if (!orgExists) {
+      return res.status(404).json({ message: 'Selected company does not exist.' });
+    }
 
     if (!name || !code || level === undefined || level === null) {
       return res.status(400).json({ message: 'Position Name, Code, and Level are required.' });
@@ -49,32 +98,42 @@ const createPosition = async (req, res) => {
       return res.status(400).json({ message: 'Level must be a positive integer.' });
     }
 
-    // Check duplicate name
+    // Check duplicate name within the company
     const existingName = await prisma.position.findFirst({
-      where: { name: { equals: cleanName, mode: 'insensitive' } }
+      where: {
+        organizationId,
+        name: { equals: cleanName, mode: 'insensitive' }
+      }
     });
     if (existingName) {
-      return res.status(400).json({ message: `Position name "${cleanName}" already exists.` });
+      return res.status(400).json({ message: `Position name "${cleanName}" already exists in this company.` });
     }
 
-    // Check duplicate code
+    // Check duplicate code within the company
     const existingCode = await prisma.position.findFirst({
-      where: { code: { equals: cleanCode, mode: 'insensitive' } }
+      where: {
+        organizationId,
+        code: { equals: cleanCode, mode: 'insensitive' }
+      }
     });
     if (existingCode) {
-      return res.status(400).json({ message: `Position code "${cleanCode}" already exists.` });
+      return res.status(400).json({ message: `Position code "${cleanCode}" already exists in this company.` });
     }
 
-    // Check duplicate level
-    const existingLevel = await prisma.position.findUnique({
-      where: { level: parsedLevel }
+    // Check duplicate level within the company
+    const existingLevel = await prisma.position.findFirst({
+      where: {
+        organizationId,
+        level: parsedLevel
+      }
     });
     if (existingLevel) {
-      return res.status(400).json({ message: `Hierarchy Level ${parsedLevel} is already assigned to "${existingLevel.name}".` });
+      return res.status(400).json({ message: `Hierarchy Level ${parsedLevel} is already assigned to "${existingLevel.name}" in this company.` });
     }
 
     const position = await prisma.position.create({
       data: {
+        organizationId,
         name: cleanName,
         code: cleanCode,
         level: parsedLevel,
@@ -90,7 +149,7 @@ const createPosition = async (req, res) => {
     await logActivity({
       userId: req.user.id,
       action: 'POSITION_CREATED',
-      details: `Created new position "${position.name}" (Code: ${position.code}, Level: ${position.level})`,
+      details: `Created new position "${position.name}" (Code: ${position.code}, Level: ${position.level}) for organizationId "${organizationId}"`,
       ipAddress: req.ip
     });
 
@@ -103,51 +162,81 @@ const createPosition = async (req, res) => {
 
 /**
  * PUT /api/positions/:id
- * Update an existing Position
+ * Update an existing Position with company ownership validation and self-edit bug fix
  */
 const updatePosition = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, code, level, description, color, textColor, icon, priority, sortOrder, status } = req.body;
+    const organizationId = resolveOrgId(req);
 
-    const existingPos = await prisma.position.findUnique({ where: { id } });
+    // Validate position ownership
+    const existingPos = await prisma.position.findFirst({
+      where: organizationId ? { id, organizationId } : { id }
+    });
     if (!existingPos) {
-      return res.status(404).json({ message: 'Position not found.' });
+      return res.status(404).json({ message: 'Position not found in selected company.' });
     }
 
+    const targetOrgId = existingPos.organizationId;
     const dataToUpdate = {};
 
-    if (name && name !== existingPos.name) {
+    // 1. Name duplicate check (only if name changed)
+    if (name) {
       const cleanName = String(name).trim();
-      const duplicateName = await prisma.position.findFirst({
-        where: { name: { equals: cleanName, mode: 'insensitive' }, id: { not: id } }
-      });
-      if (duplicateName) {
-        return res.status(400).json({ message: `Position name "${cleanName}" already exists.` });
+      if (cleanName.toLowerCase() !== existingPos.name.toLowerCase()) {
+        const duplicateName = await prisma.position.findFirst({
+          where: {
+            organizationId: targetOrgId,
+            name: { equals: cleanName, mode: 'insensitive' },
+            id: { not: id }
+          }
+        });
+        if (duplicateName) {
+          return res.status(400).json({ message: `Position name "${cleanName}" already exists in this company.` });
+        }
+        dataToUpdate.name = cleanName;
       }
-      dataToUpdate.name = cleanName;
     }
 
-    if (code && code !== existingPos.code) {
+    // 2. Code duplicate check (only if code changed)
+    if (code) {
       const cleanCode = String(code).trim().toUpperCase();
-      const duplicateCode = await prisma.position.findFirst({
-        where: { code: { equals: cleanCode, mode: 'insensitive' }, id: { not: id } }
-      });
-      if (duplicateCode) {
-        return res.status(400).json({ message: `Position code "${cleanCode}" already exists.` });
+      if (cleanCode !== existingPos.code.toUpperCase()) {
+        const duplicateCode = await prisma.position.findFirst({
+          where: {
+            organizationId: targetOrgId,
+            code: { equals: cleanCode, mode: 'insensitive' },
+            id: { not: id }
+          }
+        });
+        if (duplicateCode) {
+          return res.status(400).json({ message: `Position code "${cleanCode}" already exists in this company.` });
+        }
+        dataToUpdate.code = cleanCode;
       }
-      dataToUpdate.code = cleanCode;
     }
 
-    if (level !== undefined && level !== null && level !== existingPos.level) {
+    // 3. Level duplicate check (only if level changed numerical value)
+    if (level !== undefined && level !== null) {
       const parsedLevel = parseInt(level, 10);
-      const duplicateLevel = await prisma.position.findFirst({
-        where: { level: parsedLevel, id: { not: id } }
-      });
-      if (duplicateLevel) {
-        return res.status(400).json({ message: `Hierarchy Level ${parsedLevel} is already assigned to "${duplicateLevel.name}".` });
+      if (isNaN(parsedLevel) || parsedLevel < 1) {
+        return res.status(400).json({ message: 'Level must be a positive integer.' });
       }
-      dataToUpdate.level = parsedLevel;
+
+      if (parsedLevel !== existingPos.level) {
+        const duplicateLevel = await prisma.position.findFirst({
+          where: {
+            organizationId: targetOrgId,
+            level: parsedLevel,
+            id: { not: id }
+          }
+        });
+        if (duplicateLevel) {
+          return res.status(400).json({ message: `Hierarchy Level ${parsedLevel} is already assigned to "${duplicateLevel.name}" in this company.` });
+        }
+        dataToUpdate.level = parsedLevel;
+      }
     }
 
     if (description !== undefined) dataToUpdate.description = description;
@@ -166,7 +255,7 @@ const updatePosition = async (req, res) => {
     await logActivity({
       userId: req.user.id,
       action: 'POSITION_UPDATED',
-      details: `Updated position "${updated.name}" (${updated.code})`,
+      details: `Updated position "${updated.name}" (${updated.code}) in organization "${targetOrgId}"`,
       ipAddress: req.ip
     });
 
@@ -179,15 +268,23 @@ const updatePosition = async (req, res) => {
 
 /**
  * PATCH /api/positions/:id/status
- * Toggle Active / Inactive Status
+ * Toggle Active / Inactive Status with ownership validation
  */
 const togglePositionStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+    const organizationId = resolveOrgId(req);
 
     if (!['ACTIVE', 'INACTIVE'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status. Must be ACTIVE or INACTIVE.' });
+    }
+
+    const existingPos = await prisma.position.findFirst({
+      where: organizationId ? { id, organizationId } : { id }
+    });
+    if (!existingPos) {
+      return res.status(404).json({ message: 'Position not found in selected company.' });
     }
 
     const updated = await prisma.position.update({
@@ -211,43 +308,50 @@ const togglePositionStatus = async (req, res) => {
 
 /**
  * DELETE /api/positions/:id
- * Deletes a position. Automatically unassigns any assigned employees before deleting.
+ * Deletes a position after verifying company ownership. Unassigns employees in this company before deleting.
  */
 const deletePosition = async (req, res) => {
   try {
     const { id } = req.params;
+    const organizationId = resolveOrgId(req);
 
-    const position = await prisma.position.findUnique({
-      where: { id },
+    // Strict ownership validation
+    const position = await prisma.position.findFirst({
+      where: organizationId ? { id, organizationId } : { id },
       include: { _count: { select: { users: true } } }
     });
 
     if (!position) {
-      return res.status(404).json({ message: 'Position not found.' });
+      return res.status(404).json({ message: 'Position not found in selected company.' });
     }
 
     const assignedCount = position._count?.users || 0;
-
     let employeesUnassigned = 0;
 
     await prisma.$transaction(async (tx) => {
-      // Step 1: Unassign position from all assigned employees
+      // Unassign position from employees belonging to this organization
       const updateResult = await tx.user.updateMany({
-        where: { positionId: id },
+        where: {
+          positionId: id,
+          organizationId: position.organizationId
+        },
         data: { positionId: null }
       });
       employeesUnassigned = updateResult.count || assignedCount;
 
-      // Step 2: Delete position record
+      // Delete the specific position record
       await tx.position.delete({
-        where: { id }
+        where: { id: position.id }
       });
     });
+
+    // Clean up in-memory / JSON tenant position ordering store
+    removePositionFromCompanyOrder(position.organizationId, position.id);
 
     await logActivity({
       userId: req.user.id,
       action: 'POSITION_DELETED',
-      details: `Deleted position "${position.name}" (${position.code}), unassigned ${employeesUnassigned} employee(s).`,
+      details: `Deleted position "${position.name}" (${position.code}) from organization "${position.organizationId}", unassigned ${employeesUnassigned} employee(s).`,
       ipAddress: req.ip
     });
 
@@ -264,53 +368,81 @@ const deletePosition = async (req, res) => {
 
 /**
  * PUT /api/positions/reorder
- * Reorder Position Hierarchy Levels dynamically
+ * Reorder Position Hierarchy Levels dynamically per company inside an atomic database transaction
  */
 const reorderPositions = async (req, res) => {
   try {
-    const { items } = req.body; // Array of { id, level }
+    const { items, positions } = req.body;
+    const organizationId = resolveOrgId(req);
 
-    if (!Array.isArray(items) || items.length === 0) {
+    const reorderItems = Array.isArray(items) ? items : (Array.isArray(positions) ? positions : []);
+
+    if (!organizationId) {
+      return res.status(400).json({ message: 'organizationId is required for reordering positions.' });
+    }
+
+    if (reorderItems.length === 0) {
       return res.status(400).json({ message: 'Items array is required for reordering.' });
     }
 
-    // Step 1: Temporarily set levels to negative numbers to prevent @unique constraint collision during level swap
-    const tempUpdates = items.map((item, idx) =>
-      prisma.position.update({
-        where: { id: item.id },
-        data: {
-          level: -(idx + 1000),
-          sortOrder: -(idx + 1000)
-        }
-      })
-    );
+    const validItems = reorderItems.filter((item) => item && item.id);
 
-    // Step 2: Set final positive levels & sortOrder
-    const finalUpdates = items.map((item, idx) =>
-      prisma.position.update({
-        where: { id: item.id },
-        data: {
-          level: idx + 1,
-          sortOrder: idx + 1
-        }
-      })
-    );
+    // Atomically swap/reorder levels in database transaction
+    await prisma.$transaction(async (tx) => {
+      // Step 1: Assign temporary negative levels to avoid unique constraint collisions
+      for (let i = 0; i < validItems.length; i++) {
+        const item = validItems[i];
+        await tx.position.updateMany({
+          where: { id: item.id, organizationId },
+          data: { level: -(1000 + i) }
+        });
+      }
 
-    await prisma.$transaction([...tempUpdates, ...finalUpdates]);
+      // Step 2: Assign final levels and sortOrders
+      for (let i = 0; i < validItems.length; i++) {
+        const item = validItems[i];
+        const newLevel = item.level !== undefined ? parseInt(item.level, 10) : (i + 1);
+        const newSortOrder = item.sortOrder !== undefined ? parseInt(item.sortOrder, 10) : (i + 1);
+
+        await tx.position.updateMany({
+          where: { id: item.id, organizationId },
+          data: {
+            level: newLevel,
+            sortOrder: newSortOrder,
+            priority: newLevel
+          }
+        });
+      }
+    });
+
+    // Also save order in-memory
+    const positionIds = validItems.map((item) => item.id);
+    setCompanyOrder(organizationId, positionIds);
 
     await logActivity({
       userId: req.user.id,
       action: 'POSITIONS_REORDERED',
-      details: 'Reordered position hierarchy levels',
+      details: `Reordered position hierarchy levels for organization "${organizationId}"`,
       ipAddress: req.ip
     });
 
-    const reordered = await prisma.position.findMany({
+    const whereUsers = { organizationId };
+
+    const allPositions = await prisma.position.findMany({
+      where: { organizationId },
       orderBy: { level: 'asc' },
-      include: { _count: { select: { users: true } } }
+      include: {
+        _count: {
+          select: {
+            users: {
+              where: whereUsers
+            }
+          }
+        }
+      }
     });
 
-    const formatted = reordered.map(p => ({
+    const formatted = allPositions.map((p) => ({
       ...p,
       totalEmployees: p._count.users
     }));

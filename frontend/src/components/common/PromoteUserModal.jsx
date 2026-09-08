@@ -72,7 +72,7 @@ const PromoteUserModal = ({ isOpen, onClose, user, onSuccess }) => {
     const fetchData = async () => {
       try {
         const [posRes, treeRes, usersRes] = await Promise.all([
-          api.get('/positions').catch(() => ({ data: [] })),
+          api.get('/positions', { params: { organizationId: user?.organizationId } }).catch(() => ({ data: [] })),
           api.get('/organization/tree').catch(() => ({ data: {} })),
           api.get('/users').catch(() => ({ data: { users: [] } }))
         ]);

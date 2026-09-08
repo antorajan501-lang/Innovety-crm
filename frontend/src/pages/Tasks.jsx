@@ -37,9 +37,11 @@ import {
   Check,
   RefreshCw,
   AlertTriangle,
-  History
+  History,
+  Building2
 } from 'lucide-react';
 import UserAvatar from '../components/common/UserAvatar';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import RejectModal from '../components/RejectModal';
 import RetryModal from '../components/RetryModal';
 import TaskDiscussionPanel from '../components/TaskDiscussionPanel';
@@ -48,9 +50,24 @@ import ConfirmModal from '../components/ConfirmModal';
 import { motion, AnimatePresence } from 'framer-motion';
 import { getProjectStageProgress, isTaskDone } from '../utils/projectProgress';
 
+import { useCompanyScope } from '../context/CompanyScopeContext';
+
+const extractCompanyList = (responseData) => {
+  if (Array.isArray(responseData)) return responseData;
+  if (Array.isArray(responseData?.data)) return responseData.data;
+  if (Array.isArray(responseData?.organizations)) return responseData.organizations;
+  if (Array.isArray(responseData?.companies)) return responseData.companies;
+  return [];
+};
+
 const Tasks = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, companies: scopeCompanies } = useCompanyScope();
   const location = useLocation();
+
+  const safeCompanies = Array.isArray(scopeCompanies) ? scopeCompanies : [];
+
   const [tasks, setTasks] = useState([]);
   const [teamMembers, setTeamMembers] = useState([]);
   const [teams, setTeams] = useState([]);
@@ -179,23 +196,45 @@ const Tasks = () => {
 
   const subTabs = ['Summary', 'Board', 'Docs', 'Forms'];
 
-  const fetchTasks = async () => {
+  const fetchCompanies = async () => {
+    try {
+      const res = await api.get('/organizations');
+      const comps = extractCompanyList(res.data);
+      setCompanies(comps);
+      if (comps.length > 0 && !selectedOrgId) {
+        const userOrg = comps.find((c) => c.id === user?.organizationId);
+        const defaultOrg = userOrg || comps.find((c) => c.slug === 'innoveity' || c.companyCode === 'INN001') || comps[0];
+        setSelectedOrgId(defaultOrg.id);
+        return defaultOrg.id;
+      }
+    } catch (err) {
+      console.error('Failed to fetch companies:', err);
+      setCompanies([]);
+    }
+    return selectedOrgId;
+  };
+
+  const fetchTasks = async (orgId = effectiveOrgId) => {
+    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
       setLoading(true);
-      const res = await api.get('/tasks');
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get('/tasks', { params });
       const loadedTasks = Array.isArray(res.data) ? res.data : (res.data?.tasks || []);
       setTasks(loadedTasks);
-      setLoading(false);
     } catch (err) {
       console.error(err);
       setAlertMsg('Failed to load tasks.');
+    } finally {
       setLoading(false);
     }
   };
 
-  const fetchRepositories = async () => {
+  const fetchRepositories = async (orgId = effectiveOrgId) => {
+    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
-      const res = await api.get('/repositories');
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get('/repositories', { params });
       setRepositories(res.data || []);
     } catch (err) {
       console.error('Failed to load repositories:', err);
@@ -205,11 +244,15 @@ const Tasks = () => {
   const handleRegisterRepo = async (e) => {
     e.preventDefault();
     try {
-      const res = await api.post('/repositories', newRepoForm);
+      const res = await api.post('/repositories', {
+        ...newRepoForm,
+        organizationId: effectiveOrgId || user?.organizationId
+      });
       setRepositories([...repositories, res.data]);
       setNewRepoForm({ name: '', url: '', lang: 'React/JS' });
       setShowAddRepo(false);
       setAlertMsg('Git repository registered successfully.');
+      fetchRepositories(effectiveOrgId);
     } catch (err) {
       setAlertMsg(err.response?.data?.message || 'Failed to register repository.');
     }
@@ -275,16 +318,18 @@ const Tasks = () => {
     });
   };
 
-  const fetchTeamMembers = async () => {
+  const fetchTeamMembers = async (orgId = effectiveOrgId) => {
+    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
-      if (user?.role === 'ADMIN') {
-        const res = await api.get('/users?limit=1000&status=ACTIVE');
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      if (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') {
+        const res = await api.get('/users', { params: { ...params, limit: 1000, status: 'ACTIVE' } });
         const assignable = (res.data.users || []).filter(u => u.role === 'TEAM_LEADER' || u.role === 'INTERN' || u.role === 'EMPLOYEE');
         setTeamMembers(assignable);
       } else {
-        const res = await api.get('/users?role=INTERN&limit=1000&status=ACTIVE');
+        const res = await api.get('/users', { params: { ...params, role: 'INTERN', limit: 1000, status: 'ACTIVE' } });
         const internMembers = (res.data.users || []);
-        const empRes = await api.get('/users?role=EMPLOYEE&limit=1000&status=ACTIVE');
+        const empRes = await api.get('/users', { params: { ...params, role: 'EMPLOYEE', limit: 1000, status: 'ACTIVE' } });
         const empMembers = (empRes.data.users || []);
         setTeamMembers([...internMembers, ...empMembers]);
       }
@@ -293,9 +338,11 @@ const Tasks = () => {
     }
   };
 
-  const fetchTeams = async () => {
+  const fetchTeams = async (orgId = effectiveOrgId) => {
+    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
-      const res = await api.get('/teams');
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get('/teams', { params });
       setTeams(res.data || []);
     } catch (err) {
       console.error(err);
@@ -308,26 +355,27 @@ const Tasks = () => {
     setProjectsList([]);
   }, [user?.id]);
 
-  const fetchProjects = async () => {
+  const fetchProjects = async (orgId = effectiveOrgId) => {
+    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
-      const res = await api.get('/projects');
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get('/projects', { params });
       const list = res?.data?.projects || (Array.isArray(res?.data) ? res.data : []);
       setProjectsList(list);
-      console.log('Projects from API:', (list || []).map(p => p.name));
     } catch (err) {
       console.error('Failed to load projects:', err);
     }
   };
 
   useEffect(() => {
-    fetchTasks();
-    fetchRepositories();
-    fetchProjects();
-    if (user.role === 'ADMIN' || user.role === 'TEAM_LEADER') {
-      fetchTeamMembers();
-      fetchTeams();
-    }
+    fetchTasks(effectiveOrgId);
+    fetchRepositories(effectiveOrgId);
+    fetchProjects(effectiveOrgId);
+    fetchTeamMembers(effectiveOrgId);
+    fetchTeams(effectiveOrgId);
+  }, [effectiveOrgId, user?.organizationId]);
 
+  useEffect(() => {
     try {
       const socket = getSocket();
       if (socket) {
@@ -494,6 +542,10 @@ const Tasks = () => {
 
       if (createFormData.projectId) {
         formData.append('projectId', createFormData.projectId);
+      }
+      
+      if (selectedOrgId) {
+        formData.append('organizationId', selectedOrgId);
       }
       
       formData.append('type', createFormData.type);
@@ -712,7 +764,10 @@ const Tasks = () => {
     return visibleTasks.filter(t => {
       const matchesSearch = !searchQuery ||
                             t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase()));
+                            (t.description && t.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                            (t.id && t.id.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                            (t.project?.name && t.project.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                            (t.assignee?.name && t.assignee.name.toLowerCase().includes(searchQuery.toLowerCase()));
       const matchesSprint = selectedSprint === 'ALL' || t.sprintName === selectedSprint;
       const matchesPriority = selectedPriority === 'ALL' || t.priority === selectedPriority;
       const matchesType = selectedType === 'ALL' || t.type === selectedType;
@@ -1354,6 +1409,15 @@ const Tasks = () => {
           </div>
         </div>
 
+        {/* Shared Company Selector Bar */}
+        <CompanyScopeSelector onScopeChange={(newId) => {
+          fetchTasks(newId);
+          fetchRepositories(newId);
+          fetchProjects(newId);
+          fetchTeamMembers(newId);
+          fetchTeams(newId);
+        }} />
+
         {/* Sub Tab Navigation — visible only on Board */}
         {activeSubTab === 'Board' && (
           <div className="flex items-center border-b border-border/40 gap-4 overflow-x-auto pb-0.5 scrollbar-thin">
@@ -1911,8 +1975,15 @@ const Tasks = () => {
           <div className="w-full max-w-xl rounded-3xl border border-border/40 bg-card p-6 shadow-2xl max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 text-left space-y-4">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <div>
-                <h3 className="text-base font-extrabold text-foreground">Create New Task Ticket</h3>
-                <p className="text-xs text-muted-foreground">Assign work to a team member or entire team.</p>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-extrabold text-foreground">Create New Task Ticket</h3>
+                  {isSuperAdmin && (
+                    <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                      Company: {safeCompanies.find((c) => c.id === selectedOrgId)?.name || 'Selected Company'}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">Assign work to a team member or entire team.</p>
               </div>
               <button
                 onClick={() => setCreateModalOpen(false)}

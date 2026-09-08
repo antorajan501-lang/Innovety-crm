@@ -1,5 +1,13 @@
 const prisma = require('../utils/db');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 const { logActivity } = require('../utils/activityLogger');
+const {
+  getCompanyLeavePolicy,
+  setCompanyLeavePolicy,
+  addLeaveTypeToCompany,
+  filterLeaveTypesForCompany,
+  getCompanyLeaveTypeIds
+} = require('../utils/companyLeavePolicyStore');
 
 // Helper to auto-generate leave code (e.g. "Marriage Leave" -> "ML")
 const generateLeaveCode = (name) => {
@@ -11,30 +19,44 @@ const generateLeaveCode = (name) => {
   return name.substring(0, 3).toUpperCase();
 };
 
-// 1. Get Global Leave Policy & All Leave Types
+// 1. Get Leave Policy & Leave Types per Company Scope
 const getGlobalLeavePolicy = async (req, res) => {
   try {
-    let policy = await prisma.leavePolicy.findFirst({
-      where: { isGlobal: true }
-    });
+    const organizationId = getEffectiveOrgId(req);
 
-    if (!policy) {
-      policy = await prisma.leavePolicy.create({
-        data: {
-          isGlobal: true,
-          allocationType: 'ANNUAL',
-          carryForwardEnabled: true,
-          maxCarryForwardDays: 5.0,
-          halfDayAllowed: true,
-          workingDaysOnly: true,
-          autoApproval: false
-        }
-      });
+    let policy;
+    if (organizationId) {
+      policy = getCompanyLeavePolicy(organizationId);
+    } else {
+      policy = await prisma.leavePolicy.findFirst({ where: { isGlobal: true } });
+      if (!policy) {
+        policy = await prisma.leavePolicy.create({
+          data: {
+            isGlobal: true,
+            allocationType: 'ANNUAL',
+            carryForwardEnabled: true,
+            maxCarryForwardDays: 5.0,
+            halfDayAllowed: true,
+            workingDaysOnly: true,
+            autoApproval: false
+          }
+        });
+      }
     }
 
-    const leaveTypes = await prisma.leaveType.findMany({
+    const allLeaveTypes = await prisma.leaveType.findMany({
       orderBy: { displayOrder: 'asc' }
     });
+
+    // Auto-seed system leave types for new company if none registered yet
+    if (organizationId) {
+      const companyTypeIds = getCompanyLeaveTypeIds(organizationId);
+      if (!companyTypeIds) {
+        allLeaveTypes.forEach((lt) => addLeaveTypeToCompany(organizationId, lt.id));
+      }
+    }
+
+    const leaveTypes = filterLeaveTypesForCompany(allLeaveTypes, organizationId);
 
     res.json({
       policy,
@@ -42,14 +64,15 @@ const getGlobalLeavePolicy = async (req, res) => {
     });
   } catch (error) {
     console.error('Get leave policy error:', error);
-    res.status(500).json({ message: 'Failed to fetch global leave policy.' });
+    res.status(500).json({ message: 'Failed to fetch leave policy settings.' });
   }
 };
 
-// 2. Update Global Leave Policy Settings
+// 2. Update Leave Policy Settings per Company Scope
 const updateGlobalLeavePolicy = async (req, res) => {
   try {
     const {
+      organizationId,
       allocationType,
       carryForwardEnabled,
       maxCarryForwardDays,
@@ -57,6 +80,32 @@ const updateGlobalLeavePolicy = async (req, res) => {
       workingDaysOnly,
       autoApproval
     } = req.body;
+
+    const orgId = getEffectiveOrgId(req);
+
+    if (orgId) {
+      setCompanyLeavePolicy(orgId, {
+        allocationType: allocationType || 'ANNUAL',
+        carryForwardEnabled: carryForwardEnabled !== undefined ? carryForwardEnabled : true,
+        maxCarryForwardDays: maxCarryForwardDays !== undefined ? parseFloat(maxCarryForwardDays) : 5.0,
+        halfDayAllowed: halfDayAllowed !== undefined ? halfDayAllowed : true,
+        workingDaysOnly: workingDaysOnly !== undefined ? workingDaysOnly : true,
+        autoApproval: autoApproval !== undefined ? autoApproval : false
+      });
+
+      const updatedPolicy = getCompanyLeavePolicy(orgId);
+
+      await logActivity({
+        userId: req.user.id,
+        action: 'LEAVE_POLICY_UPDATED',
+        details: `Updated leave policy settings for organization "${orgId}": Allocation=${updatedPolicy.allocationType}`
+      });
+
+      return res.json({
+        message: 'Company leave policy updated successfully.',
+        policy: updatedPolicy
+      });
+    }
 
     let policy = await prisma.leavePolicy.findFirst({
       where: { isGlobal: true }
@@ -100,7 +149,7 @@ const updateGlobalLeavePolicy = async (req, res) => {
     });
   } catch (error) {
     console.error('Update leave policy error:', error);
-    res.status(500).json({ message: 'Failed to update global leave policy.' });
+    res.status(500).json({ message: 'Failed to update leave policy.' });
   }
 };
 
@@ -108,6 +157,7 @@ const updateGlobalLeavePolicy = async (req, res) => {
 const createLeaveType = async (req, res) => {
   try {
     const {
+      organizationId,
       name,
       code,
       description,
@@ -126,27 +176,38 @@ const createLeaveType = async (req, res) => {
       return res.status(400).json({ message: 'Leave Type Name is required.' });
     }
 
-    const finalCode = (code && code.trim()) ? code.trim().toUpperCase() : generateLeaveCode(name);
+    const cleanName = name.trim();
+    const finalCode = (code && code.trim()) ? code.trim().toUpperCase() : generateLeaveCode(cleanName);
 
-    // Check duplicate name or code
-    const existing = await prisma.leaveType.findFirst({
-      where: {
-        OR: [{ name: name.trim() }, { code: finalCode }]
-      }
-    });
+    // Per-company duplicate check
+    const allTypes = await prisma.leaveType.findMany();
+    const companyTypes = filterLeaveTypesForCompany(allTypes, organizationId);
 
-    if (existing) {
-      return res.status(400).json({ message: 'A leave type with this name or code already exists.' });
+    const duplicate = companyTypes.find(
+      (lt) => lt.name.toLowerCase() === cleanName.toLowerCase() || lt.code.toUpperCase() === finalCode
+    );
+
+    if (duplicate) {
+      return res.status(400).json({ message: 'A leave type with this name or code already exists for this company.' });
+    }
+
+    // Format unique master values if same name/code exists globally in another company
+    const globalMatch = allTypes.find((lt) => lt.name.toLowerCase() === cleanName.toLowerCase() || lt.code.toUpperCase() === finalCode);
+    let masterCode = finalCode;
+    let masterName = cleanName;
+    if (globalMatch && organizationId) {
+      masterCode = `${finalCode}-${organizationId.slice(-4).toUpperCase()}`;
+      masterName = `${cleanName} (${organizationId.slice(-4).toUpperCase()})`;
     }
 
     const leaveType = await prisma.leaveType.create({
       data: {
-        name: name.trim(),
-        code: finalCode,
+        name: globalMatch ? masterName : cleanName,
+        code: globalMatch ? masterCode : finalCode,
         description: description || null,
         color: color || '#3B82F6',
         icon: icon || 'Calendar',
-        displayOrder: displayOrder ? parseInt(displayOrder, 10) : 0,
+        displayOrder: displayOrder ? parseInt(displayOrder, 10) : companyTypes.length + 1,
         isPaid: isPaid !== undefined ? isPaid : true,
         annualDays: annualDays !== undefined ? parseFloat(annualDays) : 12.0,
         monthlyCreditDays: monthlyCreditDays !== undefined ? parseFloat(monthlyCreditDays) : 1.0,
@@ -158,9 +219,14 @@ const createLeaveType = async (req, res) => {
       }
     });
 
-    // Initialize UserLeaveBalance for all existing users
-    const allUsers = await prisma.user.findMany({ select: { id: true } });
-    for (const u of allUsers) {
+    if (organizationId) {
+      addLeaveTypeToCompany(organizationId, leaveType.id);
+    }
+
+    // Initialize UserLeaveBalance for users in this company
+    const userWhere = organizationId ? { organizationId } : {};
+    const companyUsers = await prisma.user.findMany({ where: userWhere, select: { id: true } });
+    for (const u of companyUsers) {
       await prisma.userLeaveBalance.upsert({
         where: {
           userId_leaveTypeId: {
@@ -186,12 +252,16 @@ const createLeaveType = async (req, res) => {
     await logActivity({
       userId: req.user.id,
       action: 'LEAVE_TYPE_CREATED',
-      details: `Created leave type ${leaveType.name} (${leaveType.code}) with annual allowance ${leaveType.annualDays} days.`
+      details: `Created leave type ${cleanName} (${finalCode}) with annual allowance ${leaveType.annualDays} days.`
     });
 
     res.status(201).json({
-      message: `Leave type ${leaveType.name} created successfully.`,
-      leaveType
+      message: `Leave type ${cleanName} created successfully.`,
+      leaveType: {
+        ...leaveType,
+        name: cleanName,
+        code: finalCode
+      }
     });
   } catch (error) {
     console.error('Create leave type error:', error);
@@ -321,6 +391,9 @@ const deleteLeaveType = async (req, res) => {
 const getUserLeaveBalances = async (req, res) => {
   try {
     const targetUserId = req.params.userId || req.user.id;
+    const { organizationId } = req.query;
+
+    const userWhere = organizationId ? { user: { organizationId } } : {};
 
     // Ensure all active LeaveTypes have a balance row for this user
     const activeLeaveTypes = await prisma.leaveType.findMany({ where: { isActive: true } });
@@ -348,7 +421,10 @@ const getUserLeaveBalances = async (req, res) => {
     }
 
     const balances = await prisma.userLeaveBalance.findMany({
-      where: { userId: targetUserId },
+      where: {
+        userId: targetUserId,
+        ...userWhere
+      },
       include: {
         leaveType: true
       },
@@ -411,13 +487,19 @@ const adjustUserLeaveBalance = async (req, res) => {
   }
 };
 
-// 9. Execute Annual Reset
+// 9. Execute Annual Reset (Company-scoped)
 const executeAnnualReset = async (req, res) => {
   try {
-    const policy = await prisma.leavePolicy.findFirst({ where: { isGlobal: true } });
+    const { organizationId } = req.body;
+    const orgId = organizationId || req.query.organizationId;
+
+    const policy = orgId ? getCompanyLeavePolicy(orgId) : await prisma.leavePolicy.findFirst({ where: { isGlobal: true } });
     const maxCF = policy?.maxCarryForwardDays || 5.0;
 
+    const balanceWhere = orgId ? { user: { organizationId: orgId } } : {};
+
     const allBalances = await prisma.userLeaveBalance.findMany({
+      where: balanceWhere,
       include: { leaveType: true }
     });
 
@@ -453,7 +535,7 @@ const executeAnnualReset = async (req, res) => {
     await logActivity({
       userId: req.user.id,
       action: 'ANNUAL_LEAVE_RESET',
-      details: `Executed annual leave balance reset across ${resetCount} balance records.`
+      details: `Executed annual leave balance reset across ${resetCount} balance records${orgId ? ` for company "${orgId}"` : ''}.`
     });
 
     res.json({

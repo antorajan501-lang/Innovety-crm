@@ -1,6 +1,7 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
+const { getOrganizationWhere } = require('../utils/organizationScope');
 
 // Helper to calculate working days count between 2 dates (inclusive)
 const calculateTotalDays = (startDate, endDate) => {
@@ -56,6 +57,9 @@ const getLeaves = async (req, res) => {
     } else {
       baseWhere = { userId };
     }
+
+    const { getUserRelationWhere } = require('../utils/organizationScope');
+    baseWhere = getUserRelationWhere(req, baseWhere);
 
     const andConditions = [];
 
@@ -395,6 +399,7 @@ const applyLeave = async (req, res) => {
     const leave = await prisma.leaveRequest.create({
       data: {
         userId,
+        organizationId: req.user?.organizationId || null,
         startDate: start,
         endDate: end,
         totalDays,

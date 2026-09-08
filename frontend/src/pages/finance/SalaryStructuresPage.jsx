@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import UserAvatar from '../../components/common/UserAvatar';
+import CompanyScopeSelector from '../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../context/CompanyScopeContext';
 import {
   Users,
   Edit2,
@@ -43,8 +45,12 @@ const DEPARTMENTS = [
 
 export default function SalaryStructuresPage() {
   const { user: currentUser } = useAuth();
-  const isAdmin = currentUser?.role === 'ADMIN';
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || currentUser?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
+  const isAdmin = currentUser?.role === 'ADMIN';
   const isTL = currentUser?.role === 'TEAM_LEADER';
   const isEmployee = currentUser?.role === 'EMPLOYEE' || currentUser?.role === 'INTERN';
 
@@ -92,16 +98,14 @@ export default function SalaryStructuresPage() {
   const [submitting, setSubmitting] = useState(false);
   const [notification, setNotification] = useState(null);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     try {
       setLoading(true);
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg } : {};
       const [empRes, tmplRes] = await Promise.all([
-        api.get('/payroll/salary-structures/all'),
-        api.get('/payroll/templates')
+        api.get('/payroll/salary-structures/all', { params }),
+        api.get('/payroll/templates', { params })
       ]);
       const empData = Array.isArray(empRes.data) ? empRes.data : [];
       const tmplData = Array.isArray(tmplRes.data) ? tmplRes.data : [];
@@ -115,6 +119,14 @@ export default function SalaryStructuresPage() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setEmployees([]);
+    setTemplates([]);
+    if (orgsLoading) return;
+    fetchData();
+  }, [currentUser, targetOrg, currentUser?.organizationId, orgsLoading]);
 
   const showToast = (message, type = 'success') => {
     setNotification({ message, type });
@@ -372,6 +384,9 @@ export default function SalaryStructuresPage() {
 
   return (
     <div className="space-y-6 text-left font-sans w-full max-w-7xl mx-auto">
+      {/* Company Scope Selector */}
+      <CompanyScopeSelector />
+
       {/* Toast Notification */}
       {notification && (
         <div

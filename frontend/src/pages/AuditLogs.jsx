@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
 import {
   History,
@@ -7,8 +7,17 @@ import {
   RefreshCw,
   Terminal
 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 
 const AuditLogs = () => {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
   const [logs, setLogs] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -19,26 +28,32 @@ const AuditLogs = () => {
   const fetchLogs = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/logs', {
-        params: {
-          page,
-          action: actionFilter,
-          search,
-          limit: 25
-        }
-      });
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = {
+        page,
+        action: actionFilter,
+        search,
+        limit: 25
+      };
+      if (activeOrg) params.organizationId = activeOrg;
+
+      const res = await api.get('/logs', { params });
       setLogs(res.data.logs || []);
       setTotalCount(res.data.meta?.totalCount || 0);
-      setLoading(false);
     } catch (e) {
-      console.error(e);
+      console.error('Failed to fetch audit logs:', e);
+    } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setLogs([]);
+    setPage(1);
+    if (orgsLoading) return;
     fetchLogs();
-  }, [page, actionFilter]);
+  }, [user, targetOrg, user?.organizationId, page, actionFilter, orgsLoading]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -47,15 +62,18 @@ const AuditLogs = () => {
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
+    <div className="space-y-6 text-left font-sans w-full max-w-7xl mx-auto animate-in fade-in duration-300">
+      {/* Company Scope Selector */}
+      <CompanyScopeSelector />
+
       {/* Control bar */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-card p-4 rounded-2xl border border-border/40 shadow-premium">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between bg-card p-4 rounded-2xl border border-border/40 shadow-sm">
         <form onSubmit={handleSearchSubmit} className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
           <input
             type="text"
             placeholder="Search logs by IP, details, user..."
-            className="w-full pl-9 bg-muted/40 focus:bg-card text-xs"
+            className="w-full pl-9 bg-muted/40 focus:bg-card text-xs border border-border/40 rounded-xl p-2.5"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -68,7 +86,7 @@ const AuditLogs = () => {
               setActionFilter(e.target.value);
               setPage(1);
             }} 
-            className="bg-muted/40 text-xs"
+            className="bg-muted/40 text-xs border border-border/40 rounded-xl p-2.5 font-semibold"
           >
             <option value="">All Audit Actions</option>
             <option value="LOGIN">Logins</option>
@@ -78,81 +96,59 @@ const AuditLogs = () => {
             <option value="TASK_STATUS_UPDATE">Task Updates</option>
             <option value="USER_CREATE">User Onboarding</option>
             <option value="USER_DELETE">User Deletions</option>
+            <option value="PAYROLL_PUBLISH">Payroll Published</option>
+            <option value="PAYROLL_SETTINGS_UPDATE">Payroll Settings Update</option>
           </select>
 
-          <button onClick={fetchLogs} className="rounded-lg p-2 border hover:bg-muted text-muted-foreground">
+          <button onClick={fetchLogs} className="rounded-xl p-2.5 border border-border/40 hover:bg-muted text-muted-foreground shadow-sm">
             <RefreshCw className="h-4 w-4" />
           </button>
         </div>
       </div>
 
       {/* Audit Log Table */}
-      <div className="w-full min-w-0 overflow-x-auto rounded-2xl border border-border/40 bg-card shadow-premium">
-        <table className="w-full min-w-[900px] text-sm border-collapse text-left">
-          <thead>
-            <tr className="text-xs font-semibold text-muted-foreground uppercase border-b border-border/30 bg-muted/20 whitespace-nowrap">
-              <th className="px-6 py-4 whitespace-nowrap">Operator</th>
-              <th className="px-6 py-4 whitespace-nowrap">Action Type</th>
-              <th className="px-6 py-4 whitespace-nowrap">Audit Details</th>
-              <th className="px-6 py-4 whitespace-nowrap">IP Address</th>
-              <th className="px-6 py-4 text-right whitespace-nowrap">Timestamp</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/20 font-mono text-xs">
-            {logs.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-6 py-10 text-center text-muted-foreground font-sans whitespace-nowrap">
-                  No audit log entries recorded.
-                </td>
+      {loading ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">Loading audit logs for {selectedCompany?.name || 'company'}...</p>
+      ) : logs.length === 0 ? (
+        <div className="rounded-2xl border border-border/40 bg-card p-12 text-center text-muted-foreground font-semibold text-xs">
+          No audit logs found for {selectedCompany?.name || 'this company'}.
+        </div>
+      ) : (
+        <div className="w-full min-w-0 overflow-x-auto rounded-2xl border border-border/40 bg-card shadow-sm">
+          <table className="w-full min-w-[900px] text-xs border-collapse text-left">
+            <thead>
+              <tr className="font-semibold text-muted-foreground uppercase border-b border-border/30 bg-muted/20 whitespace-nowrap">
+                <th className="px-6 py-4 whitespace-nowrap">Operator</th>
+                <th className="px-6 py-4 whitespace-nowrap">Action Type</th>
+                <th className="px-6 py-4 whitespace-nowrap">Audit Details</th>
+                <th className="px-6 py-4 whitespace-nowrap">IP Address</th>
+                <th className="px-6 py-4 text-right whitespace-nowrap">Timestamp</th>
               </tr>
-            ) : (
-              logs.map((log) => (
-                <tr key={log.id} className="hover:bg-muted/10 transition-all whitespace-nowrap">
-                  <td className="px-6 py-4 font-sans whitespace-nowrap">
-                    <div className="text-left">
-                      <p className="font-semibold text-xs text-foreground">{log.user?.name}</p>
-                      <p className="text-[10px] text-muted-foreground font-mono">{log.user?.employeeId} ({log.user?.role?.toLowerCase()})</p>
-                    </div>
+            </thead>
+            <tbody className="divide-y divide-border/30">
+              {logs.map((log) => (
+                <tr key={log.id} className="hover:bg-muted/10">
+                  <td className="px-6 py-4 font-bold text-foreground">
+                    {log.user ? `${log.user.name} (${log.user.role})` : 'System'}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="inline-flex rounded-full bg-primary/10 text-primary-hover px-2.5 py-0.5 text-[9px] font-bold uppercase">
-                      {log.action}
-                    </span>
+                  <td className="px-6 py-4 font-semibold text-primary">
+                    {log.action}
                   </td>
-                  <td className="px-6 py-4 font-sans text-xs text-muted-foreground max-w-sm truncate whitespace-nowrap" title={log.details}>
+                  <td className="px-6 py-4 text-muted-foreground max-w-md truncate" title={log.details}>
                     {log.details}
                   </td>
-                  <td className="px-6 py-4 font-mono text-muted-foreground whitespace-nowrap">{log.ipAddress || 'Internal'}</td>
-                  <td className="px-6 py-4 text-right text-muted-foreground whitespace-nowrap">
+                  <td className="px-6 py-4 font-mono text-muted-foreground">
+                    {log.ipAddress || 'N/A'}
+                  </td>
+                  <td className="px-6 py-4 text-right font-semibold text-muted-foreground whitespace-nowrap">
                     {new Date(log.createdAt).toLocaleString()}
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination */}
-      <div className="flex justify-between items-center px-2">
-        <span className="text-xs text-muted-foreground">Total Logs: {totalCount}</span>
-        <div className="flex gap-2">
-          <button 
-            disabled={page === 1}
-            onClick={() => setPage(page - 1)}
-            className="px-3 py-1 bg-card border rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-muted"
-          >
-            Prev
-          </button>
-          <button 
-            disabled={logs.length < 25}
-            onClick={() => setPage(page + 1)}
-            className="px-3 py-1 bg-card border rounded-lg text-xs font-semibold disabled:opacity-50 hover:bg-muted"
-          >
-            Next
-          </button>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </div>
+      )}
     </div>
   );
 };

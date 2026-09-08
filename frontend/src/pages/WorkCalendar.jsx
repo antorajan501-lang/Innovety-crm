@@ -20,6 +20,8 @@ import {
 } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 
 // Helper component for smooth horizontal scrolling text when title overflows cell width
 const AutoMarqueeText = ({ text, className = '' }) => {
@@ -140,24 +142,43 @@ const WorkCalendar = () => {
 
   const monthName = currentDate.toLocaleString('default', { month: 'long' });
 
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, companies } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+  }, [targetOrg]);
+
   // Fetch Monthly Calendar Data
-  const fetchCalendar = async () => {
+  const fetchCalendar = async (targetOrgOverride) => {
     try {
       setLoading(true);
       setErrorMsg('');
-      const res = await api.get(`/work-calendar?month=${month}&year=${year}`);
+      const activeOrg = targetOrgOverride !== undefined ? targetOrgOverride : (selectedOrgIdRef.current || targetOrg);
+
+      // Do not attempt to fetch before company scope is resolved if companies exist
+      if (orgsLoading) return;
+
+      const params = new URLSearchParams({ month, year });
+      if (activeOrg) params.append('organizationId', activeOrg);
+
+      const res = await api.get(`/work-calendar?${params.toString()}`);
       setCalendarDays(res.data.days || []);
     } catch (err) {
-      console.error('Failed to load work calendar:', err);
-      setErrorMsg(err.response?.data?.message || 'Failed to load work calendar data.');
+      console.error('[WorkCalendar] Failed to load work calendar:', err);
+      setErrorMsg(err.response?.data?.message || 'Failed to fetch work calendar data.');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchCalendar();
-  }, [month, year]);
+    if (orgsLoading) return;
+    if (companies && companies.length > 0 && !selectedOrgId) return;
+    setCalendarDays([]);
+    fetchCalendar(selectedOrgId);
+  }, [month, year, selectedOrgId, orgsLoading, companies]);
 
   const handlePrevMonth = () => {
     setCurrentDate(new Date(year, month - 2, 1));
@@ -219,7 +240,8 @@ const WorkCalendar = () => {
         status: editForm.status,
         title: cleanTitle || null,
         reason: cleanReason || null,
-        isPermanent: editForm.status === 'HOLIDAY' ? editForm.isPermanent : false
+        isPermanent: editForm.status === 'HOLIDAY' ? editForm.isPermanent : false,
+        organizationId: selectedOrgIdRef.current || selectedOrgId
       };
 
       await api.post('/work-calendar', payload);
@@ -284,6 +306,8 @@ const WorkCalendar = () => {
       animate={{ opacity: 1, y: 0 }}
       className="p-4 md:p-8 max-w-7xl mx-auto space-y-6"
     >
+      <CompanyScopeSelector />
+
       {/* Header Section */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-border/40 pb-5">
         <div>
@@ -335,9 +359,17 @@ const WorkCalendar = () => {
             <ShieldAlert className="w-5 h-5 shrink-0" />
             <span>{errorMsg}</span>
           </div>
-          <button onClick={() => setErrorMsg('')} className="p-1 hover:bg-danger/20 rounded-md">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => fetchCalendar()}
+              className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-danger/20 hover:bg-danger/30 text-danger transition-colors"
+            >
+              Retry
+            </button>
+            <button onClick={() => setErrorMsg('')} className="p-1 hover:bg-danger/20 rounded-md">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 

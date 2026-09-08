@@ -1,5 +1,6 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getOrganizationWhere } = require('../utils/organizationScope');
 const { syncAllTeamProjectChats } = require('../services/projectChatService');
 const { broadcastTeamPerformanceUpdate } = require('../socket');
 
@@ -11,7 +12,9 @@ const createTeam = async (req, res) => {
       return res.status(400).json({ message: 'Team name is required.' });
     }
 
-    const existingTeam = await prisma.team.findUnique({ where: { name } });
+    const existingTeam = await prisma.team.findFirst({
+      where: getOrganizationWhere(req, { name })
+    });
     if (existingTeam) {
       return res.status(400).json({ message: 'Team name already exists.' });
     }
@@ -20,6 +23,7 @@ const createTeam = async (req, res) => {
       data: {
         name,
         description,
+        organizationId: req.user?.organizationId || null,
         ...(leaderId && { leaderId })
       },
       include: { leader: true }
@@ -44,7 +48,7 @@ const createTeam = async (req, res) => {
 
 const getAllTeams = async (req, res) => {
   try {
-    const where = {};
+    let where = {};
     if (req.user.role === 'TEAM_LEADER') {
       where.OR = [
         { leaderId: req.user.id },
@@ -54,8 +58,10 @@ const getAllTeams = async (req, res) => {
       where.members = { some: { userId: req.user.id } };
     }
 
+    const orgWhere = getOrganizationWhere(req, where);
+
     const teams = await prisma.team.findMany({
-      where,
+      where: orgWhere,
       include: {
         leader: {
           select: { id: true, name: true, email: true, employeeId: true }

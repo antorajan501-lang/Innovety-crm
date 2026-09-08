@@ -30,9 +30,11 @@ import {
   X,
   AlertCircle,
   Sparkles,
-  GripVertical
+  GripVertical,
+  Building2
 } from 'lucide-react';
 import UserAvatar from '../components/common/UserAvatar';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import {
   ProjectCard,
   ProjectStatusBadge,
@@ -47,10 +49,24 @@ import {
 import ConfirmModal from '../components/ConfirmModal';
 import { getProjectStageProgress } from '../utils/projectProgress';
 
+import { useCompanyScope } from '../context/CompanyScopeContext';
+
+const extractCompanyList = (responseData) => {
+  if (Array.isArray(responseData)) return responseData;
+  if (Array.isArray(responseData?.data)) return responseData.data;
+  if (Array.isArray(responseData?.organizations)) return responseData.organizations;
+  if (Array.isArray(responseData?.companies)) return responseData.companies;
+  return [];
+};
+
 const Projects = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, companies: scopeCompanies } = useCompanyScope();
   const navigate = useNavigate();
   const location = useLocation();
+
+  const safeCompanies = Array.isArray(scopeCompanies) ? scopeCompanies : [];
 
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState([]);
@@ -69,6 +85,7 @@ const Projects = () => {
   const [activeTab, setActiveTab] = useState('ALL');
   const urlSearch = new URLSearchParams(location.search).get('search') || '';
   const [searchQuery, setSearchQuery] = useState(urlSearch);
+  const [alertMsg, setAlertMsg] = useState('');
 
   useEffect(() => {
     const sParam = new URLSearchParams(location.search).get('search') || '';
@@ -98,6 +115,43 @@ const Projects = () => {
     status: 'PENDING'
   });
 
+  const fetchProjects = async (orgId = effectiveOrgId) => {
+    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
+    try {
+      setLoading(true);
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get('/projects', { params });
+      setProjects(res.data.projects || []);
+      setMetrics(res.data.metrics || {});
+    } catch (err) {
+      console.error('Failed to fetch projects:', err);
+      setAlertMsg('Failed to load projects.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchUsersAndTeams = async (orgId = effectiveOrgId) => {
+    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
+    try {
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const userRes = await api.get('/users', { params: { ...params, limit: 1000, status: 'ACTIVE' } });
+      const usersList = userRes.data.users || [];
+      setAllUsers(usersList);
+      setTeamLeaders(usersList.filter(u => u.role === 'ADMIN' || u.role === 'TEAM_LEADER'));
+
+      const teamRes = await api.get('/teams', { params });
+      setTeams(teamRes.data || []);
+    } catch (err) {
+      console.error('Failed to fetch dropdown data:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchProjects(effectiveOrgId);
+    fetchUsersAndTeams(effectiveOrgId);
+  }, [effectiveOrgId, user?.organizationId]);
+
   // Form State
   const [wizardStep, setWizardStep] = useState(1);
   const [wizardSubmitAttempted, setWizardSubmitAttempted] = useState(false);
@@ -125,40 +179,6 @@ const Projects = () => {
 
   const [fileUpload, setFileUpload] = useState(null);
   const [uploadingDoc, setUploadingDoc] = useState(false);
-  const [alertMsg, setAlertMsg] = useState('');
-
-  const fetchProjects = async () => {
-    try {
-      setLoading(true);
-      const res = await api.get('/projects');
-      setProjects(res.data.projects || []);
-      setMetrics(res.data.metrics || {});
-      setLoading(false);
-    } catch (err) {
-      console.error('Failed to fetch projects:', err);
-      setAlertMsg('Failed to load projects.');
-      setLoading(false);
-    }
-  };
-
-  const fetchUsersAndTeams = async () => {
-    try {
-      const userRes = await api.get('/users?limit=1000&status=ACTIVE');
-      const usersList = userRes.data.users || [];
-      setAllUsers(usersList);
-      setTeamLeaders(usersList.filter(u => u.role === 'ADMIN' || u.role === 'TEAM_LEADER'));
-
-      const teamRes = await api.get('/teams');
-      setTeams(teamRes.data || []);
-    } catch (err) {
-      console.error('Failed to fetch dropdown data:', err);
-    }
-  };
-
-  useEffect(() => {
-    fetchProjects();
-    fetchUsersAndTeams();
-  }, []);
 
   const handleTeamSelect = (newTeamId) => {
     if (newTeamId === formData.teamId) {
@@ -367,10 +387,13 @@ const Projects = () => {
     }
 
     try {
-      const res = await api.post('/projects', formData);
+      const res = await api.post('/projects', {
+        ...formData,
+        organizationId: selectedOrgId
+      });
       setAlertMsg(`Project "${res.data.project.name}" (${res.data.project.projectCode}) created successfully.`);
       setCreateModalOpen(false);
-      fetchProjects();
+      fetchProjects(selectedOrgId);
     } catch (err) {
       setAlertMsg(err.response?.data?.message || 'Failed to create project.');
     }
@@ -530,6 +553,7 @@ const Projects = () => {
   const filteredProjects = projects.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           p.projectCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          (p.leader?.name && p.leader.name.toLowerCase().includes(searchQuery.toLowerCase())) ||
                           (p.description && p.description.toLowerCase().includes(searchQuery.toLowerCase()));
 
     if (!matchesSearch) return false;
@@ -546,6 +570,8 @@ const Projects = () => {
 
     return true;
   });
+
+  const currentCompany = safeCompanies.find((c) => c.id === selectedOrgId);
 
   return (
     <div className="flex-1 flex flex-col space-y-6 text-left">
@@ -566,7 +592,7 @@ const Projects = () => {
             <FolderOpen className="w-7 h-7 text-primary" /> Enterprise Projects
           </h1>
           <p className="text-xs text-muted-foreground mt-1 font-medium">
-            Manage project lifecycles, 1:1 project chat groups, milestones, and Kanban workflows.
+            Manage project lifecycles, 1:1 project chat groups, milestones, and Kanban workflows for {currentCompany?.name || 'selected company'}.
           </p>
         </div>
 
@@ -576,14 +602,14 @@ const Projects = () => {
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Search by code or title..."
+              placeholder="Search by code, title, or lead..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
               className="w-full pl-9 pr-4 py-2.5 rounded-xl bg-card border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 shadow-xs"
             />
           </div>
 
-          {(user?.role === 'ADMIN' || user?.role === 'TEAM_LEADER') && (
+          {(user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN' || user?.role === 'TEAM_LEADER') && (
             <button
               onClick={openCreateModal}
               className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white font-bold text-xs shadow-md shadow-primary/20 hover:scale-[1.01] active:scale-[0.99] transition-all cursor-pointer whitespace-nowrap shrink-0"
@@ -593,6 +619,12 @@ const Projects = () => {
           )}
         </div>
       </div>
+
+      {/* Shared Company Selector Bar */}
+      <CompanyScopeSelector onScopeChange={(newId) => {
+        fetchProjects(newId);
+        fetchUsersAndTeams(newId);
+      }} />
 
       {/* Metric Cards Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
@@ -695,8 +727,15 @@ const Projects = () => {
                   <Sparkles className="w-5 h-5" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black tracking-tight text-foreground">Project & Workflow Setup Wizard</h2>
-                  <p className="text-xs text-muted-foreground">Step {wizardStep} of 5 — {
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-black tracking-tight text-foreground">Project & Workflow Setup Wizard</h2>
+                    {isSuperAdmin && (
+                      <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                        Company: {safeCompanies.find((c) => c.id === selectedOrgId)?.name || 'Selected Company'}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">Step {wizardStep} of 5 — {
                     wizardStep === 1 ? 'Basic Info' :
                     wizardStep === 2 ? 'Team Members' :
                     wizardStep === 3 ? 'Workflow Stages' :

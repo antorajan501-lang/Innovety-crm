@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { addDepartmentToCompany, filterDepartmentsForCompany, getCompanyDepartmentIds } = require('../utils/companyDepartmentStore');
 
 /**
  * GET /api/organization/tree
@@ -8,6 +9,9 @@ const prisma = new PrismaClient();
 const getOrganizationTree = async (req, res) => {
   try {
     const { targetRole, branchId, departmentId } = req.query;
+    const organizationId = req.query.organizationId || req.user?.organizationId;
+
+    const positionWhere = { status: 'ACTIVE', ...(organizationId ? { organizationId } : {}) };
 
     const [branches, departments, designations, positions, shifts, employmentTypes, unassignedUsers] = await Promise.all([
       prisma.orgBranch.findMany({ where: { status: 'ACTIVE' }, orderBy: { name: 'asc' } }),
@@ -26,7 +30,7 @@ const getOrganizationTree = async (req, res) => {
         }
       }),
       prisma.designationMaster.findMany({ where: { status: 'ACTIVE' }, include: { department: true, _count: { select: { users: true } } }, orderBy: { name: 'asc' } }),
-      prisma.position.findMany({ where: { status: 'ACTIVE' }, orderBy: { level: 'asc' } }),
+      prisma.position.findMany({ where: positionWhere, orderBy: { level: 'asc' } }),
       prisma.shiftMaster.findMany({ where: { status: 'ACTIVE' }, orderBy: { name: 'asc' } }),
       prisma.employmentTypeMaster.findMany({ where: { status: 'ACTIVE' }, orderBy: { name: 'asc' } }),
       prisma.user.findMany({
@@ -97,6 +101,9 @@ const updateBranch = async (req, res) => res.status(400).json({ message: 'Branch
 // Department CRUD
 const getDepartments = async (req, res) => {
   try {
+    const { organizationId } = req.query;
+    const whereUsers = organizationId ? { organizationId } : {};
+
     const depts = await prisma.departmentMaster.findMany({
       where: {
         NOT: [
@@ -105,9 +112,19 @@ const getDepartments = async (req, res) => {
         ]
       },
       orderBy: { name: 'asc' },
-      include: { _count: { select: { users: true } } }
+      include: {
+        _count: {
+          select: {
+            users: {
+              where: whereUsers
+            }
+          }
+        }
+      }
     });
-    res.json(depts);
+
+    const companyDepts = filterDepartmentsForCompany(depts, organizationId);
+    res.json(companyDepts);
   } catch (err) {
     res.status(500).json({ message: 'Failed to fetch departments.' });
   }
@@ -115,8 +132,38 @@ const getDepartments = async (req, res) => {
 
 const createDepartment = async (req, res) => {
   try {
-    const { name, code, memberUserIds } = req.body;
+    const { name, code, description, status, organizationId, memberUserIds } = req.body;
     if (!name || !code) return res.status(400).json({ message: 'Name and Code are required.' });
+
+    const cleanName = String(name).trim();
+    const cleanCode = String(code).trim().toUpperCase();
+
+    // Per-company uniqueness check
+    const existingDepts = await prisma.departmentMaster.findMany({
+      where: {
+        OR: [
+          { name: { equals: cleanName, mode: 'insensitive' } },
+          { code: { equals: cleanCode, mode: 'insensitive' } }
+        ]
+      }
+    });
+
+    if (organizationId) {
+      const companyDeptIds = getCompanyDepartmentIds(organizationId) || [];
+      const duplicateName = existingDepts.find(
+        (d) => d.name.toLowerCase() === cleanName.toLowerCase() && companyDeptIds.includes(d.id)
+      );
+      if (duplicateName) {
+        return res.status(400).json({ message: `Department name "${cleanName}" already exists for this company.` });
+      }
+
+      const duplicateCode = existingDepts.find(
+        (d) => d.code.toUpperCase() === cleanCode.toUpperCase() && companyDeptIds.includes(d.id)
+      );
+      if (duplicateCode) {
+        return res.status(400).json({ message: `Department code "${cleanCode}" already exists for this company.` });
+      }
+    }
 
     // Backend Validation: Only reject if user is assigned to an existing active valid department
     if (Array.isArray(memberUserIds) && memberUserIds.length > 0) {
@@ -138,7 +185,30 @@ const createDepartment = async (req, res) => {
       }
     }
 
-    const dept = await prisma.departmentMaster.create({ data: { name, code } });
+    let uniqueCode = cleanCode;
+    let uniqueName = cleanName;
+    const globalCodeMatch = existingDepts.find(d => d.code.toUpperCase() === cleanCode);
+    const globalNameMatch = existingDepts.find(d => d.name.toLowerCase() === cleanName.toLowerCase());
+
+    if (globalCodeMatch && organizationId) {
+      uniqueCode = `${cleanCode}-${organizationId.slice(-4).toUpperCase()}`;
+    }
+    if (globalNameMatch && organizationId) {
+      uniqueName = `${cleanName} (${organizationId.slice(-4).toUpperCase()})`;
+    }
+
+    const dept = await prisma.departmentMaster.create({
+      data: {
+        name: globalNameMatch ? uniqueName : cleanName,
+        code: globalCodeMatch ? uniqueCode : cleanCode,
+        description: description || null,
+        status: status || 'ACTIVE'
+      }
+    });
+
+    if (organizationId) {
+      addDepartmentToCompany(organizationId, dept.id);
+    }
 
     if (Array.isArray(memberUserIds) && memberUserIds.length > 0) {
       await prisma.user.updateMany({
@@ -147,20 +217,24 @@ const createDepartment = async (req, res) => {
       });
     }
 
-    res.status(201).json(dept);
+    res.status(201).json({
+      ...dept,
+      displayName: cleanName,
+      displayCode: cleanCode
+    });
   } catch (err) {
     if (err.code === 'P2002') {
       const target = err.meta?.target;
       if (Array.isArray(target) && target.includes('name')) {
-        return res.status(400).json({ message: 'Department name already exists.' });
+        return res.status(400).json({ message: 'Department name already exists for this company.' });
       }
       if (typeof target === 'string' && target.includes('name')) {
-        return res.status(400).json({ message: 'Department name already exists.' });
+        return res.status(400).json({ message: 'Department name already exists for this company.' });
       }
       if (Array.isArray(target) && target.includes('code')) {
-        return res.status(400).json({ message: 'Department code already exists.' });
+        return res.status(400).json({ message: 'Department code already exists for this company.' });
       }
-      return res.status(400).json({ message: 'Department name already exists.' });
+      return res.status(400).json({ message: 'Department name already exists for this company.' });
     }
     console.error(err);
     res.status(500).json({ message: 'Unable to create department. Please try again.' });
@@ -213,10 +287,15 @@ const deleteDepartment = async (req, res) => {
 const getDepartmentMembers = async (req, res) => {
   try {
     const { id } = req.params;
+    const { organizationId } = req.query;
+
+    const userOrgWhere = organizationId ? { organizationId } : {};
+
     const dept = await prisma.departmentMaster.findUnique({
       where: { id },
       include: {
         users: {
+          where: userOrgWhere,
           select: {
             id: true, name: true, email: true, employeeId: true, role: true, profilePic: true,
             position: { select: { id: true, name: true, color: true } }
@@ -227,10 +306,11 @@ const getDepartmentMembers = async (req, res) => {
     });
     if (!dept) return res.status(404).json({ message: 'Department not found.' });
 
-    // Return unassigned users (departmentId === null or department === null or invalid ref)
+    // Return unassigned users scoped to company (if specified)
     const availableUsers = await prisma.user.findMany({
       where: {
         status: 'ACTIVE',
+        ...(organizationId ? { organizationId } : {}),
         OR: [
           { departmentId: null },
           { department: null },

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../services/api';
 import {
   BarChart3,
@@ -9,7 +9,17 @@ import {
   AlertCircle
 } from 'lucide-react';
 
+import { useAuth } from '../context/AuthContext';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
+
 const Reports = () => {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
   const [reportType, setReportType] = useState('attendance');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -26,26 +36,36 @@ const Reports = () => {
     setPreviewData([]);
 
     try {
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
       const params = {};
+      if (activeOrg) params.organizationId = activeOrg;
       if (start) params.startDate = start;
       if (end) params.endDate = end;
       if (statusFilter) params.status = statusFilter;
       if (priorityFilter) params.priority = priorityFilter;
 
-      const res = await api.get(`/reports/${type}`, { params });
-      setPreviewData(res.data || []);
+      let endpoint = '/reports/attendance';
+      if (type === 'tasks') endpoint = '/reports/tasks';
+      if (type === 'projects') endpoint = '/reports/projects';
+      if (type === 'performance') endpoint = '/reports/performance';
+
+      const res = await api.get(endpoint, { params });
+      setPreviewData(Array.isArray(res.data) ? res.data : (res.data?.data || []));
       setLoading(false);
     } catch (err) {
       console.error(err);
-      setAlertMsg('Failed to generate report query preview.');
+      setAlertMsg('Failed to generate report data.');
       setLoading(false);
     }
-  }, [reportType, startDate, endDate, statusFilter, priorityFilter]);
+  }, [reportType, startDate, endDate, statusFilter, priorityFilter, targetOrg]);
 
-  // Auto-fetch data on initial load and whenever Report Category changes
+  // Auto-fetch data when company scope or report category changes
   useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setPreviewData([]);
+    if (orgsLoading) return;
     fetchReport(reportType, startDate, endDate);
-  }, [reportType]);
+  }, [user, targetOrg, user?.organizationId, reportType, orgsLoading]);
 
   const handleGenerateReport = (e) => {
     e.preventDefault();
@@ -54,10 +74,14 @@ const Reports = () => {
 
   const handleDownloadCsv = () => {
     if (previewData.length === 0) return;
-    
-    // Construct query parameter to fetch raw CSV string directly
+
+    const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+    const companyName = selectedCompany?.name || 'Company';
+    const cleanCompanyName = companyName.replace(/[^a-zA-Z0-9]/g, '_');
+
     const params = new URLSearchParams();
     params.append('format', 'csv');
+    if (targetOrg) params.append('organizationId', targetOrg);
     if (startDate) params.append('startDate', startDate);
     if (endDate) params.append('endDate', endDate);
     if (statusFilter) params.append('status', statusFilter);
@@ -67,7 +91,6 @@ const Reports = () => {
     const baseUrl = api.defaults.baseURL || 'http://localhost:5000/api';
     const downloadUrl = `${baseUrl}/reports/${reportType}?${params.toString()}`;
 
-    // Standard download request with token authorization
     fetch(downloadUrl, {
       headers: {
         Authorization: `Bearer ${token}`
@@ -78,7 +101,7 @@ const Reports = () => {
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.setAttribute('href', url);
-        a.setAttribute('download', `${reportType}_report.csv`);
+        a.setAttribute('download', `${cleanCompanyName}_${reportType}_report.csv`);
         a.click();
       })
       .catch(() => setAlertMsg('Failed to initiate CSV download.'));
@@ -91,6 +114,9 @@ const Reports = () => {
 
   return (
     <div className="flex-1 flex flex-col space-y-6 text-left animate-in fade-in duration-300">
+      {/* Company Scope Selector */}
+      <CompanyScopeSelector />
+
       {alertMsg && (
         <div className="flex items-center justify-between p-4 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-semibold">
           <span>{alertMsg}</span>
@@ -102,28 +128,34 @@ const Reports = () => {
       <div className="rounded-2xl border border-border/40 bg-card p-6 shadow-premium text-left">
         <div className="flex items-center gap-3 border-b border-border/30 pb-3 mb-6">
           <BarChart3 className="h-5 w-5 text-primary animate-pulse" />
-          <h2 className="text-sm font-bold uppercase tracking-tight">Configure Reports Export</h2>
+          <h2 className="text-sm font-bold uppercase tracking-tight">
+            Configure Reports Export ({selectedCompany?.name || 'Selected Scope'})
+          </h2>
         </div>
 
         <form onSubmit={handleGenerateReport} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
           <div className="flex flex-col gap-1.5 text-left">
             <label className="text-xs font-semibold text-muted-foreground">Report Category</label>
-            <select value={reportType} onChange={(e) => setReportType(e.target.value)}>
+            <select value={reportType} onChange={(e) => setReportType(e.target.value)} className="bg-muted/50 border border-border rounded-xl p-2.5 text-xs text-foreground font-semibold">
               <option value="attendance">Attendance Reports</option>
               <option value="tasks">Task Allocation Logs</option>
               <option value="teams">Team Performance Audits</option>
               <option value="tickets">Support Tickets Summaries</option>
+              <option value="leaves">Leave Applications Report</option>
+              <option value="payroll">Payroll Expense Report</option>
+              <option value="assets">Asset Allocation Report</option>
+              <option value="worklogs">Daily Work Logs Report</option>
             </select>
           </div>
 
           <div className="flex flex-col gap-1.5 text-left">
             <label className="text-xs font-semibold text-muted-foreground">Start Date</label>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="bg-muted/50 border border-border rounded-xl p-2.5 text-xs text-foreground font-semibold" />
           </div>
 
           <div className="flex flex-col gap-1.5 text-left">
             <label className="text-xs font-semibold text-muted-foreground">End Date</label>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="bg-muted/50 border border-border rounded-xl p-2.5 text-xs text-foreground font-semibold" />
           </div>
 
           <div className="flex gap-2">
@@ -136,6 +168,7 @@ const Reports = () => {
                 type="button" 
                 onClick={handleDownloadCsv} 
                 className="rounded-xl border border-primary/20 bg-primary/5 py-2.5 px-3 text-xs font-semibold text-primary hover:bg-primary/10 transition-all"
+                title="Download CSV File"
               >
                 <Download className="h-4.5 w-4.5" />
               </button>
@@ -145,11 +178,13 @@ const Reports = () => {
       </div>
 
       {/* Grid preview data table */}
-      {previewData.length > 0 && (
+      {loading ? (
+        <div className="skeleton h-60 w-full" />
+      ) : previewData.length > 0 ? (
         <div className="rounded-2xl border border-border/40 bg-card p-6 shadow-premium text-left space-y-4">
           <div className="flex items-center justify-between border-b border-border/30 pb-2">
             <h3 className="text-xs font-bold uppercase tracking-tight text-foreground/80">
-              Report Data Preview ({previewData.length} records found)
+              Report Data Preview ({previewData.length} records found in {selectedCompany?.name || 'company'})
             </h3>
             <button onClick={handleDownloadCsv} className="flex items-center gap-1.5 text-xs font-bold text-primary hover:underline">
               <Download className="h-4 w-4" />
@@ -180,10 +215,10 @@ const Reports = () => {
             </table>
           </div>
         </div>
-      )}
-
-      {loading && (
-        <div className="skeleton h-60 w-full" />
+      ) : (
+        <div className="rounded-2xl border border-border/40 bg-card p-12 text-center text-muted-foreground font-semibold text-xs">
+          No report data found for {selectedCompany?.name || 'this company'}.
+        </div>
       )}
     </div>
   );

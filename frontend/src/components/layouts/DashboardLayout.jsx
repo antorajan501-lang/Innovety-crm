@@ -49,6 +49,8 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 
 import UserAvatar from '../common/UserAvatar';
+import CompanyWelcomeModal from '../common/CompanyWelcomeModal';
+import { useOrganizationBranding } from '../../context/BrandContext';
 
 // Comprehensive Quick Navigation Module Registry with Partial Keyword Support & Role Security
 const QUICK_NAV_ITEMS = [
@@ -822,6 +824,9 @@ const DashboardLayout = ({ children }) => {
           {children}
         </main>
       </div>
+
+      {/* Company Welcome Onboarding Modal */}
+      <CompanyWelcomeModal />
 
       {/* Toast Alert Popup */}
       {toastMessage && (

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import {
@@ -9,11 +9,19 @@ import {
   CheckCircle,
   Clock,
   User,
-  Wrench
+  Wrench,
+  Trash2
 } from 'lucide-react';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 
 const Tickets = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, companies } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
   const [tickets, setTickets] = useState([]);
   const [availableAssignees, setAvailableAssignees] = useState([]);
   
@@ -41,18 +49,22 @@ const Tickets = () => {
   const fetchTickets = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/tickets');
-      setTickets(res.data);
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg } : {};
+      const res = await api.get('/tickets', { params });
+      setTickets(res.data || []);
       setLoading(false);
     } catch (e) {
-      console.error(e);
+      console.error('[Tickets] Fetch error:', e);
       setLoading(false);
     }
   };
 
   const fetchUserAssets = async () => {
     try {
-      const res = await api.get('/assets');
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg } : {};
+      const res = await api.get('/assets', { params });
       setUserAssets(res.data.assets || []);
     } catch (e) {
       console.error(e);
@@ -61,9 +73,10 @@ const Tickets = () => {
 
   const fetchStaffMembers = async () => {
     try {
-      // Only team leaders are assignable (System Admin cannot be assigned ticket work)
-      const res = await api.get('/users?limit=1000');
-      const staff = (res.data.users || []).filter(u => u.role === 'TEAM_LEADER');
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg, limit: 1000 } : { limit: 1000 };
+      const res = await api.get('/users', { params });
+      const staff = (res.data.users || []).filter(u => ['TEAM_LEADER', 'ADMIN', 'SUPER_ADMIN'].includes(u.role));
       setAvailableAssignees(staff);
     } catch (e) {
       console.error(e);
@@ -71,12 +84,15 @@ const Tickets = () => {
   };
 
   useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setTickets([]);
+    if (orgsLoading) return;
     fetchTickets();
     fetchUserAssets();
-    if (['ADMIN', 'TEAM_LEADER'].includes(user.role)) {
+    if (user && ['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(user.role)) {
       fetchStaffMembers();
     }
-  }, [user]);
+  }, [user, targetOrg, user?.organizationId, orgsLoading]);
 
   const handleInputChange = (e) => {
     setCreateForm({ ...createForm, [e.target.name]: e.target.value });
@@ -86,9 +102,13 @@ const Tickets = () => {
     e.preventDefault();
     try {
       setLoading(true);
-      await api.post('/tickets', createForm);
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      await api.post('/tickets', {
+        ...createForm,
+        organizationId: targetOrg
+      });
       setCreateModalOpen(false);
-      setCreateForm({ title: '', description: '', category: 'TECHNICAL' });
+      setCreateForm({ title: '', description: '', category: 'TECHNICAL', assetId: '' });
       setAlert('Ticket raised successfully.');
       fetchTickets();
     } catch (err) {
@@ -108,22 +128,41 @@ const Tickets = () => {
     e.preventDefault();
     try {
       setLoading(true);
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
       await api.put(`/tickets/${selectedTicket.id}`, {
         status: editStatus,
-        assigneeId: editAssignee || null
+        assigneeId: editAssignee || null,
+        organizationId: targetOrg
       });
       setDetailModalOpen(false);
       setSelectedTicket(null);
       setAlert('Ticket details updated.');
       fetchTickets();
     } catch (err) {
-      setAlert('Failed to update ticket status.');
+      setAlert(err.response?.data?.message || 'Failed to update ticket status.');
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteTicket = async (ticketId) => {
+    if (!window.confirm('Are you sure you want to delete this ticket?')) return;
+    try {
+      setLoading(true);
+      await api.delete(`/tickets/${ticketId}`);
+      setDetailModalOpen(false);
+      setSelectedTicket(null);
+      setAlert('Ticket deleted successfully.');
+      fetchTickets();
+    } catch (err) {
+      setAlert(err.response?.data?.message || 'Failed to delete ticket.');
       setLoading(false);
     }
   };
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <CompanyScopeSelector />
+
       {alert && (
         <div className="flex items-center justify-between p-4 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-semibold">
           <span>{alert}</span>
@@ -289,8 +328,8 @@ const Tickets = () => {
                 <p className="text-xs text-foreground mt-1 bg-muted/40 p-3 rounded-lg border border-border/30 whitespace-pre-wrap">{selectedTicket.description}</p>
               </div>
 
-              {/* Status Update / Assignment Form (For Admins/Leaders) */}
-              {['ADMIN', 'TEAM_LEADER'].includes(user.role) ? (
+              {/* Status Update / Assignment Form (For Admins/Super Admins/Leaders) */}
+              {['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(user?.role) ? (
                 <form onSubmit={handleUpdateTicket} className="border-t border-border/30 pt-3 space-y-4">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-semibold text-muted-foreground">Assign Owner</label>
@@ -313,9 +352,22 @@ const Tickets = () => {
                     </select>
                   </div>
 
-                  <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
-                    Apply Updates
-                  </button>
+                  <div className="flex items-center gap-2 pt-2">
+                    <button type="submit" disabled={loading} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-md hover:bg-primary-hover active:scale-95 disabled:opacity-50">
+                      Apply Updates
+                    </button>
+                    {['ADMIN', 'SUPER_ADMIN'].includes(user?.role) && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTicket(selectedTicket.id)}
+                        disabled={loading}
+                        className="p-2.5 rounded-xl bg-danger/10 text-danger hover:bg-danger/20 border border-danger/20 transition-colors"
+                        title="Delete Ticket"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    )}
+                  </div>
                 </form>
               ) : (
                 <div className="border-t border-border/30 pt-3 grid grid-cols-2 gap-4 text-xs">

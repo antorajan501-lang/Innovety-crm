@@ -1,13 +1,26 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 
-// 1. Get all Salary Templates
+// 1. Get all Salary Templates (Scoped strictly to Organization)
 const getTemplates = async (req, res) => {
   try {
+    const targetOrgId = getEffectiveOrgId(req);
+
+    const where = {};
+    if (targetOrgId) {
+      where.organizationId = targetOrgId;
+    }
+
     const templates = await prisma.salaryTemplate.findMany({
+      where,
       orderBy: { createdAt: 'asc' },
       include: {
-        _count: { select: { structures: true } }
+        _count: {
+          select: {
+            structures: targetOrgId ? { where: { user: { organizationId: targetOrgId } } } : true
+          }
+        }
       }
     });
     res.json(templates);
@@ -17,12 +30,14 @@ const getTemplates = async (req, res) => {
   }
 };
 
-// 2. Create Salary Template (Admin Only)
+// 2. Create Salary Template (Admin & Super Admin Only)
 const createTemplate = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can create salary templates.' });
     }
+
+    const targetOrgId = getEffectiveOrgId(req);
 
     const {
       name, description, targetRole, basicSalary, hra, da,
@@ -34,20 +49,28 @@ const createTemplate = async (req, res) => {
       return res.status(400).json({ message: 'Template name is required.' });
     }
 
-    const existing = await prisma.salaryTemplate.findUnique({ where: { name } });
+    const existing = await prisma.salaryTemplate.findFirst({
+      where: {
+        name,
+        organizationId: targetOrgId
+      }
+    });
     if (existing) {
-      return res.status(400).json({ message: `Template with name "${name}" already exists.` });
+      return res.status(400).json({ message: `Template with name "${name}" already exists for this company.` });
     }
 
     if (isDefault) {
+      const defaultWhere = { targetRole: targetRole || 'EMPLOYEE' };
+      if (targetOrgId) defaultWhere.organizationId = targetOrgId;
       await prisma.salaryTemplate.updateMany({
-        where: { targetRole: targetRole || 'EMPLOYEE' },
+        where: defaultWhere,
         data: { isDefault: false }
       });
     }
 
     const template = await prisma.salaryTemplate.create({
       data: {
+        organizationId: targetOrgId || null,
         name,
         description,
         targetRole: targetRole || 'EMPLOYEE',
@@ -81,17 +104,23 @@ const createTemplate = async (req, res) => {
   }
 };
 
-// 3. Update Salary Template (Admin Only)
+// 3. Update Salary Template (Admin & Super Admin Only)
 const updateTemplate = async (req, res) => {
   try {
     const { id } = req.params;
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can edit salary templates.' });
     }
+
+    const targetOrgId = getEffectiveOrgId(req);
 
     const template = await prisma.salaryTemplate.findUnique({ where: { id } });
     if (!template) {
       return res.status(404).json({ message: 'Salary template not found.' });
+    }
+
+    if (targetOrgId && template.organizationId && template.organizationId !== targetOrgId) {
+      return res.status(403).json({ message: 'Unauthorized: Template does not belong to the selected company scope.' });
     }
 
     const updated = await prisma.salaryTemplate.update({
@@ -129,16 +158,27 @@ const updateTemplate = async (req, res) => {
   }
 };
 
-// 4. Delete Salary Template (Admin Only)
+// 4. Delete Salary Template (Admin & Super Admin Only)
 const deleteTemplate = async (req, res) => {
   try {
     const { id } = req.params;
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can delete salary templates.' });
     }
 
+    const targetOrgId = getEffectiveOrgId(req);
+
+    const template = await prisma.salaryTemplate.findUnique({ where: { id } });
+    if (!template) {
+      return res.status(404).json({ message: 'Salary template not found.' });
+    }
+
+    if (targetOrgId && template.organizationId && template.organizationId !== targetOrgId) {
+      return res.status(403).json({ message: 'Unauthorized: Template does not belong to the selected company scope.' });
+    }
+
     await prisma.salaryTemplate.delete({ where: { id } });
-    res.json({ message: 'Salary template deleted successfully.' });
+    res.json({ success: true, message: 'Salary template deleted successfully.' });
   } catch (error) {
     console.error('Delete template error:', error);
     res.status(500).json({ message: 'Failed to delete salary template.' });

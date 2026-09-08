@@ -45,3 +45,36 @@ export const formatLateMinutesCompact = (totalMinutes) => {
   }
   return minStr;
 };
+
+/**
+ * Formats a 24-hour time string ("09:00", "18:00", "18:00:00") into a 12-hour formatted time ("09:00 AM", "06:00 PM").
+ * Handles raw strings, strips seconds, and formats 12-hour AM/PM correctly.
+ */
+export const formatTime12Hour = (time) => {
+  if (!time || typeof time !== 'string') return '--';
+
+  const parts = time.trim().split(':');
+  if (parts.length < 2) return time;
+
+  const hours = parseInt(parts[0], 10);
+  const minutes = parseInt(parts[1], 10);
+
+  if (isNaN(hours) || isNaN(minutes)) return time;
+
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const hours12 = hours % 12 === 0 ? 12 : hours % 12;
+
+  const paddedHours = String(hours12).padStart(2, '0');
+  const paddedMinutes = String(minutes).padStart(2, '0');
+
+  return `${paddedHours}:${paddedMinutes} ${period}`;
+};
+
+/**
+ * Formats start and end time into a clean working hours range ("09:00 AM – 06:00 PM").
+ */
+export const formatWorkingHoursRange = (startTime = '09:00', endTime = '18:00') => {
+  const formattedStart = formatTime12Hour(startTime || '09:00');
+  const formattedEnd = formatTime12Hour(endTime || '18:00');
+  return `${formattedStart} – ${formattedEnd}`;
+};

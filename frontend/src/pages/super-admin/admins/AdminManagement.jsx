@@ -2,15 +2,20 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   UserCheck, Plus, Search, Edit3, Trash2, ShieldCheck, Key,
-  X, CheckCircle2, AlertCircle, RefreshCw, Lock, UserX
+  X, CheckCircle2, AlertCircle, RefreshCw, Lock, UserX, Building2
 } from 'lucide-react';
 import api from '../../../services/api';
 import UserAvatar from '../../../components/common/UserAvatar';
+import CompanyScopeSelector from '../../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../../context/CompanyScopeContext';
 
 const AdminManagement = () => {
   const [searchParams] = useSearchParams();
+  const { selectedOrgId, selectedCompany } = useCompanyScope();
   const [admins, setAdmins] = useState([]);
+  const [organizations, setOrganizations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Modal States
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -23,6 +28,7 @@ const AdminManagement = () => {
     name: '',
     email: '',
     phone: '',
+    organizationId: '',
     password: '',
     department: 'Administration',
     designation: 'System Administrator',
@@ -35,7 +41,8 @@ const AdminManagement = () => {
   const fetchAdmins = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/super-admin/admins');
+      const params = selectedOrgId ? { organizationId: selectedOrgId } : {};
+      const res = await api.get('/super-admin/admins', { params });
       setAdmins(res.data || []);
     } catch (err) {
       console.error('Failed to fetch admin list:', err);
@@ -45,12 +52,23 @@ const AdminManagement = () => {
     }
   };
 
+  const fetchOrganizations = async () => {
+    try {
+      const res = await api.get('/organizations');
+      const list = res.data?.data || res.data || [];
+      setOrganizations(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error('Failed to fetch organizations:', err);
+    }
+  };
+
   useEffect(() => {
     fetchAdmins();
+    fetchOrganizations();
     if (searchParams.get('action') === 'new') {
       handleOpenCreateModal();
     }
-  }, [searchParams]);
+  }, [selectedOrgId, searchParams]);
 
   const showToast = (type, text) => {
     setToast({ type, text });
@@ -62,6 +80,7 @@ const AdminManagement = () => {
       name: '',
       email: '',
       phone: '',
+      organizationId: selectedOrgId || '',
       password: 'AdminPassword@123',
       department: 'Administration',
       designation: 'System Administrator',
@@ -76,6 +95,7 @@ const AdminManagement = () => {
       name: admin.name || '',
       email: admin.email || '',
       phone: admin.phone || '',
+      organizationId: admin.organizationId || admin.organization?.id || '',
       password: '',
       department: admin.department || 'Administration',
       designation: admin.designation || 'System Administrator',
@@ -93,6 +113,11 @@ const AdminManagement = () => {
     e.preventDefault();
     if (!formData.name || !formData.email || !formData.password) {
       showToast('error', 'Please fill in all required fields.');
+      return;
+    }
+
+    if (!formData.organizationId) {
+      showToast('error', 'Please select a company.');
       return;
     }
 
@@ -153,6 +178,20 @@ const AdminManagement = () => {
     }
   };
 
+  const filteredAdmins = admins.filter((admin) => {
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return true;
+    return (
+      (admin.name && admin.name.toLowerCase().includes(term)) ||
+      (admin.email && admin.email.toLowerCase().includes(term)) ||
+      (admin.employeeId && admin.employeeId.toLowerCase().includes(term)) ||
+      (admin.department && admin.department.toLowerCase().includes(term)) ||
+      (admin.designation && admin.designation.toLowerCase().includes(term)) ||
+      (admin.organization?.name && admin.organization.name.toLowerCase().includes(term)) ||
+      (admin.organization?.companyCode && admin.organization.companyCode.toLowerCase().includes(term))
+    );
+  });
+
   return (
     <div className="space-y-6 text-left">
       {/* Header */}
@@ -179,6 +218,9 @@ const AdminManagement = () => {
         </button>
       </div>
 
+      {/* Shared Company Scope Selector Bar */}
+      <CompanyScopeSelector allowAllCompanies={true} />
+
       {toast.text && (
         <div className={`p-4 rounded-xl text-xs font-bold flex items-center gap-2 ${toast.type === 'success' ? 'bg-primary/10 text-primary border border-primary/30' : 'bg-red-500/10 text-red-500 border border-red-500/30'}`}>
           {toast.type === 'success' ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
@@ -186,12 +228,27 @@ const AdminManagement = () => {
         </div>
       )}
 
+      {/* Filter / Search Controls */}
+      <div className="rounded-2xl border border-border/40 bg-card p-4 shadow-sm">
+        <div className="relative flex-1 w-full">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search admins by name, email, employee ID, department..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full rounded-xl border border-border/60 bg-background pl-10 pr-4 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+          />
+        </div>
+      </div>
+
       {/* Admin Users Table */}
       <div className="w-full min-w-0 overflow-x-auto rounded-2xl border border-border/40 bg-card shadow-sm">
         <table className="w-full min-w-[900px] text-sm border-collapse text-left">
           <thead>
             <tr className="text-xs font-semibold text-muted-foreground uppercase border-b border-border/30 bg-muted/20 whitespace-nowrap">
               <th className="px-6 py-4 whitespace-nowrap">Admin Profile</th>
+              <th className="px-6 py-4 whitespace-nowrap">Company</th>
               <th className="px-6 py-4 whitespace-nowrap">Department & Designation</th>
               <th className="px-6 py-4 whitespace-nowrap">Status</th>
               <th className="px-6 py-4 whitespace-nowrap">Created Date</th>
@@ -201,21 +258,23 @@ const AdminManagement = () => {
           <tbody className="divide-y divide-border/20 text-xs">
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                <td colSpan={6} className="px-6 py-12 text-center text-muted-foreground">
                   <div className="flex items-center justify-center gap-2">
                     <RefreshCw className="h-4 w-4 animate-spin text-primary" />
                     <span>Loading admin accounts...</span>
                   </div>
                 </td>
               </tr>
-            ) : admins.length === 0 ? (
+            ) : filteredAdmins.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-6 py-10 text-center text-muted-foreground">
-                  No Administrator accounts found. Click "Provision New Admin" to add one.
+                <td colSpan={6} className="px-6 py-10 text-center text-muted-foreground">
+                  {searchTerm
+                    ? `No administrator accounts match "${searchTerm}".`
+                    : `No administrator accounts found for ${selectedCompany?.name || 'this company'}.`}
                 </td>
               </tr>
             ) : (
-              admins.map((admin) => (
+              filteredAdmins.map((admin) => (
                 <tr key={admin.id} className="hover:bg-muted/10 transition-all whitespace-nowrap">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-3">
@@ -225,6 +284,16 @@ const AdminManagement = () => {
                         <p className="text-[10px] text-muted-foreground font-mono">{admin.email} • {admin.employeeId}</p>
                       </div>
                     </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {admin.organization?.name ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 text-[11px] font-bold uppercase tracking-wider shrink-0 shadow-2xs">
+                        <Building2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <span>{admin.organization.name}</span>
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground font-medium">—</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <p className="font-semibold text-foreground">{admin.department || 'Administration'}</p>
@@ -332,6 +401,25 @@ const AdminManagement = () => {
 
               <div className="space-y-1.5 sm:col-span-2">
                 <label className="text-xs font-bold text-foreground block">
+                  Company (Organization) <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={formData.organizationId}
+                  onChange={(e) => setFormData({ ...formData, organizationId: e.target.value })}
+                  className="w-full rounded-xl border border-border/60 bg-background px-3.5 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
+                  required
+                >
+                  <option value="">-- Select Company --</option>
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name} {org.companyCode ? `(${org.companyCode})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-xs font-bold text-foreground block">
                   Initial Password <span className="text-red-500">*</span>
                 </label>
                 <input
@@ -431,6 +519,22 @@ const AdminManagement = () => {
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                   className="w-full rounded-xl border border-border/60 bg-background px-3.5 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2">
+                <label className="text-xs font-bold text-foreground block">Company (Organization)</label>
+                <select
+                  value={formData.organizationId}
+                  onChange={(e) => setFormData({ ...formData, organizationId: e.target.value })}
+                  className="w-full rounded-xl border border-border/60 bg-background px-3.5 py-2 text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 cursor-pointer"
+                >
+                  <option value="">-- Select Company --</option>
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name} {org.companyCode ? `(${org.companyCode})` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="space-y-1.5">

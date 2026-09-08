@@ -1,11 +1,13 @@
 const prisma = require('../utils/db');
 const { createNotification } = require('../services/notification');
 const { logActivity } = require('../utils/activityLogger');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 const { sendNewTicketNotificationEmail, sendTicketUpdateEmail } = require('../services/email');
 
 const createTicket = async (req, res) => {
   try {
     const { title, description, category, assetId } = req.body;
+    const targetOrgId = getEffectiveOrgId(req);
 
     if (!title || !description || !category) {
       return res.status(400).json({ message: 'Title, description, and category are required.' });
@@ -26,16 +28,21 @@ const createTicket = async (req, res) => {
         category,
         assetId: assetId || null,
         creatorId: req.user.id,
+        organizationId: targetOrgId,
         status: 'OPEN'
       },
       include: {
-        creator: { select: { id: true, name: true, employeeId: true, email: true } },
+        creator: { select: { id: true, name: true, employeeId: true, email: true, organizationId: true } },
         asset: { select: { id: true, assetId: true, name: true, brand: true, model: true } }
       }
     });
 
     // Notify admins that a ticket has been created
-    const admins = await prisma.user.findMany({ where: { role: 'ADMIN' } });
+    const adminWhere = { role: 'ADMIN' };
+    if (targetOrgId) {
+      adminWhere.organizationId = targetOrgId;
+    }
+    const admins = await prisma.user.findMany({ where: adminWhere });
     for (let admin of admins) {
       await createNotification({
         userId: admin.id,
@@ -65,6 +72,8 @@ const createTicket = async (req, res) => {
 const getTickets = async (req, res) => {
   try {
     const { category, status } = req.query;
+    const targetOrgId = getEffectiveOrgId(req);
+
     const where = {};
 
     if (category) where.category = category;
@@ -86,10 +95,30 @@ const getTickets = async (req, res) => {
       ];
     }
 
+    // Company Tenant Scoping
+    if (targetOrgId) {
+      const tenantCondition = {
+        OR: [
+          { organizationId: targetOrgId },
+          { organizationId: null, creator: { organizationId: targetOrgId } }
+        ]
+      };
+
+      if (where.OR) {
+        where.AND = [
+          { OR: where.OR },
+          tenantCondition
+        ];
+        delete where.OR;
+      } else {
+        where.OR = tenantCondition.OR;
+      }
+    }
+
     const tickets = await prisma.ticket.findMany({
       where,
       include: {
-        creator: { select: { id: true, name: true, employeeId: true, email: true } },
+        creator: { select: { id: true, name: true, employeeId: true, email: true, organizationId: true } },
         assignee: { select: { id: true, name: true, employeeId: true } },
         asset: { select: { id: true, assetId: true, name: true, brand: true, model: true } }
       },
@@ -106,14 +135,14 @@ const getTickets = async (req, res) => {
 const updateTicketStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, assigneeId } = req.body;
+    const { status, assigneeId, organizationId } = req.body;
 
     const ticket = await prisma.ticket.findUnique({ where: { id } });
     if (!ticket) {
       return res.status(404).json({ message: 'Ticket not found.' });
     }
 
-    // Only Admin or Team Leader can modify ticket status/assignments
+    // Only Admin, Super Admin, or Team Leader can modify ticket status/assignments
     if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       return res.status(403).json({ message: 'Interns/Employees cannot change ticket status or assignees.' });
     }
@@ -128,6 +157,7 @@ const updateTicketStatus = async (req, res) => {
     const data = {};
     if (status) data.status = status;
     if (assigneeId !== undefined) data.assigneeId = assigneeId || null;
+    if (organizationId) data.organizationId = organizationId;
 
     const updatedTicket = await prisma.ticket.update({
       where: { id },
@@ -138,7 +168,7 @@ const updateTicketStatus = async (req, res) => {
     // Notify ticket creator
     let message = `Your ticket "${ticket.title}" has been updated.`;
     if (status) message = `Your ticket "${ticket.title}" status is now "${status}".`;
-    if (assigneeId) message = `Your ticket "${ticket.title}" has been assigned to ${updatedTicket.assignee.name}.`;
+    if (assigneeId) message = `Your ticket "${ticket.title}" has been assigned to ${updatedTicket.assignee?.name || 'Unassigned'}.`;
 
     await createNotification({
       userId: ticket.creatorId,
@@ -164,8 +194,37 @@ const updateTicketStatus = async (req, res) => {
   }
 };
 
+const deleteTicket = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const ticket = await prisma.ticket.findUnique({ where: { id } });
+    if (!ticket) {
+      return res.status(404).json({ message: 'Ticket not found.' });
+    }
+
+    if (['INTERN', 'EMPLOYEE'].includes(req.user.role)) {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    await prisma.ticket.delete({ where: { id } });
+
+    await logActivity({
+      userId: req.user.id,
+      action: 'TICKET_DELETE',
+      details: `Deleted ticket "${ticket.title}"`
+    });
+
+    res.json({ message: 'Ticket deleted successfully.' });
+  } catch (error) {
+    console.error('Delete ticket error:', error);
+    res.status(500).json({ message: 'Failed to delete ticket.' });
+  }
+};
+
 module.exports = {
   createTicket,
   getTickets,
-  updateTicketStatus
+  updateTicketStatus,
+  deleteTicket
 };

@@ -8,6 +8,8 @@ import useClockOutWithReminder from '../hooks/useClockOutWithReminder';
 import useShiftCountdown from '../hooks/useShiftCountdown';
 import { getTargetShiftHours, getShiftProgressColor } from '../utils/shiftProgress';
 import AttendanceHistorySection from '../components/attendance/AttendanceHistorySection';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 import {
   Clock,
   Play,
@@ -21,9 +23,9 @@ import {
 
 const Attendance = () => {
   const { user } = useAuth();
+  const { selectedOrgId } = useCompanyScope();
   const [time, setTime] = useState(new Date());
   const [clockedRecord, setClockedRecord] = useState(null);
-  const [recentLogs, setRecentLogs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState('');
   const [settings, setSettings] = useState(null);
@@ -77,7 +79,8 @@ const Attendance = () => {
 
   const fetchClockInStatus = async () => {
     try {
-      const res = await api.get('/attendance/status');
+      const params = selectedOrgId ? { organizationId: selectedOrgId } : {};
+      const res = await api.get('/attendance/status', { params });
       setClockInStatus(res.data);
     } catch (err) {
       console.error('Fetch clock in status error:', err);
@@ -166,7 +169,6 @@ const Attendance = () => {
       });
       
       setClockedRecord(todayRecord || null);
-      setRecentLogs(res.data.slice(0, 15));
       setLoading(false);
     } catch (err) {
       console.error(err);
@@ -328,6 +330,8 @@ const Attendance = () => {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto animate-in fade-in duration-300">
+      <CompanyScopeSelector />
+
       {alert && (
         <div className="flex items-center justify-between p-4 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-semibold">
           <span>{alert}</span>
@@ -538,59 +542,6 @@ const Attendance = () => {
               <span>Location Verified</span>
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* Attendance Log History */}
-      <div className="glass-card border border-white/70 dark:border-white/10 overflow-hidden shadow-lg">
-        <div className="p-4 border-b border-border/20 flex items-center justify-between text-left">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-foreground">
-            Today's Shift Timeline & Logs
-          </h3>
-          <span className="text-[10px] text-muted-foreground font-mono">
-            Showing last {recentLogs.length} entries
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-border/20 bg-muted/20 text-muted-foreground uppercase font-bold text-[10px]">
-                <th className="px-5 py-3.5 text-left">Date</th>
-                <th className="px-5 py-3.5 text-left">Clock In</th>
-                <th className="px-5 py-3.5 text-left">Clock Out</th>
-                <th className="px-5 py-3.5 text-left">Total Worked</th>
-                <th className="px-5 py-3.5 text-right">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/10">
-              {recentLogs.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-5 py-8 text-center text-muted-foreground">
-                    No attendance records found for today.
-                  </td>
-                </tr>
-              ) : (
-                recentLogs.map((log) => (
-                  <tr key={log.id} className="hover:bg-muted/10 transition-all whitespace-nowrap">
-                    <td className="px-5 py-3.5 font-semibold whitespace-nowrap">{formatDateDDMMYYYY(log.date)}</td>
-                    <td className="px-5 py-3.5 font-mono text-xs whitespace-nowrap">
-                      {log.status === 'LEAVE' || !log.clockIn ? '—' : new Date(log.clockIn).toLocaleTimeString()}
-                    </td>
-                    <td className="px-5 py-3.5 font-mono text-xs whitespace-nowrap">
-                      {log.status === 'LEAVE' ? '—' : log.clockOut ? new Date(log.clockOut).toLocaleTimeString() : 'Shift Active'}
-                    </td>
-                    <td className="px-5 py-3.5 whitespace-nowrap">{formatWorkingHours(log.workingHours, log.status)}</td>
-                    <td className="px-5 py-3.5 text-right whitespace-nowrap">
-                      <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-primary/10 text-primary' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : 'bg-red-500/10 text-red-500'}`}>
-                        {log.status === 'LATE' && log.lateMinutes ? `LATE (${formatLateDuration(log.lateMinutes)})` : log.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
         </div>
       </div>
 

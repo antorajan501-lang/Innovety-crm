@@ -397,6 +397,30 @@ const sendPasswordResetOtpEmail = async (user, otp) => {
   }
 };
 
+const { getEffectiveSettings } = require('../utils/settingsResolver');
+
+/**
+ * Resolves tenant email branding parameters (company name, primary color, logo) for notifications
+ */
+const getBrandedEmailHeader = async (organizationId) => {
+  const settings = await getEffectiveSettings(organizationId);
+  const companyName = settings?.companyName || process.env.COMPANY_NAME || 'INNOVEITY';
+  const primaryColor = settings?.primaryColor || '#10B981';
+  const logo = settings?.logo || null;
+
+  return {
+    companyName,
+    primaryColor,
+    logo,
+    headerHtml: `
+      <div style="background-color: ${primaryColor}; padding: 18px; text-align: center; border-radius: 8px 8px 0 0;">
+        ${logo ? `<img src="${logo}" alt="${companyName}" style="max-height: 36px; margin-bottom: 6px;" />` : ''}
+        <h2 style="color: #ffffff; margin: 0; font-family: Arial, sans-serif; font-size: 20px;">${companyName}</h2>
+      </div>
+    `
+  };
+};
+
 module.exports = {
   sendWelcomeEmail,
   sendTaskAssignmentEmail,
@@ -404,5 +428,6 @@ module.exports = {
   sendTicketUpdateEmail,
   sendTaskStatusUpdateEmail,
   sendTeamTaskAssignmentEmail,
-  sendPasswordResetOtpEmail
+  sendPasswordResetOtpEmail,
+  getBrandedEmailHeader
 };

@@ -1,8 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../../services/api';
 import { FileCode, Search, Eye, Download, Printer, ShieldCheck, X, QrCode } from 'lucide-react';
+import CompanyScopeSelector from '../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../context/CompanyScopeContext';
+
+import { useAuth } from '../../context/AuthContext';
 
 export default function PayslipsPage() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
   const [payslips, setPayslips] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -10,15 +20,13 @@ export default function PayslipsPage() {
   const [settings, setSettings] = useState(null);
   const [showModal, setShowModal] = useState(false);
 
-  useEffect(() => {
-    fetchPayslips();
-  }, []);
-
   const fetchPayslips = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/payroll/payslips');
-      setPayslips(res.data);
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg } : {};
+      const res = await api.get('/payroll/payslips', { params });
+      setPayslips(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error('Failed to fetch payslips:', err);
     } finally {
@@ -26,9 +34,18 @@ export default function PayslipsPage() {
     }
   };
 
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setPayslips([]);
+    if (orgsLoading) return;
+    fetchPayslips();
+  }, [user, targetOrg, user?.organizationId, orgsLoading]);
+
   const handleViewPayslip = async (id) => {
     try {
-      const res = await api.get(`/payroll/payslips/${id}`);
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get(`/payroll/payslips/${id}`, { params });
       setSelectedPayslip(res.data.payslip);
       setSettings(res.data.settings);
       setShowModal(true);
@@ -47,6 +64,9 @@ export default function PayslipsPage() {
 
   return (
     <div className="space-y-6 text-left font-sans w-full max-w-7xl mx-auto">
+      {/* Company Scope Selector */}
+      <CompanyScopeSelector />
+
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-card border border-border p-6 rounded-2xl shadow-sm">
         <div>
           <h1 className="text-2xl font-black text-foreground flex items-center gap-2">
@@ -90,7 +110,7 @@ export default function PayslipsPage() {
                 {filteredPayslips.length === 0 ? (
                   <tr>
                     <td colSpan="7" className="p-8 text-center text-muted-foreground font-semibold">
-                      No published payslips found matching your search.
+                      No published payslips found for {selectedCompany?.name || 'this company'}.
                     </td>
                   </tr>
                 ) : (

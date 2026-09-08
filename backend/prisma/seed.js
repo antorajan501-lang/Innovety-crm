@@ -6,6 +6,84 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Seeding complete, accurate Innovety CRM dataset...');
 
+  // 0. Default Organization (INNOVEITY)
+  const innoveityOrg = await prisma.organization.findUnique({
+    where: { slug: 'innoveity' }
+  });
+
+  if (!innoveityOrg) {
+    await prisma.organization.create({
+      data: {
+        name: 'INNOVEITY',
+        slug: 'innoveity',
+        companyCode: 'INN001',
+        status: 'ACTIVE',
+        timezone: 'Asia/Kolkata'
+      }
+    });
+    console.log('Default organization INNOVEITY created.');
+  } else {
+    console.log('Default organization INNOVEITY already exists, skipping.');
+  }
+
+  // Phase 7.1: Seed Default Subscription Plans
+  const plans = [
+    { name: 'Starter', code: 'STARTER', maxUsers: 25, maxProjects: 5, maxStorageGB: 5, maxAdmins: 2, features: { customBranding: true, prioritySupport: false } },
+    { name: 'Growth', code: 'GROWTH', maxUsers: 100, maxProjects: 50, maxStorageGB: 25, maxAdmins: 10, features: { customBranding: true, prioritySupport: true } },
+    { name: 'Enterprise', code: 'ENTERPRISE', maxUsers: 999999, maxProjects: 999999, maxStorageGB: 9999, maxAdmins: 999999, features: { customBranding: true, prioritySupport: true, dedicatedManager: true } }
+  ];
+
+  for (const p of plans) {
+    await prisma.subscriptionPlan.upsert({
+      where: { code: p.code },
+      update: p,
+      create: p
+    });
+  }
+  console.log('Default subscription plans seeded.');
+
+  // Assign any unassigned records across all business models to INNOVEITY
+  const innoveityRecord = await prisma.organization.findUnique({ where: { slug: 'innoveity' } });
+  if (innoveityRecord) {
+    const enterprisePlan = await prisma.subscriptionPlan.findUnique({ where: { code: 'ENTERPRISE' } });
+    if (enterprisePlan && !innoveityRecord.subscriptionPlanId) {
+      await prisma.organization.update({
+        where: { id: innoveityRecord.id },
+        data: { subscriptionPlanId: enterprisePlan.id }
+      });
+      console.log('INNOVEITY assigned to Enterprise subscription plan.');
+    }
+    const models = ['user', 'attendance', 'leaveRequest', 'workLog', 'project', 'task', 'chatRoom', 'chatMessage', 'notification'];
+    for (const m of models) {
+      const res = await prisma[m].updateMany({
+        where: { organizationId: null },
+        data: { organizationId: innoveityRecord.id }
+      });
+      if (res.count > 0) {
+        console.log(`Assigned ${res.count} unassigned ${m} records to INNOVEITY.`);
+      }
+    }
+
+    // Phase 4.1: OrganizationSettings default initialization
+    const existingOrgSettings = await prisma.organizationSettings.findUnique({
+      where: { organizationId: innoveityRecord.id }
+    });
+    if (!existingOrgSettings) {
+      await prisma.organizationSettings.create({
+        data: {
+          organizationId: innoveityRecord.id,
+          companyName: innoveityRecord.name || 'INNOVEITY',
+          primaryColor: '#10B981',
+          timezone: 'Asia/Kolkata',
+          clockInTime: '09:00',
+          clockOutTime: '18:00',
+          autoClockOutEnabled: true
+        }
+      });
+      console.log('Default OrganizationSettings created for INNOVEITY.');
+    }
+  }
+
   // 0. Super Admin User
   const superAdminPass = await bcrypt.hash('SuperAdmin123!', 10);
   await prisma.user.upsert({

@@ -2,6 +2,8 @@ const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
 const { broadcastAttendanceEvent } = require('../socket');
+const { getOrganizationWhere, getEffectiveOrgId } = require('../utils/organizationScope');
+const { getEffectiveSettings } = require('../utils/settingsResolver');
 const {
   getSystemTimeZone,
   getTodayZonedDate,
@@ -66,28 +68,8 @@ const parseUserAgent = (userAgentString) => {
   return { browser, device };
 };
 
-const getOrCreateSystemSettings = async () => {
-  let settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
-  if (!settings) {
-    settings = await prisma.systemSettings.create({
-      data: {
-        id: 'GLOBAL',
-        companyName: 'INNOVEITY',
-        senderEmail: 'somusuraj72@gmail.com',
-        internShiftStart: '09:00',
-        internShiftEnd: '18:00',
-        tlShiftStart: '09:00',
-        tlShiftEnd: '18:00',
-        clockInTime: '09:00',
-        clockOutTime: '18:00',
-        autoClockOutEnabled: true,
-        officeLocationName: 'Innoveity Headquarters',
-        earlyWindowMinutes: 30,
-        gracePeriodMinutes: 15
-      }
-    });
-  }
-  return settings;
+const getOrCreateSystemSettings = async (organizationId) => {
+  return await getEffectiveSettings(organizationId);
 };
 
 const getClockInStatus = async (req, res) => {
@@ -95,7 +77,7 @@ const getClockInStatus = async (req, res) => {
     const userId = req.user.id;
     const now = new Date();
 
-    const settings = await getOrCreateSystemSettings();
+    const settings = await getOrCreateSystemSettings(req.user?.organizationId);
     const timeZone = getSystemTimeZone(settings);
     const todayDate = getTodayZonedDate(now, timeZone);
 
@@ -255,7 +237,7 @@ const clockIn = async (req, res) => {
       });
     }
 
-    const settings = await getOrCreateSystemSettings();
+    const settings = await getOrCreateSystemSettings(req.user?.organizationId);
     const timeZone = getSystemTimeZone(settings);
     const todayDate = getTodayZonedDate(now, timeZone);
 
@@ -419,8 +401,8 @@ const clockIn = async (req, res) => {
       ...attendance
     });
   } catch (error) {
-    console.error('Clock in error:', error);
-    res.status(500).json({ success: false, reason: 'SERVER_ERROR', message: 'Clock in failed.' });
+    console.error('[ClockIn Error Details]:', error);
+    res.status(500).json({ success: false, reason: 'SERVER_ERROR', message: error.message || 'Clock in failed.', stack: error.stack });
   }
 };
 
@@ -525,14 +507,18 @@ const isShiftEndedForDate = (targetDateObj, now, settings) => {
 const getAttendanceLogs = async (req, res) => {
   try {
     const { userId, status, startDate, endDate } = req.query;
-    const settings = await getOrCreateSystemSettings();
+    const { getEffectiveOrgId } = require('../utils/organizationScope');
+    const targetOrgId = getEffectiveOrgId(req);
+
+    const settings = await getOrCreateSystemSettings(targetOrgId);
     const timeZone = getSystemTimeZone(settings);
     const now = new Date();
     const todayZoned = getTodayZonedDate(now, timeZone);
 
-    // 1. Determine Date Range (Clamped to TODAY maximum)
-    let minDate = startDate ? new Date(startDate) : todayZoned;
-    let maxDate = endDate ? new Date(endDate) : todayZoned;
+    // 1. Determine Date Range (Default to 60 days ago if no startDate provided for ALL dates)
+    const defaultMinDate = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    let minDate = (startDate && String(startDate).trim() !== '') ? new Date(startDate) : defaultMinDate;
+    let maxDate = (endDate && String(endDate).trim() !== '') ? new Date(endDate) : todayZoned;
 
     if (minDate > maxDate) {
       const temp = minDate;
@@ -578,6 +564,10 @@ const getAttendanceLogs = async (req, res) => {
       }
     } else if ((req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN') && userId && userId !== 'ALL' && userId !== '') {
       userWhere.id = userId;
+    }
+
+    if (targetOrgId) {
+      userWhere.organizationId = targetOrgId;
     }
 
     const activeUsers = await prisma.user.findMany({
@@ -866,15 +856,22 @@ const updateAttendance = async (req, res) => {
 
 const getAttendanceAnalytics = async (req, res) => {
   try {
+    const { getEffectiveOrgId } = require('../utils/organizationScope');
+    const targetOrgId = getEffectiveOrgId(req);
     const now = new Date();
-    const settings = await getOrCreateSystemSettings();
+    const settings = await getOrCreateSystemSettings(targetOrgId);
     const timeZone = getSystemTimeZone(settings);
 
     const startOfToday = getTodayZonedDate(now, timeZone);
     const endOfToday = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000 - 1);
 
+    const userWhere = { role: { in: ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'] }, status: 'ACTIVE' };
+    if (targetOrgId) {
+      userWhere.organizationId = targetOrgId;
+    }
+
     const activeUsers = await prisma.user.findMany({
-      where: { role: { in: ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'] }, status: 'ACTIVE' },
+      where: userWhere,
       select: { id: true, joiningDate: true }
     });
     // Filter active users to only those who have joined on or before today
@@ -943,7 +940,7 @@ const getAttendanceHistory = async (req, res) => {
     const { status, workLocation, month, year } = req.query;
 
     const now = new Date();
-    const settings = await getOrCreateSystemSettings();
+    const settings = await getOrCreateSystemSettings(req.user?.organizationId);
     const timeZone = getSystemTimeZone(settings);
     const todayZoned = getTodayZonedDate(now, timeZone);
 
@@ -1099,6 +1096,246 @@ const getAttendanceHistory = async (req, res) => {
   }
 };
 
+const getCompanyLeaveReport = async (req, res) => {
+  try {
+    const userRole = req.user?.role;
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
+      return res.status(403).json({ message: 'Access denied: Admin or Super Admin permissions required for Company Leave Audit.' });
+    }
+
+    const targetOrgId = getEffectiveOrgId(req);
+    const { month, year, startDate, endDate, departmentId, role, search } = req.query;
+
+    // Fetch Organization details
+    let organization = null;
+    if (targetOrgId) {
+      organization = await prisma.organization.findUnique({
+        where: { id: targetOrgId },
+        select: { id: true, name: true, slug: true, companyCode: true }
+      });
+    }
+
+    // Determine target month and year
+    let targetYear = new Date().getFullYear();
+    let targetMonth = new Date().getMonth() + 1; // 1-12
+    let monthParamStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+
+    if (month && typeof month === 'string' && month.includes('-')) {
+      const parts = month.split('-');
+      targetYear = parseInt(parts[0], 10);
+      targetMonth = parseInt(parts[1], 10);
+      monthParamStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    } else if (month) {
+      targetMonth = parseInt(month, 10);
+      if (year) targetYear = parseInt(year, 10);
+      monthParamStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    } else if (year) {
+      targetYear = parseInt(year, 10);
+      monthParamStr = `${targetYear}-${String(targetMonth).padStart(2, '0')}`;
+    }
+
+    const monthStart = new Date(Date.UTC(targetYear, targetMonth - 1, 1, 0, 0, 0, 0));
+    const monthEnd = new Date(Date.UTC(targetYear, targetMonth, 0, 23, 59, 59, 999));
+
+    // Build User filter - Exclude ADMIN and SUPER_ADMIN from employee list
+    const userWhere = {
+      ...(targetOrgId ? { organizationId: targetOrgId } : {}),
+      status: 'ACTIVE',
+      role: role ? role.toUpperCase() : { notIn: ['ADMIN', 'SUPER_ADMIN'] },
+      ...(departmentId ? { departmentId } : {}),
+      ...(search ? {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+          { employeeId: { contains: search, mode: 'insensitive' } }
+        ]
+      } : {})
+    };
+
+    const users = await prisma.user.findMany({
+      where: userWhere,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        employeeId: true,
+        role: true,
+        department: true,
+        departmentId: true,
+        departmentRef: { select: { id: true, name: true } },
+        profilePic: true,
+        casualLeaveQuota: true,
+        sickLeaveQuota: true,
+        emergencyLeaveQuota: true,
+        status: true,
+        joiningDate: true
+      },
+      orderBy: { name: 'asc' }
+    });
+
+    const userIds = users.map(u => u.id);
+
+    // Build Leave Request query
+    const leaveWhere = {
+      userId: { in: userIds },
+      AND: [
+        { endDate: { gte: monthStart } },
+        { startDate: { lte: monthEnd } }
+      ]
+    };
+
+    const leaveRequests = await prisma.leaveRequest.findMany({
+      where: leaveWhere,
+      include: {
+        user: { select: { id: true, name: true, employeeId: true } }
+      },
+      orderBy: { startDate: 'desc' }
+    });
+
+    const availableLeaveTypes = ["Casual", "Sick", "WFH"];
+
+    // Aggregate User level leave stats
+    const employeesReport = users.map(u => {
+      const allocatedPaid = (u.casualLeaveQuota || 12) + (u.sickLeaveQuota || 12) + (u.emergencyLeaveQuota || 6);
+
+      const userLeaves = leaveRequests.filter(l => l.userId === u.id);
+      const approvedLeaves = userLeaves.filter(l => l.status === 'APPROVED');
+
+      let paidDaysUsed = 0;
+      let unpaidDaysUsed = 0;
+      const leaveTypes = {
+        Casual: 0,
+        Sick: 0,
+        WFH: 0,
+        casual: 0,
+        sick: 0,
+        wfh: 0
+      };
+
+      approvedLeaves.forEach(l => {
+        const days = Number(l.totalDays || 1);
+        const lType = (l.leaveType || l.type || 'CASUAL').toLowerCase();
+        const pType = (l.payType || 'PAID').toUpperCase();
+
+        if (pType === 'UNPAID' || lType === 'unpaid') {
+          unpaidDaysUsed += days;
+        } else {
+          paidDaysUsed += days;
+          if (lType === 'casual') {
+            leaveTypes.Casual += days;
+            leaveTypes.casual += days;
+          } else if (lType === 'sick') {
+            leaveTypes.Sick += days;
+            leaveTypes.sick += days;
+          } else if (lType === 'wfh') {
+            leaveTypes.WFH += days;
+            leaveTypes.wfh += days;
+          } else {
+            leaveTypes.Casual += days;
+            leaveTypes.casual += days;
+          }
+        }
+      });
+
+      const remainingBalance = Math.max(0, allocatedPaid - paidDaysUsed);
+      const departmentName = u.departmentRef?.name || u.department || 'General';
+
+      return {
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        employeeId: u.employeeId || 'EM-1001',
+        role: u.role,
+        department: departmentName,
+        departmentId: u.departmentId || null,
+        avatar: u.profilePic || null,
+        allocatedPaid,
+        paid: paidDaysUsed,
+        unpaid: unpaidDaysUsed,
+        balance: remainingBalance,
+        leaveTypes,
+        casualUsed: leaveTypes.casual,
+        sickUsed: leaveTypes.sick,
+        emergencyUsed: 0,
+        totalAppliedLeaves: userLeaves.length,
+        leavesHistory: userLeaves.map(l => ({
+          id: l.id,
+          startDate: l.startDate,
+          endDate: l.endDate,
+          totalDays: l.totalDays,
+          leaveType: l.leaveType || l.type || 'CASUAL',
+          payType: l.payType || 'PAID',
+          status: l.status,
+          reason: l.reason,
+          subject: l.subject
+        }))
+      };
+    });
+
+    const totalEmployeesCount = employeesReport.length;
+    const totalPaidLeaves = employeesReport.reduce((acc, curr) => acc + curr.paid, 0);
+    const totalUnpaidLeaves = employeesReport.reduce((acc, curr) => acc + curr.unpaid, 0);
+    const totalRemainingBalance = employeesReport.reduce((acc, curr) => acc + curr.balance, 0);
+
+    // Department Breakdown
+    const deptMap = new Map();
+    employeesReport.forEach(emp => {
+      const deptName = emp.department || 'General';
+      if (!deptMap.has(deptName)) {
+        deptMap.set(deptName, {
+          departmentId: emp.departmentId || deptName,
+          departmentName: deptName,
+          employeesCount: 0,
+          paidLeaves: 0,
+          unpaidLeaves: 0,
+          balance: 0
+        });
+      }
+      const deptStats = deptMap.get(deptName);
+      deptStats.employeesCount += 1;
+      deptStats.paidLeaves += emp.paid;
+      deptStats.unpaidLeaves += emp.unpaid;
+      deptStats.balance += emp.balance;
+    });
+
+    const departmentBreakdown = Array.from(deptMap.values());
+
+    // Leave Type Breakdown
+    const leaveTypeBreakdown = {
+      Casual: employeesReport.reduce((acc, emp) => acc + emp.leaveTypes.Casual, 0),
+      Sick: employeesReport.reduce((acc, emp) => acc + emp.leaveTypes.Sick, 0),
+      WFH: employeesReport.reduce((acc, emp) => acc + emp.leaveTypes.WFH, 0),
+      casual: employeesReport.reduce((acc, emp) => acc + emp.leaveTypes.casual, 0),
+      sick: employeesReport.reduce((acc, emp) => acc + emp.leaveTypes.sick, 0),
+      wfh: employeesReport.reduce((acc, emp) => acc + emp.leaveTypes.wfh, 0),
+      unpaid: totalUnpaidLeaves
+    };
+
+    const dateObj = new Date(targetYear, targetMonth - 1, 1);
+    const reportingPeriod = dateObj.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+    return res.json({
+      month: monthParamStr,
+      company: organization?.name || 'INNOVEITY Workspace',
+      availableLeaveTypes,
+      summary: {
+        totalEmployees: totalEmployeesCount,
+        paidLeaves: totalPaidLeaves,
+        unpaidLeaves: totalUnpaidLeaves,
+        balance: totalRemainingBalance
+      },
+      employees: employeesReport,
+      departmentBreakdown,
+      leaveTypeBreakdown,
+      reportingPeriod,
+      organization: organization || { name: 'INNOVEITY Workspace' }
+    });
+  } catch (error) {
+    console.error('Get company leave report error:', error);
+    return res.status(500).json({ message: 'Failed to generate company leave audit report.' });
+  }
+};
+
 module.exports = {
   getClockInStatus,
   clockIn,
@@ -1106,5 +1343,6 @@ module.exports = {
   getAttendanceLogs,
   updateAttendance,
   getAttendanceAnalytics,
-  getAttendanceHistory
+  getAttendanceHistory,
+  getCompanyLeaveReport
 };

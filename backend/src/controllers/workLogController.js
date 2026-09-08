@@ -1,5 +1,6 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getOrganizationWhere } = require('../utils/organizationScope');
 const {
   getSystemTimeZone,
   getTodayZonedDate,
@@ -138,6 +139,7 @@ const createWorkLog = async (req, res) => {
       workLog = await prisma.workLog.create({
         data: {
           userId: req.user.id,
+          organizationId: req.user?.organizationId || null,
           projectId: projectId || null,
           taskId: taskId || null,
           description: description || '',
@@ -498,8 +500,14 @@ const getAdminWorkLogs = async (req, res) => {
     }
 
     const { employeeId, employee, departmentId, department, date, status, search } = req.query;
+    const { getEffectiveOrgId } = require('../utils/organizationScope');
+    const targetOrgId = getEffectiveOrgId(req);
 
     const where = {};
+
+    if (targetOrgId) {
+      where.user = { organizationId: targetOrgId };
+    }
 
     const targetEmployeeId = employeeId || employee;
     if (targetEmployeeId && targetEmployeeId !== 'ALL') {
@@ -508,7 +516,7 @@ const getAdminWorkLogs = async (req, res) => {
 
     const targetDeptId = departmentId || department;
     if (targetDeptId && targetDeptId !== 'ALL') {
-      where.user = { departmentId: targetDeptId };
+      where.user = { ...(where.user || {}), departmentId: targetDeptId };
     }
 
     const settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
@@ -535,11 +543,20 @@ const getAdminWorkLogs = async (req, res) => {
 
     if (search && search.trim().length > 0) {
       const q = search.trim();
-      where.OR = [
+      const searchOR = [
         { description: { contains: q, mode: 'insensitive' } },
         { user: { name: { contains: q, mode: 'insensitive' } } },
         { user: { employeeId: { contains: q, mode: 'insensitive' } } }
       ];
+
+      if (targetOrgId) {
+        where.AND = [
+          { user: { organizationId: targetOrgId } },
+          { OR: searchOR }
+        ];
+      } else {
+        where.OR = searchOR;
+      }
     }
 
     const rawLogs = await prisma.workLog.findMany({

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import api, { getUploadUrl, downloadFile } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
+import CompanyBadge from '../components/common/CompanyBadge';
 import ConfirmModal from '../components/common/ConfirmModal';
 import CandidateTypeFields from '../components/common/CandidateTypeFields';
 import {
@@ -32,11 +33,16 @@ import {
 import UserWizardModal from '../components/common/UserWizardModal';
 import PromoteUserModal from '../components/common/PromoteUserModal';
 import { useAuth } from '../context/AuthContext';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 
 const Employees = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user: currentUser } = useAuth();
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || currentUser?.organizationId);
   const urlSearch = new URLSearchParams(location.search).get('search') || '';
 
   const [users, setUsers] = useState([]);
@@ -125,7 +131,8 @@ const Employees = () => {
           status: statusFilter,
           department: departmentFilter,
           position: roleFilter,
-          limit: 50
+          limit: 50,
+          organizationId: targetOrg
         }
       });
       const fetchedUsers = res.data.users || [];
@@ -154,7 +161,7 @@ const Employees = () => {
     };
     window.addEventListener('crm-user-promoted', handleUserPromoted);
     return () => window.removeEventListener('crm-user-promoted', handleUserPromoted);
-  }, [page, statusFilter, roleFilter, departmentFilter]);
+  }, [page, statusFilter, roleFilter, departmentFilter, targetOrg, currentUser?.organizationId]);
 
   const displayUsers = React.useMemo(() => {
     return users.filter((u) => {
@@ -353,7 +360,8 @@ const Employees = () => {
           role: 'EMPLOYEE',
           status: statusFilter,
           search: search,
-          limit: 1000
+          limit: 1000,
+          organizationId: selectedOrgId
         }
       });
       const exportList = res.data.users || users;
@@ -420,6 +428,8 @@ const Employees = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <CompanyScopeSelector />
+
       {/* Alert Header Banner */}
       {alertMsg.text && (
         <div className={`flex items-center gap-2 p-4 rounded-xl border ${alertMsg.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-500'}`}>
@@ -550,6 +560,7 @@ const Employees = () => {
               </th>
               <th className="w-[120px] px-4 py-4 whitespace-nowrap">ID</th>
               <th className="px-4 py-4 whitespace-nowrap">Employee Name</th>
+              <th className="w-[140px] px-4 py-4 whitespace-nowrap">Company</th>
               <th className="w-[140px] px-4 py-4 whitespace-nowrap">Role</th>
               <th className="w-[200px] px-4 py-4 whitespace-nowrap">Department</th>
               <th className="w-[120px] px-4 py-4 whitespace-nowrap">Status</th>
@@ -559,7 +570,7 @@ const Employees = () => {
           <tbody className="divide-y divide-border/30">
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-6 py-16 text-center whitespace-nowrap">
+                <td colSpan={8} className="px-6 py-16 text-center whitespace-nowrap">
                   <div className="flex flex-col items-center justify-center gap-3">
                     <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
                     <span className="text-xs font-semibold text-muted-foreground">Loading employee registry...</span>
@@ -568,7 +579,7 @@ const Employees = () => {
               </tr>
             ) : alertMsg.type === 'error' && displayUsers.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-16 text-center whitespace-nowrap">
+                <td colSpan={8} className="px-6 py-16 text-center whitespace-nowrap">
                   <div className="mx-auto flex max-w-sm flex-col items-center justify-center text-center">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-red-500/10 text-red-500 mb-4 shadow-sm">
                       <AlertCircle className="h-8 w-8" />
@@ -589,7 +600,7 @@ const Employees = () => {
               </tr>
             ) : displayUsers.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-16 text-center whitespace-nowrap">
+                <td colSpan={8} className="px-6 py-16 text-center whitespace-nowrap">
                   <div className="mx-auto flex max-w-sm flex-col items-center justify-center text-center">
                     <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary mb-4 shadow-sm">
                       <Briefcase className="h-8 w-8" />
@@ -648,6 +659,9 @@ const Employees = () => {
                         </span>
                       </div>
                     </div>
+                  </td>
+                  <td className="px-4 py-4 whitespace-nowrap">
+                    <CompanyBadge organization={item.organization} />
                   </td>
                   <td className="w-[140px] px-4 py-4 whitespace-nowrap">
                     {item.position ? (

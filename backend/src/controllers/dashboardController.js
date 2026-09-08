@@ -1,4 +1,5 @@
 const prisma = require('../utils/db');
+const { getOrganizationWhere, getProjectWhere, getTaskWhere } = require('../utils/organizationScope');
 
 /**
  * GET /api/dashboard/team-performance
@@ -22,8 +23,14 @@ const getTeamPerformance = async (req, res) => {
       where = {
         members: { some: { userId } }
       };
+    } else if (role !== 'SUPER_ADMIN') {
+      where = {
+        OR: [
+          { leader: { organizationId: req.user.organizationId } },
+          { members: { some: { user: { organizationId: req.user.organizationId } } } }
+        ]
+      };
     }
-    // ADMIN / SUPER_ADMIN -> fetch all teams
 
     const teams = await prisma.team.findMany({
       where,
@@ -37,7 +44,7 @@ const getTeamPerformance = async (req, res) => {
           select: { members: true }
         },
         projects: {
-          where: { isDeleted: false },
+          where: getProjectWhere(req, { isDeleted: false }),
           select: {
             id: true,
             status: true,
@@ -50,6 +57,7 @@ const getTeamPerformance = async (req, res) => {
           }
         },
         tasks: {
+          where: getTaskWhere(req),
           select: {
             id: true,
             status: true
@@ -63,7 +71,6 @@ const getTeamPerformance = async (req, res) => {
       const totalProjects = team.projects.length;
       const activeProjects = team.projects.filter(p => p.status === 'ACTIVE').length;
 
-      // Combine direct team tasks + tasks from all team projects (deduplicated by task ID)
       const taskMap = new Map();
 
       (team.tasks || []).forEach(t => {
@@ -104,15 +111,6 @@ const getTeamPerformance = async (req, res) => {
       };
     });
 
-    // Priority Sort:
-    // 1. hasWork DESC (Teams with projects/tasks always rank above teams with 0 work)
-    // 2. progress DESC
-    // 3. completedTasks DESC
-    // 4. activeProjects DESC
-    // 5. totalTasks DESC
-    // 6. pendingTasks ASC
-    // 7. reviewTasks ASC
-    // 8. teamName ASC (alphabetical fallback)
     ranked.sort((a, b) => {
       const aWork = a.hasWork ? 1 : 0;
       const bWork = b.hasWork ? 1 : 0;
@@ -128,7 +126,6 @@ const getTeamPerformance = async (req, res) => {
       return a.teamName.localeCompare(b.teamName);
     });
 
-    // Assign 1-indexed rank
     ranked.forEach((team, idx) => {
       team.rank = idx + 1;
     });
@@ -136,135 +133,177 @@ const getTeamPerformance = async (req, res) => {
     res.json(ranked);
   } catch (error) {
     console.error('Get team performance error:', error);
-    res.status(500).json({ message: 'Failed to fetch team performance data.' });
+    res.status(500).json({ message: 'Failed to fetch team performance data.', error: error.message });
   }
 };
 
 /**
  * GET /api/dashboard/overview
  * Returns real CRM metrics calculated directly from database records.
+ * Each metric calculation is isolated so a failure in one does not break the entire response.
  */
 const getDashboardOverview = async (req, res) => {
   try {
     const { getSystemTimeZone, getTodayZonedDate } = require('../utils/attendanceUtils');
     const now = new Date();
 
-    let settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
+    let settings = null;
+    try {
+      settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
+    } catch (e) {
+      console.error('[Dashboard Overview] Failed to fetch settings:', e.message);
+    }
     const timeZone = getSystemTimeZone(settings);
 
-    // 1. TOTAL WORKFORCE (Active Employees + Active Interns + Active Team Leaders)
-    const totalWorkforce = await prisma.user.count({
-      where: {
-        role: { in: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'] },
-        status: 'ACTIVE'
-      }
-    });
+    // 1. TOTAL WORKFORCE
+    let totalWorkforce = 0;
+    let workforceChangeText = '+0% vs last mo';
+    try {
+      totalWorkforce = await prisma.user.count({
+        where: getOrganizationWhere(req, {
+          role: { in: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'] },
+          status: 'ACTIVE'
+        })
+      });
 
-    // Month-over-Month workforce change baseline calculation
-    const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const previousMonthWorkforce = await prisma.user.count({
-      where: {
-        role: { in: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'] },
-        status: 'ACTIVE',
-        createdAt: { lt: startOfCurrentMonth }
-      }
-    });
+      const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const previousMonthWorkforce = await prisma.user.count({
+        where: getOrganizationWhere(req, {
+          role: { in: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'] },
+          status: 'ACTIVE',
+          createdAt: { lt: startOfCurrentMonth }
+        })
+      });
 
-    let workforceChangePercent = 0;
-    if (previousMonthWorkforce > 0) {
-      workforceChangePercent = Math.round(
-        ((totalWorkforce - previousMonthWorkforce) / previousMonthWorkforce) * 100
-      );
+      let workforceChangePercent = 0;
+      if (previousMonthWorkforce > 0) {
+        workforceChangePercent = Math.round(
+          ((totalWorkforce - previousMonthWorkforce) / previousMonthWorkforce) * 100
+        );
+      }
+      workforceChangeText = `${workforceChangePercent >= 0 ? '+' : ''}${workforceChangePercent}% vs last mo`;
+    } catch (e) {
+      console.error('[Dashboard Overview] Failed to compute workforce:', e.message);
     }
-    const workforceChangeText = `${workforceChangePercent >= 0 ? '+' : ''}${workforceChangePercent}% vs last mo`;
 
-    // 2. PRESENT TODAY & LATE BADGE (Using Asia/Kolkata timezone & Attendance rules)
-    const startOfToday = getTodayZonedDate(now, timeZone);
-    const endOfToday = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000 - 1);
+    // 2. PRESENT TODAY & LATE BADGE
+    let totalAttending = 0;
+    let lateCount = 0;
+    let lateBadgeText = '0 late';
+    try {
+      const startOfToday = getTodayZonedDate(now, timeZone);
+      const endOfToday = new Date(startOfToday.getTime() + 24 * 60 * 60 * 1000 - 1);
 
-    const activeUserIds = (await prisma.user.findMany({
-      where: {
-        role: { in: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'] },
-        status: 'ACTIVE'
-      },
-      select: { id: true }
-    })).map(u => u.id);
+      const activeUserIds = (await prisma.user.findMany({
+        where: getOrganizationWhere(req, {
+          role: { in: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER'] },
+          status: 'ACTIVE'
+        }),
+        select: { id: true }
+      })).map(u => u.id);
 
-    const todayAttendances = await prisma.attendance.findMany({
-      where: {
-        date: { gte: startOfToday, lte: endOfToday },
-        userId: { in: activeUserIds }
+      if (activeUserIds.length > 0) {
+        const todayAttendances = await prisma.attendance.findMany({
+          where: {
+            date: { gte: startOfToday, lte: endOfToday },
+            userId: { in: activeUserIds }
+          }
+        });
+
+        const presentCount = todayAttendances.filter(a => a.status === 'PRESENT' || a.status === 'WORK_FROM_HOME').length;
+        lateCount = todayAttendances.filter(a => a.status === 'LATE').length;
+        const halfDayCount = todayAttendances.filter(a => a.status === 'HALF_DAY').length;
+
+        totalAttending = presentCount + lateCount + halfDayCount;
+        lateBadgeText = `${lateCount}\u00A0late`;
       }
-    });
+    } catch (e) {
+      console.error('[Dashboard Overview] Failed to compute attendance:', e.message);
+    }
 
-    const presentCount = todayAttendances.filter(a => a.status === 'PRESENT' || a.status === 'WORK_FROM_HOME').length;
-    const lateCount = todayAttendances.filter(a => a.status === 'LATE').length;
-    const halfDayCount = todayAttendances.filter(a => a.status === 'HALF_DAY').length;
+    // 3. ACTIVE DELIVERABLES & COMPLETED BADGE
+    let activeProjectsCount = 0;
+    let completedProjectsCount = 0;
+    let completedBadgeText = '0 completed';
+    try {
+      activeProjectsCount = await prisma.project.count({
+        where: getProjectWhere(req, {
+          isDeleted: false,
+          status: 'ACTIVE'
+        })
+      });
 
-    // Total attending = PRESENT + WORK_FROM_HOME + LATE + HALF_DAY
-    const totalAttending = presentCount + lateCount + halfDayCount;
-    const lateBadgeText = `${lateCount}\u00A0late`;
+      completedProjectsCount = await prisma.project.count({
+        where: getProjectWhere(req, {
+          isDeleted: false,
+          status: 'COMPLETED'
+        })
+      });
+      completedBadgeText = `${completedProjectsCount} completed`;
+    } catch (e) {
+      console.error('[Dashboard Overview] Failed to compute deliverables:', e.message);
+    }
 
-    // 3. ACTIVE DELIVERABLES (Active Projects) & COMPLETED BADGE (Completed Projects)
-    const activeProjectsCount = await prisma.project.count({
-      where: {
-        isDeleted: false,
-        status: 'ACTIVE'
-      }
-    });
+    // 4. OPEN SUPPORT TICKETS
+    let openSupportTickets = 0;
+    let supportBadgeText = 'All clear';
+    try {
+      openSupportTickets = await prisma.ticket.count({
+        where: getOrganizationWhere(req, {
+          status: { in: ['OPEN', 'ASSIGNED', 'IN_PROGRESS'] }
+        })
+      });
+      supportBadgeText = openSupportTickets > 0 ? 'Needs attention' : 'All clear';
+    } catch (e) {
+      console.error('[Dashboard Overview] Failed to compute tickets:', e.message);
+    }
 
-    const completedProjectsCount = await prisma.project.count({
-      where: {
-        isDeleted: false,
-        status: 'COMPLETED'
-      }
-    });
-    const completedBadgeText = `${completedProjectsCount} completed`;
-
-    // 4. OPEN SUPPORT TICKETS & STATUS BADGE
-    const openSupportTickets = await prisma.ticket.count({
-      where: {
-        status: { in: ['OPEN', 'ASSIGNED', 'IN_PROGRESS'] }
-      }
-    });
-
-    const supportBadgeText = openSupportTickets > 0 ? 'Needs attention' : 'All clear';
-
-    // 5. TASK VELOCITY & DELIVERABLES (Only tasks associated with valid projects)
-    const projectTasks = await prisma.task.findMany({
-      where: {
-        projectId: { not: null },
-        project: { isDeleted: false }
-      },
-      select: {
-        id: true,
-        status: true
-      }
-    });
-
-    const totalProjectTasks = projectTasks.length;
-    const pendingTasksCount = projectTasks.filter(t => t.status === 'PENDING').length;
-    const inProgressTasksCount = projectTasks.filter(t => t.status === 'IN_PROGRESS').length;
-    const reviewTasksCount = projectTasks.filter(t => t.status === 'WAITING_FOR_REVIEW').length;
-    const approvedTasksCount = projectTasks.filter(t => t.status === 'APPROVED' || t.status === 'COMPLETED').length;
-    const rejectedTasksCount = projectTasks.filter(t => t.status === 'REJECTED').length;
-
-    const taskCompletionPercent = totalProjectTasks > 0 ? Math.round((approvedTasksCount / totalProjectTasks) * 100) : 0;
-    const taskCompletedBadgeText = `${approvedTasksCount} completed (${taskCompletionPercent}%)`;
-
-    const taskVelocity = {
-      total: totalProjectTasks,
-      completed: approvedTasksCount,
-      completionPercentage: taskCompletionPercent,
-      completedBadgeText: taskCompletedBadgeText,
-      statusCounts: {
-        pending: pendingTasksCount,
-        inProgress: inProgressTasksCount,
-        review: reviewTasksCount,
-        approved: approvedTasksCount,
-        rejected: rejectedTasksCount
-      }
+    // 5. TASK VELOCITY
+    let taskVelocity = {
+      total: 0,
+      completed: 0,
+      completionPercentage: 0,
+      completedBadgeText: '0 completed (0%)',
+      statusCounts: { pending: 0, inProgress: 0, review: 0, approved: 0, rejected: 0 }
     };
+    try {
+      const projectTasks = await prisma.task.findMany({
+        where: getTaskWhere(req, {
+          projectId: { not: null },
+          project: { isDeleted: false }
+        }),
+        select: {
+          id: true,
+          status: true
+        }
+      });
+
+      const totalProjectTasks = projectTasks.length;
+      const pendingTasksCount = projectTasks.filter(t => t.status === 'PENDING').length;
+      const inProgressTasksCount = projectTasks.filter(t => t.status === 'IN_PROGRESS').length;
+      const reviewTasksCount = projectTasks.filter(t => t.status === 'WAITING_FOR_REVIEW').length;
+      const approvedTasksCount = projectTasks.filter(t => t.status === 'APPROVED' || t.status === 'COMPLETED').length;
+      const rejectedTasksCount = projectTasks.filter(t => t.status === 'REJECTED').length;
+
+      const taskCompletionPercent = totalProjectTasks > 0 ? Math.round((approvedTasksCount / totalProjectTasks) * 100) : 0;
+      const taskCompletedBadgeText = `${approvedTasksCount} completed (${taskCompletionPercent}%)`;
+
+      taskVelocity = {
+        total: totalProjectTasks,
+        completed: approvedTasksCount,
+        completionPercentage: taskCompletionPercent,
+        completedBadgeText: taskCompletedBadgeText,
+        statusCounts: {
+          pending: pendingTasksCount,
+          inProgress: inProgressTasksCount,
+          review: reviewTasksCount,
+          approved: approvedTasksCount,
+          rejected: rejectedTasksCount
+        }
+      };
+    } catch (e) {
+      console.error('[Dashboard Overview] Failed to compute task velocity:', e.message);
+    }
 
     return res.json({
       success: true,

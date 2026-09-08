@@ -1,0 +1,37 @@
+{
+  "policies": {
+    "cmteaqlih0000sj52wckjbgci": {
+      "allocationType": "MONTHLY",
+      "carryForwardEnabled": true,
+      "maxCarryForwardDays": 5,
+      "halfDayAllowed": true,
+      "workingDaysOnly": true,
+      "autoApproval": false
+    },
+    "cmtgsp8710000bb94ztamcrue": {
+      "allocationType": "ANNUAL",
+      "carryForwardEnabled": true,
+      "maxCarryForwardDays": 5,
+      "halfDayAllowed": true,
+      "workingDaysOnly": true,
+      "autoApproval": false
+    }
+  },
+  "types": {
+    "cmteaqlih0000sj52wckjbgci": [
+      "eaf391d8-80f6-4107-b620-fd767ba013b2",
+      "516e8c6d-7c28-4aa2-b433-f13784c1413f",
+      "d897c25c-5439-4ff1-bf2f-82faffc4e3b4",
+      "043ae905-62aa-46de-b188-97d03a2ddc9c"
+    ],
+    "cmtgsp8710000bb94ztamcrue": [
+      "eaf391d8-80f6-4107-b620-fd767ba013b2",
+      "516e8c6d-7c28-4aa2-b433-f13784c1413f",
+      "d897c25c-5439-4ff1-bf2f-82faffc4e3b4",
+      "043ae905-62aa-46de-b188-97d03a2ddc9c"
+    ],
+    "cmtil10ie0001sg5eo2jfx4ew": [
+      "6cc242ff-e7ce-43bc-b8b7-17a40e423313"
+    ]
+  }
+}

@@ -113,23 +113,27 @@ const init = (server) => {
     socketToUser.set(socket.id, strUserId);
 
     const isFirstSocket = !onlineUsers.has(strUserId);
+    const organizationId = socket.user?.organizationId || 'innoveity';
+
     if (isFirstSocket) {
       onlineUsers.set(strUserId, {
         userId: strUserId,
         name,
         role,
         teamId,
+        organizationId,
         connectedAt: new Date(),
         lastSeen: null,
         sockets: new Set([socket.id])
       });
-      console.log(`[PRESENCE ONLINE] userId: ${strUserId} (${name}) | Total Online: ${onlineUsers.size}`);
-      io.emit('user_online', { id: strUserId, userId: strUserId, name, role, connectedAt: new Date() });
+      console.log(`[PRESENCE ONLINE] userId: ${strUserId} (${name}) | Org: ${organizationId} | Total Online: ${onlineUsers.size}`);
+      io.to(`org_${organizationId}`).emit('user_online', { id: strUserId, userId: strUserId, name, role, organizationId, connectedAt: new Date() });
     } else {
       const userEntry = onlineUsers.get(strUserId);
       userEntry.sockets.add(socket.id);
       userEntry.name = name || userEntry.name;
       userEntry.role = role || userEntry.role;
+      userEntry.organizationId = organizationId || userEntry.organizationId;
       if (teamId) userEntry.teamId = teamId;
     }
 
@@ -137,19 +141,35 @@ const init = (server) => {
 
     // Standard room joins
     socket.join('global');
+    socket.join(`org_${organizationId}`);
     socket.join(`user_${strUserId}`);
     if (teamId) socket.join(`team_${teamId}`);
     if (role === 'ADMIN') socket.join('admins');
     else if (role === 'TEAM_LEADER') socket.join('leaders');
 
-    // Broadcast updated online list
-    const activeList = getOnlineUsersPayload();
-    socket.emit('online_users', activeList);
-    io.emit('online_users', activeList);
+    // Helper for sending organization-scoped online users payload
+    const sendOnlineUsersToSocket = (targetSocket) => {
+      const isSuperAdmin = targetSocket.user?.role === 'SUPER_ADMIN';
+      const userOrgId = targetSocket.user?.organizationId;
+      const list = Array.from(onlineUsers.values())
+        .filter(info => isSuperAdmin || !userOrgId || info.organizationId === userOrgId)
+        .map(info => ({
+          id: String(info.userId),
+          userId: String(info.userId),
+          name: info.name,
+          role: info.role,
+          organizationId: info.organizationId,
+          connectedAt: info.connectedAt,
+          lastSeen: info.lastSeen
+        }));
+      targetSocket.emit('online_users', list);
+    };
+
+    sendOnlineUsersToSocket(socket);
 
     // Explicit request to get online users list
     socket.on('get_online_users', () => {
-      socket.emit('online_users', getOnlineUsersPayload());
+      sendOnlineUsersToSocket(socket);
     });
 
     // Dynamic register / metadata update
@@ -303,13 +323,43 @@ const getIo = () => {
 // Broadcast attendance real-time event
 const broadcastAttendanceEvent = (eventName, data) => {
   if (!io) return;
-  io.emit(eventName, data);
+  const payload = {
+    ...data,
+    organizationId: data?.organizationId || data?.record?.organizationId || data?.user?.organizationId
+  };
+  if (payload.organizationId) {
+    io.to(`org_${payload.organizationId}`).emit(eventName, payload);
+  }
+  io.emit(eventName, payload);
 };
 
 // Broadcast team performance update signal
 const broadcastTeamPerformanceUpdate = () => {
   if (!io) return;
   io.emit('team_performance_updated');
+};
+
+/**
+ * Disconnects all active sockets belonging to a suspended organization (excluding Super Admin).
+ * Emits 'organization_suspended' notice before disconnecting sockets.
+ */
+const disconnectOrganizationSockets = (organizationId) => {
+  if (!io || !organizationId) return;
+
+  const roomName = `org_${organizationId}`;
+  const roomSockets = io.sockets.adapter.rooms.get(roomName);
+
+  if (roomSockets) {
+    for (const socketId of roomSockets) {
+      const clientSocket = io.sockets.sockets.get(socketId);
+      if (clientSocket && clientSocket.user && clientSocket.user.role !== 'SUPER_ADMIN') {
+        clientSocket.emit('organization_suspended', {
+          message: 'Your organization has been suspended by system administrator. You have been logged out.'
+        });
+        clientSocket.disconnect(true);
+      }
+    }
+  }
 };
 
 module.exports = {
@@ -321,6 +371,7 @@ module.exports = {
   getOnlineUsers,
   isUserOnline,
   disconnectUserSocket,
+  disconnectOrganizationSockets,
   broadcastAttendanceEvent,
   broadcastTeamPerformanceUpdate
 };

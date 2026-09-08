@@ -1,5 +1,6 @@
 const prisma = require('../utils/db');
 const { resolveMonthlyCalendar } = require('../services/calendarResolverService');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 
 /**
  * GET /api/work-calendar
@@ -18,10 +19,13 @@ const getCalendar = async (req, res) => {
       return res.status(400).json({ message: 'Year must be a valid 4-digit year.' });
     }
 
+    const targetOrgId = getEffectiveOrgId(req);
+
     const calendarData = await resolveMonthlyCalendar({
       user: req.user,
       month,
-      year
+      year,
+      organizationId: targetOrgId
     });
 
     return res.json({
@@ -42,6 +46,7 @@ const getCalendar = async (req, res) => {
 const createOverride = async (req, res) => {
   try {
     const { date, status, title, reason, isPermanent } = req.body;
+    const targetOrgId = getEffectiveOrgId(req);
 
     if (!date) {
       return res.status(400).json({ message: 'Date string (YYYY-MM-DD) is required.' });
@@ -70,13 +75,21 @@ const createOverride = async (req, res) => {
     const cleanTitle = typeof title === 'string' ? (title.trim() || null) : null;
     const cleanReason = typeof reason === 'string' ? (reason.trim() || null) : null;
 
+    const orgFilter = targetOrgId ? {
+      OR: [
+        { organizationId: targetOrgId },
+        { organizationId: null, createdBy: { organizationId: targetOrgId } }
+      ]
+    } : {};
+
     if (isPerm) {
-      // Check if permanent rule exists for this month & day
+      // Check if permanent rule exists for this month & day for this organization
       const existingPerm = await prisma.workCalendar.findFirst({
         where: {
           isPermanent: true,
           recurrenceMonth,
-          recurrenceDay
+          recurrenceDay,
+          ...orgFilter
         }
       });
 
@@ -87,7 +100,8 @@ const createOverride = async (req, res) => {
             status,
             title: cleanTitle,
             reason: cleanReason,
-            createdById: req.user.id
+            createdById: req.user.id,
+            ...(targetOrgId ? { organizationId: targetOrgId } : {})
           }
         });
       } else {
@@ -100,16 +114,18 @@ const createOverride = async (req, res) => {
             isPermanent: true,
             recurrenceMonth,
             recurrenceDay,
-            createdById: req.user.id
+            createdById: req.user.id,
+            ...(targetOrgId ? { organizationId: targetOrgId } : {})
           }
         });
       }
     } else {
-      // Check if specific date override exists
+      // Check if specific date override exists for this organization
       const existingOverride = await prisma.workCalendar.findFirst({
         where: {
           date: dateObj,
-          isPermanent: false
+          isPermanent: false,
+          ...orgFilter
         }
       });
 
@@ -120,7 +136,8 @@ const createOverride = async (req, res) => {
             status,
             title: cleanTitle,
             reason: cleanReason,
-            createdById: req.user.id
+            createdById: req.user.id,
+            ...(targetOrgId ? { organizationId: targetOrgId } : {})
           }
         });
       } else {
@@ -131,7 +148,8 @@ const createOverride = async (req, res) => {
             title: cleanTitle,
             reason: cleanReason,
             isPermanent: false,
-            createdById: req.user.id
+            createdById: req.user.id,
+            ...(targetOrgId ? { organizationId: targetOrgId } : {})
           }
         });
       }

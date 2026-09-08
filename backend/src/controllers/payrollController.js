@@ -2,6 +2,7 @@ const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
 const { isPayrollEligibleUser } = require('../utils/payrollHelper');
+const { getEffectiveOrgId, assertOrganizationAccess } = require('../utils/organizationScope');
 const crypto = require('crypto');
 
 // Helper to calculate itemized salary for a user in a given month/year
@@ -10,7 +11,7 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
   const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59));
   const workingDays = endDate.getUTCDate();
 
-  const settings = inputSettings || (await prisma.systemSettings.findFirst()) || {};
+  const settings = inputSettings || (user.organizationId ? await prisma.payrollSettings.findFirst({ where: { organizationId: user.organizationId } }) : null) || {};
 
   // 1. Fetch user's assigned salary structure (NO fallback to template)
   const structure = await prisma.salaryStructure.findUnique({
@@ -93,7 +94,8 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
   // Fetch company holidays in selected month
   const holidays = await prisma.holidayCalendar.findMany({
     where: {
-      date: { gte: startDate, lte: endDate }
+      date: { gte: startDate, lte: endDate },
+      ...(user.organizationId ? { organizationId: user.organizationId } : {})
     }
   });
   const holidayDatesStr = new Set(holidays.map(h => new Date(h.date).toISOString().split('T')[0]));
@@ -219,6 +221,8 @@ const processPayrollBatch = async (req, res) => {
     }
 
     const { month, year, userIds } = req.body;
+    const targetOrgId = getEffectiveOrgId(req);
+
     if (!month || !year) {
       return res.status(400).json({ success: false, message: 'Month and year parameters are required.' });
     }
@@ -226,19 +230,33 @@ const processPayrollBatch = async (req, res) => {
     const m = Number(month);
     const y = Number(year);
 
-    const settings = await prisma.payrollSettings.findUnique({ where: { id: 'GLOBAL' } }) || {};
+    const settings = (targetOrgId ? await prisma.payrollSettings.findFirst({ where: { organizationId: targetOrgId } }) : null) || {};
 
     let targetUsers = [];
     if (Array.isArray(userIds) && userIds.length > 0) {
-      targetUsers = await prisma.user.findMany({ where: { id: { in: userIds } } });
+      targetUsers = await prisma.user.findMany({
+        where: {
+          id: { in: userIds },
+          ...(targetOrgId ? { organizationId: targetOrgId } : {})
+        }
+      });
     } else {
-      const allActive = await prisma.user.findMany({ where: { status: 'ACTIVE' } });
+      const allActive = await prisma.user.findMany({
+        where: {
+          status: 'ACTIVE',
+          ...(targetOrgId ? { organizationId: targetOrgId } : {})
+        }
+      });
       targetUsers = allActive.filter(isPayrollEligibleUser);
     }
 
-    // Check existing batch
-    let batch = await prisma.payrollBatch.findUnique({
-      where: { month_year: { month: m, year: y } }
+    // Check existing batch for month, year, and organizationId
+    let batch = await prisma.payrollBatch.findFirst({
+      where: {
+        month: m,
+        year: y,
+        ...(targetOrgId ? { organizationId: targetOrgId } : {})
+      }
     });
 
     if (batch && ['LOCKED', 'PUBLISHED', 'COMPLETED'].includes(batch.status)) {
@@ -252,6 +270,10 @@ const processPayrollBatch = async (req, res) => {
 
     for (const u of targetUsers) {
       const ps = await calculateUserPayroll(u, m, y, settings);
+      // Skip users without an assigned salary structure (prevent zero-salary placeholder payslips)
+      if (ps.allowancesJson?.structureAssigned === false || (ps.basicSalary === 0 && ps.grossSalary === 0 && ps.netSalary === 0)) {
+        continue;
+      }
       totalGross += ps.grossSalary;
       totalDeductions += (ps.grossSalary - ps.netSalary);
       totalNet += ps.netSalary;
@@ -261,10 +283,11 @@ const processPayrollBatch = async (req, res) => {
     if (!batch) {
       batch = await prisma.payrollBatch.create({
         data: {
+          organizationId: targetOrgId || null,
           month: m,
           year: y,
           status: 'PREVIEW',
-          totalEmployees: targetUsers.length,
+          totalEmployees: payslipsData.length,
           totalGross: Math.round(totalGross),
           totalDeductions: Math.round(totalDeductions),
           totalNet: Math.round(totalNet),
@@ -276,7 +299,7 @@ const processPayrollBatch = async (req, res) => {
         where: { id: batch.id },
         data: {
           status: 'PREVIEW',
-          totalEmployees: targetUsers.length,
+          totalEmployees: payslipsData.length,
           totalGross: Math.round(totalGross),
           totalDeductions: Math.round(totalDeductions),
           totalNet: Math.round(totalNet),
@@ -289,13 +312,14 @@ const processPayrollBatch = async (req, res) => {
     for (const psData of payslipsData) {
       await prisma.payslip.upsert({
         where: { batchId_userId: { batchId: batch.id, userId: psData.userId } },
-        update: { ...psData, status: 'PREVIEW' },
-        create: { ...psData, batchId: batch.id, status: 'PREVIEW' }
+        update: { ...psData, organizationId: targetOrgId || null, status: 'PREVIEW' },
+        create: { ...psData, batchId: batch.id, organizationId: targetOrgId || null, status: 'PREVIEW' }
       });
     }
 
     await logActivity({
       userId: req.user.id,
+      organizationId: targetOrgId,
       action: 'PAYROLL_GENERATE',
       details: `Processed payroll preview batch for ${m}/${y} (${targetUsers.length} employees, Net: ₹${Math.round(totalNet)})`
     });
@@ -331,14 +355,20 @@ const getPayrollBatches = async (req, res) => {
     }
 
     const { month, year } = req.query;
+    const targetOrgId = getEffectiveOrgId(req);
+
     const where = {};
     if (month) where.month = Number(month);
     if (year) where.year = Number(year);
 
+    if (targetOrgId) {
+      where.organizationId = targetOrgId;
+    }
+
     const batches = await prisma.payrollBatch.findMany({
       where,
       include: {
-        processedBy: { select: { id: true, name: true, role: true } }
+        processedBy: { select: { id: true, name: true, role: true, organizationId: true } }
       },
       orderBy: [{ year: 'desc' }, { month: 'desc' }]
     });
@@ -374,8 +404,11 @@ const getPayrollBatchById = async (req, res) => {
       return res.status(404).json({ message: 'Payroll batch not found.' });
     }
 
+    assertOrganizationAccess(batch, req);
+
     res.json(batch);
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ message: error.message });
     console.error('Get payroll batch error:', error);
     res.status(500).json({ message: 'Failed to retrieve payroll batch.' });
   }
@@ -392,6 +425,8 @@ const lockPayrollBatch = async (req, res) => {
     const batch = await prisma.payrollBatch.findUnique({ where: { id } });
     if (!batch) return res.status(404).json({ message: 'Batch not found.' });
 
+    assertOrganizationAccess(batch, req);
+
     const updated = await prisma.payrollBatch.update({
       where: { id },
       data: {
@@ -407,12 +442,14 @@ const lockPayrollBatch = async (req, res) => {
 
     await logActivity({
       userId: req.user.id,
+      organizationId: batch.organizationId,
       action: 'PAYROLL_LOCK',
       details: `Locked payroll batch for ${batch.month}/${batch.year}`
     });
 
     res.json(updated);
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ message: error.message });
     console.error('Lock payroll batch error:', error);
     res.status(500).json({ message: 'Failed to lock payroll batch.' });
   }
@@ -426,6 +463,11 @@ const reviewPayrollBatch = async (req, res) => {
     }
 
     const { id } = req.params;
+    const batch = await prisma.payrollBatch.findUnique({ where: { id } });
+    if (!batch) return res.status(404).json({ message: 'Batch not found.' });
+
+    assertOrganizationAccess(batch, req);
+
     const updated = await prisma.payrollBatch.update({
       where: { id },
       data: { status: 'REVIEW' }
@@ -433,6 +475,7 @@ const reviewPayrollBatch = async (req, res) => {
 
     res.json(updated);
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ message: error.message });
     console.error('Review payroll batch error:', error);
     res.status(500).json({ message: 'Failed to update review status.' });
   }
@@ -453,17 +496,25 @@ const publishPayrollBatch = async (req, res) => {
 
     if (!batch) return res.status(404).json({ message: 'Batch not found.' });
 
+    assertOrganizationAccess(batch, req);
+
+    const targetOrgId = getEffectiveOrgId(req) || batch.organizationId;
+
     const updated = await prisma.payrollBatch.update({
       where: { id },
       data: {
         status: 'PUBLISHED',
-        publishedAt: new Date()
+        publishedAt: new Date(),
+        organizationId: targetOrgId || null
       }
     });
 
     await prisma.payslip.updateMany({
       where: { batchId: id },
-      data: { status: 'PUBLISHED' }
+      data: {
+        status: 'PUBLISHED',
+        organizationId: targetOrgId || null
+      }
     });
 
     // Notify all affected users
@@ -478,12 +529,14 @@ const publishPayrollBatch = async (req, res) => {
 
     await logActivity({
       userId: req.user.id,
+      organizationId: targetOrgId,
       action: 'PAYROLL_PUBLISH',
       details: `Published payroll batch for ${batch.month}/${batch.year} (${batch.totalEmployees} payslips)`
     });
 
     res.json(updated);
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ message: error.message });
     console.error('Publish payroll batch error:', error);
     res.status(500).json({ message: 'Failed to publish payroll batch.' });
   }
@@ -499,6 +552,8 @@ const rollbackPayrollBatch = async (req, res) => {
     const { id } = req.params;
     const batch = await prisma.payrollBatch.findUnique({ where: { id } });
     if (!batch) return res.status(404).json({ success: false, message: 'Batch not found.' });
+
+    assertOrganizationAccess(batch, req);
 
     if (batch.status === 'PUBLISHED') {
       return res.status(400).json({ success: false, message: 'Published payroll batches cannot be rolled back.' });
@@ -516,6 +571,7 @@ const rollbackPayrollBatch = async (req, res) => {
 
     await logActivity({
       userId: req.user.id,
+      organizationId: batch.organizationId,
       action: 'PAYROLL_ROLLBACK',
       details: `Rolled back payroll batch for ${batch.month}/${batch.year}`
     });
@@ -539,8 +595,85 @@ const rollbackPayrollBatch = async (req, res) => {
       ...fullBatch
     });
   } catch (error) {
+    if (error.statusCode === 403) return res.status(403).json({ success: false, message: error.message });
     console.error('Rollback payroll batch error:', error);
     res.status(500).json({ success: false, message: error.message || 'Failed to rollback payroll batch.' });
+  }
+};
+
+// Reset payroll module data for current organization
+const resetPayrollData = async (req, res) => {
+  try {
+    const targetOrgId = getEffectiveOrgId(req);
+    if (!targetOrgId) {
+      return res.status(400).json({ success: false, message: 'Organization ID is required to reset payroll data.' });
+    }
+
+    // 1. Delete Payslips for this org
+    const deletedPayslips = await prisma.payslip.deleteMany({
+      where: { organizationId: targetOrgId }
+    });
+
+    // 2. Delete PayrollBatches for this org
+    const deletedBatches = await prisma.payrollBatch.deleteMany({
+      where: { organizationId: targetOrgId }
+    });
+
+    // 3. Delete SalaryRevisions for this org
+    const deletedRevisions = await prisma.salaryRevision.deleteMany({
+      where: { organizationId: targetOrgId }
+    });
+
+    // 4. Delete SalaryStructures for this org
+    const deletedStructures = await prisma.salaryStructure.deleteMany({
+      where: { organizationId: targetOrgId }
+    });
+
+    // 5. Reset PayrollSettings for this org back to default baseline if customized
+    const existingSettings = await prisma.payrollSettings.findFirst({
+      where: { organizationId: targetOrgId }
+    });
+
+    if (existingSettings) {
+      await prisma.payrollSettings.update({
+        where: { id: existingSettings.id },
+        data: {
+          cycleStartDay: 1,
+          payDay: 30,
+          currency: 'INR',
+          overtimeHourlyRate: 150.0,
+          holidayPayMultiplier: 2.0,
+          weekendPayMultiplier: 1.5,
+          lateDeductionRule: 'FLAT_RATE',
+          lateDeductionRate: 100.0,
+          halfDayDeductionRate: 0.5,
+          minimumWorkingHours: 4.0,
+          roundingRule: 'ROUND_HALF_UP',
+          payslipTemplate: 'STANDARD'
+        }
+      });
+    }
+
+    await logActivity({
+      userId: req.user.id,
+      organizationId: targetOrgId,
+      action: 'PAYROLL_RESET',
+      details: `Reset payroll data for organization ${targetOrgId}: deleted ${deletedPayslips.count} payslips, ${deletedBatches.count} batches, ${deletedRevisions.count} revisions, ${deletedStructures.count} salary structures.`
+    });
+
+    res.json({
+      success: true,
+      message: 'Payroll module data reset successfully.',
+      deleted: {
+        payslips: deletedPayslips.count,
+        batches: deletedBatches.count,
+        revisions: deletedRevisions.count,
+        salaryStructures: deletedStructures.count
+      }
+    });
+  } catch (error) {
+    console.error('Reset payroll data error:', error);
+    res.status(500).json({ success: false, message: error.message || 'Failed to reset payroll data.' });
   }
 };
 
@@ -552,5 +685,7 @@ module.exports = {
   lockPayrollBatch,
   reviewPayrollBatch,
   publishPayrollBatch,
-  rollbackPayrollBatch
+  rollbackPayrollBatch,
+  resetPayrollData
 };
+

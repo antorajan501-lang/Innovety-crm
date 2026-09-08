@@ -14,6 +14,17 @@ const authenticate = async (req, res, next) => {
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
       include: {
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            logo: true,
+            status: true,
+            companyCode: true,
+            timezone: true
+          }
+        },
         teamMembers: {
           include: { team: true }
         }
@@ -42,15 +53,36 @@ const requireRole = (allowedRoles) => {
       return res.status(401).json({ message: 'Authentication required.' });
     }
 
-    if (!allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({ message: 'Access denied: Insufficient privileges.' });
+    if (req.user.role === 'SUPER_ADMIN' || allowedRoles.includes(req.user.role)) {
+      return next();
     }
 
-    next();
+    return res.status(403).json({ message: 'Access denied: Insufficient privileges.' });
   };
+};
+
+/**
+ * Centralized middleware that blocks requests from users belonging to a SUSPENDED organization.
+ * SUPER_ADMIN users bypass this restriction.
+ */
+const requireOrganizationActive = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ message: 'Authentication required.' });
+  }
+
+  if (req.user.role === 'SUPER_ADMIN') {
+    return next();
+  }
+
+  if (req.user.organization && req.user.organization.status === 'SUSPENDED') {
+    return res.status(403).json({ message: 'Your organization has been suspended. Please contact your system administrator.' });
+  }
+
+  next();
 };
 
 module.exports = {
   authenticate,
-  requireRole
+  requireRole,
+  requireOrganizationActive
 };

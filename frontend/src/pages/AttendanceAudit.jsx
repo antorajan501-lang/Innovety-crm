@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
+import CompanyLeaveAuditModal from '../components/attendance/CompanyLeaveAuditModal';
 import {
   Search,
   Filter,
@@ -16,7 +19,8 @@ import {
   CheckCircle,
   XCircle,
   Phone,
-  RotateCcw
+  RotateCcw,
+  FileSpreadsheet
 } from 'lucide-react';
 
 const QUICK_FILTERS = [
@@ -143,6 +147,14 @@ const parseLocalToISO = (datetimeLocalStr) => {
 
 const AttendanceAudit = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+  }, [targetOrg]);
+
   const [logs, setLogs] = useState([]);
   const [stats, setStats] = useState({
     totalInterns: 0,
@@ -186,10 +198,13 @@ const AttendanceAudit = () => {
 
   // Letter view modal
   const [viewingLetter, setViewingLetter] = useState(null);
+  const [leaveReportModalOpen, setLeaveReportModalOpen] = useState(false);
 
   const fetchAllLeaves = async () => {
     try {
-      const res = await api.get('/leaves');
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get('/leaves', { params });
       setLeaves(res.data || []);
     } catch (e) {
       console.error(e);
@@ -217,7 +232,10 @@ const AttendanceAudit = () => {
 
   const fetchUsersList = async () => {
     try {
-      const res = await api.get('/users?limit=1000&status=ACTIVE');
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const params = { limit: 1000, status: 'ACTIVE' };
+      if (targetOrg) params.organizationId = targetOrg;
+      const res = await api.get('/users', { params });
       const eligibleMembers = (res.data.users || []).filter(
         u => u.role !== 'ADMIN' && u.role !== 'SUPER_ADMIN'
       );
@@ -236,34 +254,48 @@ const AttendanceAudit = () => {
     try {
       setLoading(true);
       const activeFilters = customParams || filtersRef.current;
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const queryParams = {
+        userId: activeFilters.userIdFilter || undefined,
+        status: activeFilters.statusFilter || undefined,
+        startDate: activeFilters.startDate || undefined,
+        endDate: activeFilters.endDate || undefined
+      };
+      if (targetOrg) queryParams.organizationId = targetOrg;
+
       const [logsRes, statsRes] = await Promise.all([
-        api.get('/attendance/logs', {
-          params: {
-            userId: activeFilters.userIdFilter || undefined,
-            status: activeFilters.statusFilter || undefined,
-            startDate: activeFilters.startDate || undefined,
-            endDate: activeFilters.endDate || undefined
-          }
-        }),
-        api.get('/attendance/analytics')
+        api.get('/attendance/logs', { params: queryParams }),
+        api.get('/attendance/analytics', { params: targetOrg ? { organizationId: targetOrg } : {} })
       ]);
-
-      let logsData = logsRes.data || [];
-      if (activeFilters.statusFilter) {
-        logsData = logsData.filter(log => log.status === activeFilters.statusFilter);
+      setLogs(logsRes.data || []);
+      if (statsRes.data) {
+        setStats({
+          totalInterns: statsRes.data.totalMembers || statsRes.data.totalInterns || 0,
+          presentToday: statsRes.data.presentToday || 0,
+          lateToday: statsRes.data.lateToday || 0,
+          halfDayToday: statsRes.data.halfDayToday || 0,
+          absentToday: statsRes.data.absentToday || 0
+        });
       }
-      if (activeFilters.userIdFilter) {
-        logsData = logsData.filter(log => log.userId === activeFilters.userIdFilter);
-      }
-
-      setLogs(logsData);
-      setStats(statsRes.data);
       setLoading(false);
     } catch (err) {
       console.error(err);
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    setLogs([]);
+    setAllInterns([]);
+    setLeaves([]);
+    setStats({ totalInterns: 0, presentToday: 0, lateToday: 0, halfDayToday: 0, absentToday: 0 });
+    setUserIdFilter('');
+    setStatusFilter('');
+    setSearchQuery('');
+    fetchUsersList();
+    fetchAllLeaves();
+    fetchLogsAndAnalytics();
+  }, [targetOrg, user?.organizationId]);
 
   const formatLeavePeriod = (startDate, endDate) => {
     if (!startDate) return 'N/A';
@@ -303,7 +335,7 @@ const AttendanceAudit = () => {
     }, 4000);
 
     return () => clearInterval(pollInterval);
-  }, []);
+  }, [selectedOrgId]);
 
   useEffect(() => {
     fetchLogsAndAnalytics({ userIdFilter, statusFilter, startDate, endDate });
@@ -582,6 +614,7 @@ const AttendanceAudit = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <CompanyScopeSelector />
       {alertMsg && (
         <div className="flex items-center justify-between p-4 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-semibold">
           <span>{alertMsg}</span>
@@ -590,13 +623,15 @@ const AttendanceAudit = () => {
       )}
 
       {/* Page Title Header */}
-      <div className="flex flex-col text-left space-y-1">
-        <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
-          Attendance Audit
-        </h1>
-        <p className="text-sm text-muted-foreground font-medium">
-          Monitor employee attendance records, and daily activity.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+            Attendance Audit
+          </h1>
+          <p className="text-sm text-muted-foreground font-medium">
+            Monitor employee attendance records, and daily activity.
+          </p>
+        </div>
       </div>
 
       {/* Main Attendance Audit Logs Panel */}
@@ -754,7 +789,7 @@ const AttendanceAudit = () => {
                 {filteredLogs.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-6 py-10 text-center text-muted-foreground whitespace-nowrap">
-                      No attendance logs match selected filters.
+                      No attendance records found{selectedCompany?.name ? ` for ${selectedCompany.name}` : ''}.
                     </td>
                   </tr>
                 ) : (

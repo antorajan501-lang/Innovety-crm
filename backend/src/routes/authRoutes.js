@@ -8,12 +8,14 @@ const {
   forgotPassword,
   verifyResetOtp,
   resetPassword,
-  removeProfilePicture
+  removeProfilePicture,
+  refreshToken
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 router.post('/login', login);
+router.post('/refresh', refreshToken);
 router.post('/forgot-password', forgotPassword);
 router.post('/verify-reset-otp', verifyResetOtp);
 router.post('/reset-password', resetPassword);
@@ -25,6 +27,7 @@ const profileUpload = upload.fields([
 
 // Protected routes
 router.get('/profile', authenticate, getProfile);
+router.get('/me', authenticate, getProfile);
 router.put('/profile', authenticate, profileUpload, updateProfile);
 router.put('/change-password', authenticate, changePassword);
 router.delete('/profile/picture', authenticate, removeProfilePicture);

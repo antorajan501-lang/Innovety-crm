@@ -1,4 +1,5 @@
 const prisma = require('../utils/db');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 
 // 1. Financial Summary & Department Analytics
 const getPayrollReportsSummary = async (req, res) => {
@@ -9,15 +10,20 @@ const getPayrollReportsSummary = async (req, res) => {
     }
 
     const { month, year } = req.query;
+    const targetOrgId = getEffectiveOrgId(req);
 
     const whereClause = { status: 'PUBLISHED' };
     if (month) whereClause.month = Number(month);
     if (year) whereClause.year = Number(year);
 
+    if (targetOrgId) {
+      whereClause.organizationId = targetOrgId;
+    }
+
     const publishedPayslips = await prisma.payslip.findMany({
       where: whereClause,
       include: {
-        user: { select: { id: true, name: true, role: true, department: true, employeeId: true } },
+        user: { select: { id: true, name: true, role: true, department: true, employeeId: true, organizationId: true } },
         batch: true
       }
     });
@@ -54,8 +60,11 @@ const getPayrollReportsSummary = async (req, res) => {
 
     const departmentBreakdown = Object.values(departmentMap);
 
-    // Monthly Trend (Last 6 Batches)
+    // Monthly Trend (Last 6 Batches for selected company)
+    const batchWhere = targetOrgId ? { organizationId: targetOrgId } : {};
+
     const recentBatches = await prisma.payrollBatch.findMany({
+      where: batchWhere,
       take: 6,
       orderBy: [{ year: 'desc' }, { month: 'desc' }]
     });

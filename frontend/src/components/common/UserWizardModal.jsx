@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { X, ChevronRight, ChevronLeft, UserCheck, CheckCircle2, AlertCircle, UploadCloud, FileText, Trash2 } from 'lucide-react';
+import { X, ChevronRight, ChevronLeft, UserCheck, CheckCircle2, AlertCircle, UploadCloud, FileText, Trash2, Building2 } from 'lucide-react';
 import api from '../../services/api';
+import { useAuth } from '../../context/AuthContext';
 
 const CANDIDATE_TYPES = [
   { id: 'Student', title: 'Student', desc: 'Currently enrolled in college / university' },
@@ -19,8 +20,10 @@ const UserWizardModal = ({
   targetRole = 'EMPLOYEE',
   loading = false
 }) => {
+  const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [orgTree, setOrgTree] = useState(null);
+  const [organizations, setOrganizations] = useState([]);
   const [treeLoading, setTreeLoading] = useState(false);
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState('');
@@ -90,6 +93,7 @@ const UserWizardModal = ({
         phone: data.phone || '',
         dob: data.dob ? new Date(data.dob).toISOString().split('T')[0] : '',
         gender: data.gender || 'Male',
+        organizationId: data.organizationId || data.organization?.id || '',
         branchId: data.branchId || '',
         departmentId: data.departmentId || '',
         designationId: data.designationId || '',
@@ -115,6 +119,30 @@ const UserWizardModal = ({
       setDragActive(false);
     }
   }, [isOpen, initialId, targetRole]);
+
+  // Fetch active companies for Super Admin selection
+  useEffect(() => {
+    if (!isOpen) return;
+    const fetchOrgs = async () => {
+      try {
+        const res = await api.get('/organizations');
+        const list = res.data.organizations || res.data || [];
+        setOrganizations(list);
+        if (list.length > 0) {
+          setForm(prev => {
+            if (!prev.organizationId) {
+              const innoveity = list.find(o => o.slug === 'innoveity');
+              return { ...prev, organizationId: innoveity?.id || list[0]?.id || '' };
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.error('Failed to fetch organizations for wizard:', err);
+      }
+    };
+    fetchOrgs();
+  }, [isOpen]);
 
   // Fetch dynamic org tree & reporting managers
   useEffect(() => {
@@ -400,6 +428,7 @@ const UserWizardModal = ({
         candidateType: form.candidateType,
         role: targetRole,
         targetRole,
+        organizationId: form.organizationId || null,
         positionId: form.positionId || null,
         branchId: form.branchId || null,
         departmentId: form.departmentId || null,
@@ -1079,6 +1108,35 @@ const UserWizardModal = ({
           {/* STEP 3: ORGANIZATION & POSITION */}
           {step === 3 && (
             <div className="space-y-4">
+              {/* Super Admin Company / Organization Selector */}
+              {user?.role === 'SUPER_ADMIN' && (
+                <div className="p-3.5 rounded-2xl bg-primary/5 border border-primary/20 space-y-1.5">
+                  <label className="block text-xs font-extrabold text-foreground flex items-center gap-1.5">
+                    <Building2 className="h-4 w-4 text-primary" />
+                    <span>Target Organization / Tenant Company *</span>
+                  </label>
+                  <select
+                    name="organizationId"
+                    value={form.organizationId || ''}
+                    onChange={handleChange}
+                    className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-primary/30 bg-background cursor-pointer focus:ring-2 focus:ring-primary/20"
+                  >
+                    {organizations.length === 0 ? (
+                      <option value="">Loading Companies...</option>
+                    ) : (
+                      organizations.map(org => (
+                        <option key={org.id} value={org.id} disabled={org.status === 'SUSPENDED'}>
+                          {org.name} ({org.companyCode}) {org.status === 'SUSPENDED' ? '— [SUSPENDED]' : org.slug === 'innoveity' ? '— Default Tenant' : ''}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground font-medium">
+                    Super Admin assignment: Assign this employee/user to a tenant company (defaults to INNOVEITY).
+                  </p>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-foreground mb-1">Department *</label>

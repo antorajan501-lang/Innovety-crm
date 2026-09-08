@@ -31,8 +31,9 @@ import {
 } from 'lucide-react';
 import UserWizardModal from '../components/common/UserWizardModal';
 import PromoteUserModal from '../components/common/PromoteUserModal';
-
 import { useAuth } from '../context/AuthContext';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 
 const TeamLeaders = () => {
   const navigate = useNavigate();
@@ -40,6 +41,9 @@ const TeamLeaders = () => {
   const urlSearch = new URLSearchParams(location.search).get('search') || '';
 
   const { user: currentUser } = useAuth();
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || currentUser?.organizationId);
   const [users, setUsers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
@@ -126,7 +130,8 @@ const TeamLeaders = () => {
           status: statusFilter,
           department: departmentFilter,
           position: roleFilter,
-          limit: 50
+          limit: 50,
+          organizationId: targetOrg
         }
       });
       const fetchedUsers = res.data.users || [];
@@ -155,7 +160,7 @@ const TeamLeaders = () => {
     };
     window.addEventListener('crm-user-promoted', handleUserPromoted);
     return () => window.removeEventListener('crm-user-promoted', handleUserPromoted);
-  }, [page, statusFilter, roleFilter, departmentFilter]);
+  }, [page, statusFilter, roleFilter, departmentFilter, targetOrg, currentUser?.organizationId]);
 
   const displayUsers = React.useMemo(() => {
     return users.filter((u) => {
@@ -456,6 +461,8 @@ const TeamLeaders = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <CompanyScopeSelector />
+
       {/* Alert Header Banner */}
       {alertMsg.text && (
         <div className={`flex items-center gap-2 p-4 rounded-xl border ${alertMsg.type === 'success' ? 'bg-primary/10 border-primary/20 text-primary' : 'bg-red-500/10 border-red-500/20 text-red-500'}`}>

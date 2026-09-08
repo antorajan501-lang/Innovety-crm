@@ -1,17 +1,64 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 
-// 1. Get Global Payroll Settings
+// 1. Get Company-Scoped Payroll Settings
 const getPayrollSettings = async (req, res) => {
   try {
-    let settings = await prisma.payrollSettings.findUnique({
-      where: { id: 'GLOBAL' }
-    });
+    const targetOrgId = getEffectiveOrgId(req);
+
+    let settings = null;
+    if (targetOrgId) {
+      settings = await prisma.payrollSettings.findFirst({
+        where: { organizationId: targetOrgId }
+      });
+    }
 
     if (!settings) {
-      settings = await prisma.payrollSettings.create({
-        data: { id: 'GLOBAL' }
-      });
+      const org = targetOrgId ? await prisma.organization.findUnique({ where: { id: targetOrgId } }) : null;
+      const defaultName = org?.name || 'Company Workspace';
+
+      if (targetOrgId) {
+        settings = await prisma.payrollSettings.create({
+          data: {
+            organizationId: targetOrgId,
+            companyName: defaultName,
+            cycleStartDay: 1,
+            payDay: 30,
+            currency: 'INR',
+            overtimeHourlyRate: 150.0,
+            holidayPayMultiplier: 2.0,
+            weekendPayMultiplier: 1.5,
+            lateDeductionRule: 'FLAT_RATE',
+            lateDeductionRate: 100.0,
+            halfDayDeductionRate: 0.5,
+            minimumWorkingHours: 8.0,
+            roundingRule: 'ROUND_HALF_UP',
+            payslipTemplate: 'STANDARD',
+            companyAddress: org?.address || 'Corporate Headquarters',
+            authorizedSignature: 'Authorized HR Signatory'
+          }
+        });
+      } else {
+        // SUPER_ADMIN without targeted org: return default unassigned object (never borrow another company's DB record)
+        settings = {
+          companyName: 'All Organizations',
+          cycleStartDay: 1,
+          payDay: 30,
+          currency: 'INR',
+          overtimeHourlyRate: 150.0,
+          holidayPayMultiplier: 2.0,
+          weekendPayMultiplier: 1.5,
+          lateDeductionRule: 'FLAT_RATE',
+          lateDeductionRate: 100.0,
+          halfDayDeductionRate: 0.5,
+          minimumWorkingHours: 8.0,
+          roundingRule: 'ROUND_HALF_UP',
+          payslipTemplate: 'STANDARD',
+          companyAddress: 'Corporate Headquarters',
+          authorizedSignature: 'Authorized HR Signatory'
+        };
+      }
     }
 
     res.json(settings);
@@ -21,11 +68,16 @@ const getPayrollSettings = async (req, res) => {
   }
 };
 
-// 2. Update Global Payroll Settings (Admin Only)
+// 2. Update Company-Scoped Payroll Settings (Admin Only)
 const updatePayrollSettings = async (req, res) => {
   try {
-    if (req.user.role !== 'ADMIN') {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(req.user.role)) {
       return res.status(403).json({ message: 'Only Administrators can modify payroll settings.' });
+    }
+
+    const targetOrgId = getEffectiveOrgId(req);
+    if (!targetOrgId && req.user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ message: 'Organization context required.' });
     }
 
     const {
@@ -35,51 +87,53 @@ const updatePayrollSettings = async (req, res) => {
       companyName, companyLogo, companyAddress, authorizedSignature
     } = req.body;
 
-    const settings = await prisma.payrollSettings.upsert({
-      where: { id: 'GLOBAL' },
-      update: {
-        cycleStartDay: cycleStartDay !== undefined ? Number(cycleStartDay) : 1,
-        payDay: payDay !== undefined ? Number(payDay) : 30,
-        currency: currency || 'INR',
-        overtimeHourlyRate: overtimeHourlyRate !== undefined ? Number(overtimeHourlyRate) : 150.0,
-        holidayPayMultiplier: holidayPayMultiplier !== undefined ? Number(holidayPayMultiplier) : 2.0,
-        weekendPayMultiplier: weekendPayMultiplier !== undefined ? Number(weekendPayMultiplier) : 1.5,
-        lateDeductionRule: lateDeductionRule || 'FLAT_RATE',
-        lateDeductionRate: lateDeductionRate !== undefined ? Number(lateDeductionRate) : 100.0,
-        halfDayDeductionRate: halfDayDeductionRate !== undefined ? Number(halfDayDeductionRate) : 0.5,
-        minimumWorkingHours: minimumWorkingHours !== undefined ? Number(minimumWorkingHours) : 4.0,
-        roundingRule: roundingRule || 'ROUND_HALF_UP',
-        payslipTemplate: payslipTemplate || 'STANDARD',
-        companyName: companyName || 'Innoveity',
-        companyLogo: companyLogo || null,
-        companyAddress: companyAddress || '100 Innovation Towers, Cyber City, Bangalore - 560001',
-        authorizedSignature: authorizedSignature || 'Authorized HR Signatory'
-      },
-      create: {
-        id: 'GLOBAL',
-        cycleStartDay: cycleStartDay !== undefined ? Number(cycleStartDay) : 1,
-        payDay: payDay !== undefined ? Number(payDay) : 30,
-        currency: currency || 'INR',
-        overtimeHourlyRate: overtimeHourlyRate !== undefined ? Number(overtimeHourlyRate) : 150.0,
-        holidayPayMultiplier: holidayPayMultiplier !== undefined ? Number(holidayPayMultiplier) : 2.0,
-        weekendPayMultiplier: weekendPayMultiplier !== undefined ? Number(weekendPayMultiplier) : 1.5,
-        lateDeductionRule: lateDeductionRule || 'FLAT_RATE',
-        lateDeductionRate: lateDeductionRate !== undefined ? Number(lateDeductionRate) : 100.0,
-        halfDayDeductionRate: halfDayDeductionRate !== undefined ? Number(halfDayDeductionRate) : 0.5,
-        minimumWorkingHours: minimumWorkingHours !== undefined ? Number(minimumWorkingHours) : 4.0,
-        roundingRule: roundingRule || 'ROUND_HALF_UP',
-        payslipTemplate: payslipTemplate || 'STANDARD',
-        companyName: companyName || 'Innoveity',
-        companyLogo: companyLogo || null,
-        companyAddress: companyAddress || '100 Innovation Towers, Cyber City, Bangalore - 560001',
-        authorizedSignature: authorizedSignature || 'Authorized HR Signatory'
+    const dataPayload = {
+      cycleStartDay: cycleStartDay !== undefined ? Number(cycleStartDay) : 1,
+      payDay: payDay !== undefined ? Number(payDay) : 30,
+      currency: currency || 'INR',
+      overtimeHourlyRate: overtimeHourlyRate !== undefined ? Number(overtimeHourlyRate) : 150.0,
+      holidayPayMultiplier: holidayPayMultiplier !== undefined ? Number(holidayPayMultiplier) : 2.0,
+      weekendPayMultiplier: weekendPayMultiplier !== undefined ? Number(weekendPayMultiplier) : 1.5,
+      lateDeductionRule: lateDeductionRule || 'FLAT_RATE',
+      lateDeductionRate: lateDeductionRate !== undefined ? Number(lateDeductionRate) : 100.0,
+      halfDayDeductionRate: halfDayDeductionRate !== undefined ? Number(halfDayDeductionRate) : 0.5,
+      minimumWorkingHours: minimumWorkingHours !== undefined ? Number(minimumWorkingHours) : 8.0,
+      roundingRule: roundingRule || 'ROUND_HALF_UP',
+      payslipTemplate: payslipTemplate || 'STANDARD',
+      companyName: companyName || 'Company Workspace',
+      companyLogo: companyLogo || null,
+      companyAddress: companyAddress || 'Corporate Headquarters',
+      authorizedSignature: authorizedSignature || 'Authorized HR Signatory'
+    };
+
+    let settings = null;
+    if (targetOrgId) {
+      const existing = await prisma.payrollSettings.findFirst({
+        where: { organizationId: targetOrgId }
+      });
+
+      if (existing) {
+        settings = await prisma.payrollSettings.update({
+          where: { id: existing.id },
+          data: dataPayload
+        });
+      } else {
+        settings = await prisma.payrollSettings.create({
+          data: {
+            organizationId: targetOrgId,
+            ...dataPayload
+          }
+        });
       }
-    });
+    } else {
+      return res.status(400).json({ message: 'Select an organization to update payroll settings.' });
+    }
 
     await logActivity({
       userId: req.user.id,
+      organizationId: targetOrgId,
       action: 'PAYROLL_SETTINGS_UPDATE',
-      details: 'Updated global payroll settings configuration'
+      details: `Updated payroll settings configuration for organization: ${targetOrgId}`
     });
 
     res.json(settings);

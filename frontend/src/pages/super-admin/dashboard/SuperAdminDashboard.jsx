@@ -8,9 +8,11 @@ import {
 } from 'lucide-react';
 import api from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
+import { useCompanyScope } from '../../../context/CompanyScopeContext';
 
 const SuperAdminDashboard = () => {
   const { user } = useAuth();
+  const { selectedOrgId } = useCompanyScope();
   const [data, setData] = useState(null);
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -18,9 +20,10 @@ const SuperAdminDashboard = () => {
   const fetchDashboardStats = async () => {
     try {
       setLoading(true);
+      const params = selectedOrgId ? { organizationId: selectedOrgId } : {};
       const [statsRes, posRes] = await Promise.all([
-        api.get('/super-admin/stats'),
-        api.get('/positions').catch(() => ({ data: [] }))
+        api.get('/super-admin/stats', { params }),
+        api.get('/positions', { params }).catch(() => ({ data: [] }))
       ]);
       setData(statsRes.data);
       setPositions(posRes.data || []);
@@ -33,7 +36,7 @@ const SuperAdminDashboard = () => {
 
   useEffect(() => {
     fetchDashboardStats();
-  }, []);
+  }, [selectedOrgId]);
 
   if (loading) {
     return (

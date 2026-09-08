@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import UserAvatar from '../components/common/UserAvatar';
+import api from '../services/api';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 import {
   Megaphone,
   Plus,
@@ -13,6 +16,9 @@ import {
 
 const Announcements = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
   const [announcements, setAnnouncements] = useState([]);
   const [teams, setTeams] = useState([]);
   const [usersList, setUsersList] = useState([]);
@@ -34,10 +40,11 @@ const Announcements = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      const params = targetOrg ? { organizationId: targetOrg } : {};
       const [annRes, teamsRes, usersRes] = await Promise.all([
-        api.get('/announcements'),
-        api.get('/teams').catch(() => ({ data: [] })),
-        api.get('/users?limit=1000&status=ACTIVE').catch(() => ({ data: { users: [] } }))
+        api.get('/announcements', { params }),
+        api.get('/teams', { params }).catch(() => ({ data: [] })),
+        api.get('/users', { params: { ...params, limit: 1000, status: 'ACTIVE' } }).catch(() => ({ data: { users: [] } }))
       ]);
       setAnnouncements(annRes.data || []);
       
@@ -60,7 +67,7 @@ const Announcements = () => {
 
   useEffect(() => {
     fetchData();
-  }, [user]);
+  }, [targetOrg, user?.organizationId]);
 
   const handleInputChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -75,7 +82,8 @@ const Announcements = () => {
         content: formData.content,
         targetType: formData.targetType,
         targetTeamId: formData.targetType === 'TEAM' ? formData.targetTeamId : null,
-        targetUserId: formData.targetType === 'INDIVIDUAL' ? formData.targetUserId : null
+        targetUserId: formData.targetType === 'INDIVIDUAL' ? formData.targetUserId : null,
+        organizationId: selectedOrgId
       });
       setCreateModalOpen(false);
       setFormData({
@@ -135,6 +143,8 @@ const Announcements = () => {
 
   return (
     <div className="flex-1 flex flex-col space-y-6 text-left animate-in fade-in duration-300">
+      <CompanyScopeSelector />
+
       {alert && (
         <div className="flex items-center justify-between p-4 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-semibold">
           <span>{alert}</span>
@@ -166,7 +176,7 @@ const Announcements = () => {
       <div className="space-y-4">
         {announcements.length === 0 ? (
           <div className="text-center py-12 bg-card rounded-2xl border border-border/40 text-muted-foreground text-sm">
-            No active announcements found.
+            No active announcements found{selectedCompany?.name ? ` for ${selectedCompany.name}` : ''}.
           </div>
         ) : (
           announcements.map((announce) => (

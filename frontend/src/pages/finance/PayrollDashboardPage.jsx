@@ -1,43 +1,79 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../../services/api';
 import {
   DollarSign, TrendingUp, Users, Calendar, CheckCircle2, Clock,
   AlertCircle, ArrowUpRight, ArrowDownRight, ShieldCheck, Download
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import CompanyScopeSelector from '../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../context/CompanyScopeContext';
 
 export default function PayrollDashboardPage() {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
   const [stats, setStats] = useState(null);
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetchDashboardData();
-  }, []);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
+      setErrorMessage('');
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg } : {};
       const [reportsRes, batchesRes] = await Promise.all([
-        api.get('/payroll/reports/summary'),
-        api.get('/payroll/batches')
+        api.get('/payroll/reports/summary', { params }),
+        api.get('/payroll/batches', { params })
       ]);
-      setStats(reportsRes.data);
-      setBatches(batchesRes.data);
+      const reportsData = reportsRes.data || {};
+      setStats({
+        totalGrossExpense: reportsData.totalGrossExpense || 0,
+        totalNetExpense: reportsData.totalNetExpense || 0,
+        totalPF: reportsData.totalPF || 0,
+        totalESI: reportsData.totalESI || 0,
+        totalTax: reportsData.totalTax || 0,
+        totalOvertimePay: reportsData.totalOvertimePay || 0,
+        totalHolidayPay: reportsData.totalHolidayPay || 0,
+        totalPublishedPayslips: reportsData.totalPublishedPayslips || 0,
+        departmentBreakdown: Array.isArray(reportsData.departmentBreakdown) ? reportsData.departmentBreakdown : [],
+        monthlyTrends: Array.isArray(reportsData.monthlyTrends) ? reportsData.monthlyTrends : []
+      });
+      const batchList = Array.isArray(batchesRes.data) ? batchesRes.data : (batchesRes.data?.batches || []);
+      setBatches(batchList);
     } catch (err) {
       console.error('Failed to load payroll dashboard:', err);
+      setErrorMessage('Failed to load payroll dashboard.');
     } finally {
       setLoading(false);
     }
   };
 
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setStats(null);
+    setBatches([]);
+    if (orgsLoading) return;
+    fetchDashboardData();
+  }, [user, targetOrg, user?.organizationId, orgsLoading]);
+
   const formatINR = (amount) => {
     return `₹${Number(amount || 0).toLocaleString('en-IN')}`;
   };
 
+  const isEmptyCompany = !loading && !errorMessage && (
+    !stats || (stats.totalGrossExpense === 0 && stats.totalNetExpense === 0 && batches.length === 0)
+  );
+
   return (
     <div className="space-y-6 text-left font-sans w-full max-w-7xl mx-auto">
+      {/* Company Scope Selector */}
+      <CompanyScopeSelector />
+
       {/* Header Banner */}
       <div className="bg-gradient-primary rounded-2xl p-6 text-white shadow-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
@@ -55,6 +91,25 @@ export default function PayrollDashboardPage() {
           </span>
         )}
       </div>
+
+      {errorMessage && (
+        <div className="flex items-center justify-between p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-500 text-xs font-semibold">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            <span>{errorMessage}</span>
+          </div>
+          <button onClick={fetchDashboardData} className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-600 dark:text-red-300 rounded-lg text-xs font-bold transition-colors">
+            Retry
+          </button>
+        </div>
+      )}
+
+      {isEmptyCompany && (
+        <div className="p-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>No payroll records found for {selectedCompany?.name || 'this company'}. Summary metrics display zero-state values.</span>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center p-12 text-muted-foreground">

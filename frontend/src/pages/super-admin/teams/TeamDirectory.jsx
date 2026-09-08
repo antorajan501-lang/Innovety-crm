@@ -5,8 +5,11 @@ import {
 } from 'lucide-react';
 import api from '../../../services/api';
 import UserAvatar from '../../../components/common/UserAvatar';
+import CompanyScopeSelector from '../../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../../context/CompanyScopeContext';
 
 const TeamDirectory = () => {
+  const { selectedOrgId, selectedCompany } = useCompanyScope();
   const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -20,6 +23,7 @@ const TeamDirectory = () => {
       setLoading(true);
       const params = new URLSearchParams();
       if (search) params.append('search', search);
+      if (selectedOrgId) params.append('organizationId', selectedOrgId);
 
       const res = await api.get(`/super-admin/teams?${params.toString()}`);
       setTeams(res.data || []);
@@ -32,7 +36,7 @@ const TeamDirectory = () => {
 
   useEffect(() => {
     fetchTeams();
-  }, []);
+  }, [selectedOrgId]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -61,6 +65,9 @@ const TeamDirectory = () => {
           </p>
         </div>
       </div>
+
+      {/* Shared Company Selector Bar */}
+      <CompanyScopeSelector />
 
       {/* Search Bar */}
       <div className="rounded-2xl border border-border/40 bg-card p-4 shadow-sm">
@@ -96,7 +103,7 @@ const TeamDirectory = () => {
         </div>
       ) : teams.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border p-12 text-center text-xs text-muted-foreground">
-          No teams found matching search.
+          {search ? `No teams found matching "${search}".` : `No teams found for ${selectedCompany?.name || 'this company'}.`}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">

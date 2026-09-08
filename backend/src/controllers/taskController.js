@@ -1,6 +1,7 @@
 const prisma = require('../utils/db');
 const { createNotification } = require('../services/notification');
 const { logActivity } = require('../utils/activityLogger');
+const { getOrganizationWhere, getTaskWhere, getProjectWhere, getEffectiveOrgId } = require('../utils/organizationScope');
 const { sendTaskAssignmentEmail, sendTaskStatusUpdateEmail, sendTeamTaskAssignmentEmail } = require('../services/email');
 const { syncProjectLifecycleChatRoom } = require('../services/projectChatService');
 const { getIo, broadcastTeamPerformanceUpdate } = require('../socket');
@@ -61,6 +62,7 @@ const createTask = async (req, res) => {
         const t = await prisma.task.create({
           data: {
             title,
+            organizationId: req.body.organizationId || req.user?.organizationId || null,
             description,
             priority,
             deadline: new Date(deadline),
@@ -188,6 +190,7 @@ const createTask = async (req, res) => {
     const task = await prisma.task.create({
       data: {
         title,
+        organizationId: req.body.organizationId || (project ? project.organizationId : null) || req.user?.organizationId || null,
         description,
         priority,
         deadline: new Date(deadline),
@@ -263,13 +266,13 @@ const createTask = async (req, res) => {
     });
   } catch (error) {
     console.error('Create task error:', error);
-    res.status(500).json({ message: 'Failed to create task.' });
+    res.status(500).json({ message: 'Failed to create task.', error: error.message });
   }
 };
 
 const getTasks = async (req, res) => {
   try {
-    const { status, priority, search } = req.query;
+    const { status, priority, search, organizationId } = req.query;
     const where = {};
 
     if (status) where.status = status;
@@ -307,8 +310,10 @@ const getTasks = async (req, res) => {
       ];
     }
 
+    const finalWhere = getTaskWhere(req, where);
+
     const tasks = await prisma.task.findMany({
-      where,
+      where: finalWhere,
       include: {
         assignee: { select: { id: true, name: true, employeeId: true, profilePic: true } },
         creator: { select: { id: true, name: true, role: true } },

@@ -20,9 +20,13 @@ const formatDateStr = (year, month, day) => {
  * 5. Saturday Default -> WFH
  * 6. Weekday Default -> WORKING_DAY
  */
-const resolveMonthlyCalendar = async ({ user, month, year }) => {
+const resolveMonthlyCalendar = async ({ user, month, year, organizationId }) => {
   const targetYear = parseInt(year, 10);
   const targetMonth = parseInt(month, 10); // 1-12
+  let targetOrgId = organizationId || user?.organizationId;
+  if (!targetOrgId || targetOrgId === 'undefined' || targetOrgId === 'null' || (typeof targetOrgId === 'string' && targetOrgId.trim() === '')) {
+    targetOrgId = user?.organizationId || null;
+  }
 
   // Determine number of days in the month
   const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
@@ -34,16 +38,24 @@ const resolveMonthlyCalendar = async ({ user, month, year }) => {
   const endRange = new Date(`${endDateStr}T23:59:59.999Z`);
 
   // 1. Fetch all specific date overrides for this month
+  const overrideWhere = {
+    date: {
+      gte: startRange,
+      lte: endRange
+    }
+  };
+  if (targetOrgId) {
+    overrideWhere.OR = [
+      { organizationId: targetOrgId },
+      { organizationId: null, createdBy: { organizationId: targetOrgId } }
+    ];
+  }
+
   const dateOverrides = await prisma.workCalendar.findMany({
-    where: {
-      date: {
-        gte: startRange,
-        lte: endRange
-      }
-    },
+    where: overrideWhere,
     include: {
       createdBy: {
-        select: { id: true, name: true, email: true }
+        select: { id: true, name: true, email: true, organizationId: true }
       }
     }
   });
@@ -58,14 +70,22 @@ const resolveMonthlyCalendar = async ({ user, month, year }) => {
   });
 
   // 2. Fetch all permanent recurring rules for this month
+  const permWhere = {
+    isPermanent: true,
+    recurrenceMonth: targetMonth
+  };
+  if (targetOrgId) {
+    permWhere.OR = [
+      { organizationId: targetOrgId },
+      { organizationId: null, createdBy: { organizationId: targetOrgId } }
+    ];
+  }
+
   const permanentHolidays = await prisma.workCalendar.findMany({
-    where: {
-      isPermanent: true,
-      recurrenceMonth: targetMonth
-    },
+    where: permWhere,
     include: {
       createdBy: {
-        select: { id: true, name: true, email: true }
+        select: { id: true, name: true, email: true, organizationId: true }
       }
     }
   });
@@ -78,11 +98,11 @@ const resolveMonthlyCalendar = async ({ user, month, year }) => {
     }
   });
 
-  // 3. Fetch user approved leaves if user role has personal leaves (INTERN, EMPLOYEE, TEAM_LEADER)
-  const isNonAdminUser = ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'].includes(user.role);
+  // 3. Fetch user approved leaves
+  const isNonAdminUser = ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'].includes(user?.role);
   let approvedLeaves = [];
-  
-  if (isNonAdminUser && user.id) {
+
+  if (isNonAdminUser && user?.id) {
     approvedLeaves = await prisma.leaveRequest.findMany({
       where: {
         userId: user.id,
@@ -91,9 +111,18 @@ const resolveMonthlyCalendar = async ({ user, month, year }) => {
         endDate: { gte: startRange }
       }
     });
+  } else if (targetOrgId) {
+    approvedLeaves = await prisma.leaveRequest.findMany({
+      where: {
+        status: 'APPROVED',
+        startDate: { lte: endRange },
+        endDate: { gte: startRange },
+        user: { organizationId: targetOrgId }
+      }
+    });
   }
 
-  const isAdminOrSuperAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(user.role);
+  const isAdminOrSuperAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(user?.role);
 
   const resolvedDays = [];
 

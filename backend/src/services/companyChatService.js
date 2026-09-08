@@ -1,13 +1,26 @@
 const prisma = require('../utils/db');
 
 /**
- * Ensures the default Company Chat Room ("Innoviety Community") exists
- * and all active CRM users are added as members.
+ * Ensures the default Company Chat Room (e.g. "[Company Name] Community") exists
+ * for a specific organization and all active users of that organization are added.
  */
-const ensureCompanyChatRoom = async () => {
+const ensureCompanyChatRoom = async (organizationId) => {
   try {
+    let targetOrgId = organizationId;
+    if (!targetOrgId) {
+      const defaultOrg = await prisma.organization.findUnique({ where: { slug: 'innoveity' } });
+      targetOrgId = defaultOrg?.id || null;
+    }
+    if (!targetOrgId) return null;
+
+    const org = await prisma.organization.findUnique({ where: { id: targetOrgId } });
+    if (!org) return null;
+
+    const roomName = `${org.name} Community`;
+
     let companyRoom = await prisma.chatRoom.findFirst({
       where: {
+        organizationId: targetOrgId,
         type: 'COMPANY',
         isDefault: true,
         isArchived: false
@@ -15,7 +28,7 @@ const ensureCompanyChatRoom = async () => {
     });
 
     const activeUsers = await prisma.user.findMany({
-      where: { status: 'ACTIVE' },
+      where: { organizationId: targetOrgId, status: 'ACTIVE' },
       select: { id: true }
     });
     const activeUserIds = activeUsers.map(u => u.id);
@@ -23,8 +36,9 @@ const ensureCompanyChatRoom = async () => {
     if (!companyRoom) {
       companyRoom = await prisma.chatRoom.create({
         data: {
-          name: 'Innoviety Community',
+          name: roomName,
           type: 'COMPANY',
+          organizationId: targetOrgId,
           isDefault: true,
           isArchived: false,
           lastActivityAt: new Date(),
@@ -33,7 +47,7 @@ const ensureCompanyChatRoom = async () => {
           }
         }
       });
-      console.log(`[ChatService] Created default Company Group "Innoviety Community" with ${activeUserIds.length} members.`);
+      console.log(`[ChatService] Created Company Group "${roomName}" for Org ${org.companyCode} with ${activeUserIds.length} members.`);
     } else {
       const existingMembers = await prisma.chatRoomMember.findMany({
         where: { roomId: companyRoom.id },
@@ -47,17 +61,15 @@ const ensureCompanyChatRoom = async () => {
           data: missingUserIds.map(userId => ({ roomId: companyRoom.id, userId })),
           skipDuplicates: true
         });
-        console.log(`[ChatService] Synced ${missingUserIds.length} active users into Company Group.`);
       }
 
-      // Automatically remove any members who are no longer active
+      // Automatically remove any members who are no longer active in this organization
       const activeUserIdSet = new Set(activeUserIds);
       const inactiveUserIds = Array.from(existingUserIds).filter(id => !activeUserIdSet.has(id));
       if (inactiveUserIds.length > 0) {
         await prisma.chatRoomMember.deleteMany({
           where: { roomId: companyRoom.id, userId: { in: inactiveUserIds } }
         });
-        console.log(`[ChatService] Removed ${inactiveUserIds.length} inactive users from Company Group.`);
       }
     }
 
@@ -68,11 +80,13 @@ const ensureCompanyChatRoom = async () => {
 };
 
 /**
- * Adds a user to the default Company Chat Room
+ * Adds a user to their organization's default Company Chat Room
  */
-const addUserToCompanyChat = async (userId) => {
+const addUserToCompanyChat = async (userId, organizationId) => {
   try {
-    const companyRoom = await ensureCompanyChatRoom();
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { organizationId: true } });
+    const targetOrgId = organizationId || user?.organizationId;
+    const companyRoom = await ensureCompanyChatRoom(targetOrgId);
     if (!companyRoom) return;
 
     await prisma.chatRoomMember.upsert({
@@ -86,12 +100,16 @@ const addUserToCompanyChat = async (userId) => {
 };
 
 /**
- * Removes a user from the default Company Chat Room (e.g. on deactivation/delete)
+ * Removes a user from their organization's default Company Chat Room (e.g. on deactivation/delete)
  */
-const removeUserFromCompanyChat = async (userId) => {
+const removeUserFromCompanyChat = async (userId, organizationId) => {
   try {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { organizationId: true } });
+    const targetOrgId = organizationId || user?.organizationId;
+    if (!targetOrgId) return;
+
     const companyRoom = await prisma.chatRoom.findFirst({
-      where: { type: 'COMPANY', isDefault: true, isArchived: false }
+      where: { organizationId: targetOrgId, type: 'COMPANY', isDefault: true, isArchived: false }
     });
     if (!companyRoom) return;
 

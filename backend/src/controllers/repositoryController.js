@@ -1,12 +1,23 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
+const {
+  addRepositoryToCompany,
+  filterRepositoriesForCompany,
+  getCompanyRepositoryIds
+} = require('../utils/companyRepositoryStore');
 
 const getRepositories = async (req, res) => {
   try {
-    const repos = await prisma.repository.findMany({
+    const targetOrgId = getEffectiveOrgId(req);
+
+    const allRepos = await prisma.repository.findMany({
       include: { branches: { orderBy: { name: 'asc' } } },
       orderBy: { name: 'asc' }
     });
+
+    const repos = filterRepositoriesForCompany(allRepos, targetOrgId);
+
     res.json(repos);
   } catch (error) {
     console.error('Get repositories error:', error);
@@ -17,22 +28,28 @@ const getRepositories = async (req, res) => {
 const createRepository = async (req, res) => {
   try {
     const { name, url, lang } = req.body;
+    const targetOrgId = getEffectiveOrgId(req);
 
     if (!name) {
       return res.status(400).json({ message: 'Repository name is required.' });
     }
 
-    // Check unique
-    const existing = await prisma.repository.findUnique({
-      where: { name }
-    });
-    if (existing) {
-      return res.status(400).json({ message: 'A repository with this name is already registered.' });
+    const cleanName = name.trim();
+    const allRepos = await prisma.repository.findMany();
+    const companyRepos = filterRepositoriesForCompany(allRepos, targetOrgId);
+
+    const duplicate = companyRepos.find((r) => r.name.toLowerCase() === cleanName.toLowerCase());
+    if (duplicate) {
+      return res.status(400).json({ message: 'A repository with this name is already registered for this company.' });
     }
+
+    // Master name formatting if name exists globally in another company
+    const globalMatch = allRepos.find((r) => r.name.toLowerCase() === cleanName.toLowerCase());
+    const masterName = globalMatch && targetOrgId ? `${cleanName} (${targetOrgId.slice(-4).toUpperCase()})` : cleanName;
 
     const newRepo = await prisma.repository.create({
       data: {
-        name,
+        name: masterName,
         url: url || null,
         lang: lang || 'React/JS',
         status: 'Passing',
@@ -47,13 +64,20 @@ const createRepository = async (req, res) => {
       include: { branches: true }
     });
 
+    if (organizationId) {
+      addRepositoryToCompany(organizationId, newRepo.id);
+    }
+
     await logActivity({
       userId: req.user.id,
       action: 'REPO_CREATE',
-      details: `Registered repository: ${name}`
+      details: `Registered repository: ${cleanName}`
     });
 
-    res.status(201).json(newRepo);
+    res.status(201).json({
+      ...newRepo,
+      name: cleanName
+    });
   } catch (error) {
     console.error('Create repository error:', error);
     res.status(500).json({ message: 'Failed to register git repository.' });

@@ -17,12 +17,16 @@ import {
   Printer,
   ChevronLeft,
   ChevronRight,
-  Ban
+  Ban,
+  AlertCircle
 } from 'lucide-react';
 import UserAvatar from '../common/UserAvatar';
 import api from '../../services/api';
 import ApplyLeaveModal from './ApplyLeaveModal';
+import CompanyLeaveAuditModal from '../attendance/CompanyLeaveAuditModal';
 import { useAuth } from '../../context/AuthContext';
+import CompanyScopeSelector from '../common/CompanyScopeSelector';
+import { useCompanyScope } from '../../context/CompanyScopeContext';
 
 const DEPARTMENTS = [
   'ALL',
@@ -87,6 +91,7 @@ const getQuickFilterDates = (preset) => {
 
 const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefresh }) => {
   const { user: currentUser } = useAuth();
+  const { selectedCompany } = useCompanyScope();
   const isSuperAdmin = userRole === 'SUPER_ADMIN';
   const isAdmin = userRole === 'ADMIN';
   const isTL = userRole === 'TEAM_LEADER';
@@ -105,6 +110,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
   const [mainTab, setMainTab] = useState(getInitialTab);
   const [viewingLetter, setViewingLetter] = useState(null);
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
+  const [leaveReportModalOpen, setLeaveReportModalOpen] = useState(false);
   const [leaveToEdit, setLeaveToEdit] = useState(null);
   const [toast, setToast] = useState({ type: '', text: '' });
 
@@ -176,7 +182,15 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
     setCurrentPage(1);
   };
 
-  // Date Overlap Filtering Logic
+  // Company-Scoped Department Options
+  const companyDepartments = useMemo(() => {
+    const depts = new Set(['ALL']);
+    (leaves || []).forEach(l => {
+      if (l.user?.department) depts.add(l.user.department);
+      if (l.user?.departmentRef?.name) depts.add(l.user.departmentRef.name);
+    });
+    return Array.from(depts);
+  }, [leaves]);
   const filteredLeaves = useMemo(() => {
     return leaves.filter((l) => {
       // 1. Status Filter
@@ -345,6 +359,21 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
 
   return (
     <div className="space-y-6 text-left font-sans w-full print:p-0">
+      <CompanyScopeSelector />
+
+      {/* STRICTLY READ-ONLY Info Banner (Super Admin Only) */}
+      {isSuperAdmin && (
+        <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-300 flex items-center gap-3 shadow-2xs">
+          <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+          <div className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300 font-black text-[10px] uppercase tracking-wider shrink-0">
+            STRICTLY READ-ONLY
+          </div>
+          <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+            This page is for viewing, filtering, exporting, and printing leave audit data only.
+          </p>
+        </div>
+      )}
+
       {/* 1. Header Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/50 pb-5">
         <div>
@@ -353,18 +382,11 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
               <Calendar className="h-6 w-6" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
-                  {mainTab === 'Sanction'
-                    ? 'Leave Management'
-                    : (isSuperAdmin ? 'Enterprise Leave Analytics & Audit Desk' : 'Leave History & Applications')}
-                </h1>
-                {isSuperAdmin && (
-                  <span className="text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-0.5 rounded-full bg-rose-500/10 text-rose-600 border border-rose-500/20">
-                    Strictly Read-Only
-                  </span>
-                )}
-              </div>
+              <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
+                {mainTab === 'Sanction'
+                  ? 'Leave Management'
+                  : (isSuperAdmin ? 'Enterprise Leave Analytics & Audit Desk' : 'Leave History & Applications')}
+              </h1>
               <p className="text-sm text-muted-foreground font-medium mt-0.5">
                 {mainTab === 'Sanction'
                   ? 'Review and approve pending leave and work-from-home requests'
@@ -378,6 +400,16 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
 
         {/* Action Export & Apply Leave Buttons */}
         <div className="flex flex-wrap items-center gap-2 shrink-0 print:hidden">
+          {['ADMIN', 'SUPER_ADMIN'].includes(userRole) && (
+            <button
+              onClick={() => setLeaveReportModalOpen(true)}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white px-4 py-2 rounded-xl text-xs font-black shadow-md hover:shadow-lg transition-all cursor-pointer w-full sm:w-auto"
+            >
+              <FileText className="h-4 w-4" />
+              <span>Leave Report</span>
+            </button>
+          )}
+
           {['INTERN', 'EMPLOYEE', 'TEAM_LEADER'].includes(userRole) && (
             <button
               onClick={() => { setLeaveToEdit(null); setIsLeaveModalOpen(true); }}
@@ -687,7 +719,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
                   onChange={(e) => { setDepartmentFilter(e.target.value); setCurrentPage(1); }}
                   className="w-full h-9 bg-muted/30 border border-border/60 rounded-xl px-3 py-1.5 text-xs text-foreground font-bold cursor-pointer focus:ring-2 focus:ring-primary/20"
                 >
-                  {DEPARTMENTS.map(d => (
+                  {companyDepartments.map(d => (
                     <option key={d} value={d}>{d === 'ALL' ? 'All Departments' : d}</option>
                   ))}
                 </select>
@@ -722,7 +754,7 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
             {paginatedLeaves.length === 0 ? (
               <div className="p-12 text-center text-xs text-muted-foreground space-y-2">
                 <FileText className="h-10 w-10 mx-auto text-muted-foreground/50" />
-                <p className="text-base font-bold text-foreground">No Leave Applications Found</p>
+                <p className="text-base font-bold text-foreground">No Leave Applications Found{selectedCompany?.name ? ` for ${selectedCompany.name}` : ''}</p>
                 <p className="text-xs">No leave records match your current date, department, or status filters.</p>
               </div>
             ) : (
@@ -1147,6 +1179,12 @@ const AdvancedLeaveFilterSuite = ({ leaves = [], userRole = 'EMPLOYEE', onRefres
         }}
         leaveToEdit={leaveToEdit}
         userRole={userRole}
+      />
+
+      {/* Company Leave Audit Modal */}
+      <CompanyLeaveAuditModal
+        isOpen={leaveReportModalOpen}
+        onClose={() => setLeaveReportModalOpen(false)}
       />
 
       {/* Floating Toast Notification */}

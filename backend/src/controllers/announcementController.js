@@ -121,10 +121,16 @@ const createAnnouncement = async (req, res) => {
 
 const getAnnouncements = async (req, res) => {
   try {
+    const { getEffectiveOrgId } = require('../utils/organizationScope');
+    const targetOrgId = getEffectiveOrgId(req);
     const where = {};
 
-    if (req.user.role === 'ADMIN') {
-      // Admin sees all announcements
+    if (targetOrgId) {
+      where.creator = { organizationId: targetOrgId };
+    }
+
+    if (req.user.role === 'ADMIN' || req.user.role === 'SUPER_ADMIN') {
+      // Admin sees all announcements within company scope
     } else if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
       const memberRecords = await prisma.teamMember.findMany({
         where: { userId: req.user.id },
@@ -138,7 +144,6 @@ const getAnnouncements = async (req, res) => {
         { creatorId: req.user.id },
         ...(teamIds.length > 0 ? [{ targetTeamId: { in: teamIds } }] : [])
       ];
-      // Never show INDIVIDUAL announcements meant for someone else
       where.NOT = {
         AND: [
           { targetType: 'INDIVIDUAL' },
@@ -162,7 +167,6 @@ const getAnnouncements = async (req, res) => {
         { creatorId: req.user.id },
         ...(allTeamIds.length > 0 ? [{ targetTeamId: { in: allTeamIds } }] : [])
       ];
-      // Never show INDIVIDUAL announcements meant for someone else
       where.NOT = {
         AND: [
           { targetType: 'INDIVIDUAL' },
@@ -174,7 +178,7 @@ const getAnnouncements = async (req, res) => {
     const announcements = await prisma.announcement.findMany({
       where,
       include: {
-        creator: { select: { id: true, name: true, role: true, profilePic: true } },
+        creator: { select: { id: true, name: true, role: true, profilePic: true, organizationId: true } },
         targetTeam: { select: { id: true, name: true } },
         targetUser: { select: { id: true, name: true, employeeId: true, role: true } }
       },

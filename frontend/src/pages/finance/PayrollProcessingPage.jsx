@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import {
@@ -7,6 +7,8 @@ import {
   User, DollarSign, FileText, ArrowRight, ShieldCheck, Info, ExternalLink
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import CompanyScopeSelector from '../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../context/CompanyScopeContext';
 
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -15,7 +17,11 @@ const MONTH_NAMES = [
 
 export default function PayrollProcessingPage() {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
   const navigate = useNavigate();
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
 
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -41,18 +47,15 @@ export default function PayrollProcessingPage() {
   // Selected Employee Audit Detail Modal
   const [auditEmployeePayslip, setAuditEmployeePayslip] = useState(null);
 
-  useEffect(() => {
-    fetchBatchDetails();
-    fetchStructureValidationStats();
-  }, [selectedMonth, selectedYear]);
-
   const fetchBatchDetails = async () => {
     try {
       setLoading(true);
-      const res = await api.get(`/payroll/batches?month=${selectedMonth}&year=${selectedYear}`);
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const res = await api.get(`/payroll/batches?month=${selectedMonth}&year=${selectedYear}`, { params });
       const batchList = Array.isArray(res.data) ? res.data : res.data?.batches || [];
       if (batchList.length > 0) {
-        const fullRes = await api.get(`/payroll/batches/${batchList[0].id}`);
+        const fullRes = await api.get(`/payroll/batches/${batchList[0].id}`, { params });
         const batch = fullRes.data;
         setCurrentBatch(batch);
 
@@ -78,18 +81,20 @@ export default function PayrollProcessingPage() {
   const fetchStructureValidationStats = async () => {
     try {
       setValidatingStructures(true);
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const params = targetOrg ? { organizationId: targetOrg } : {};
       const [usersRes, structuresRes] = await Promise.all([
-        api.get('/users?limit=1000').catch(() => ({ data: [] })),
-        api.get('/payroll/salary-structures').catch(() => ({ data: [] }))
+        api.get('/users?limit=1000', { params }).catch(() => ({ data: [] })),
+        api.get('/payroll/salary-structures/all', { params }).catch(() => ({ data: [] }))
       ]);
 
       const usersList = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || [];
       const eligibleUsers = usersList.filter(u => u.status === 'ACTIVE' && ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'].includes(u.role));
       const structuresList = Array.isArray(structuresRes.data) ? structuresRes.data : [];
-      const assignedIds = new Set(structuresList.map(s => s.userId));
+      const assignedIds = new Set(structuresList.map(s => s.id || s.userId));
 
       const assignedCount = eligibleUsers.filter(u => assignedIds.has(u.id)).length;
-      const missingCount = eligibleUsers.length - assignedCount;
+      const missingCount = Math.max(0, eligibleUsers.length - assignedCount);
 
       setStructureStats({
         totalUsers: eligibleUsers.length,
@@ -103,13 +108,24 @@ export default function PayrollProcessingPage() {
     }
   };
 
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setCurrentBatch(null);
+    setActiveStep(1);
+    if (orgsLoading) return;
+    fetchBatchDetails();
+    fetchStructureValidationStats();
+  }, [selectedMonth, selectedYear, targetOrg, user?.organizationId, orgsLoading]);
+
   const handleProcess = async () => {
     try {
       setActionLoading(true);
       setActionError(null);
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
       const res = await api.post('/payroll/batches/process', {
         month: selectedMonth,
-        year: selectedYear
+        year: selectedYear,
+        organizationId: targetOrg
       });
       const batchData = res.data?.batch || res.data;
       setCurrentBatch(batchData);
@@ -216,6 +232,9 @@ export default function PayrollProcessingPage() {
 
   return (
     <div className="space-y-6 text-left font-sans w-full max-w-7xl mx-auto">
+      {/* Company Scope Selector */}
+      <CompanyScopeSelector />
+
       {/* 1. Header */}
       <div className="bg-card border border-border/80 p-6 rounded-2xl shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>

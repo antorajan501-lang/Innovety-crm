@@ -1,0 +1,19 @@
+{
+  "backupId": "bkp_2026-09-01T10-42-05-258Z_0aefd0",
+  "triggerType": "MANUAL_TEST",
+  "createdAt": "2026-09-01T10:42:05.489Z",
+  "type": "FULL_SNAPSHOT",
+  "dbFile": "2026-09-01_bkp_2026-09-01T10-42-05-258Z_0aefd0_db.json",
+  "dbSizeMB": "0.16",
+  "checksum": "001f11e9b303c062f654fd51378d5e02280fdd94339090dc18248a46d3883421",
+  "verified": true,
+  "recordCounts": {
+    "organizations": 3,
+    "users": 13,
+    "projects": 16,
+    "attendances": 55,
+    "workLogs": 5,
+    "leaveRequests": 45,
+    "chatRooms": 32
+  }
+}

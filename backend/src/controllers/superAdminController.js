@@ -1,18 +1,60 @@
 const prisma = require('../utils/db');
 const bcrypt = require('bcrypt');
 const { logActivity } = require('../utils/activityLogger');
+const { getCompanyBranding, setCompanyBranding } = require('../utils/companyBrandingStore');
 
 /**
  * 1. Platform Statistics & Executive Overview
  */
 const getPlatformStats = async (req, res) => {
   try {
+    const { organizationId } = req.query;
+    const targetOrgId = organizationId || null;
+
     const now = new Date();
     const todayStr = now.toISOString().split('T')[0];
     const todayDate = new Date(`${todayStr}T00:00:00.000Z`);
     const tomorrowDate = new Date(todayDate.getTime() + 86400000);
     const currentMonth = now.getUTCMonth() + 1;
     const currentYear = now.getUTCFullYear();
+
+    const userWhere = targetOrgId ? { organizationId: targetOrgId } : {};
+    const activeUserWhere = targetOrgId ? { organizationId: targetOrgId, status: 'ACTIVE' } : { status: 'ACTIVE' };
+    const teamWhere = targetOrgId ? { organizationId: targetOrgId } : {};
+    const projectWhere = targetOrgId ? {
+      status: 'ACTIVE',
+      OR: [
+        { creator: { organizationId: targetOrgId } },
+        { leader: { organizationId: targetOrgId } },
+        { team: { organizationId: targetOrgId } }
+      ]
+    } : { status: 'ACTIVE' };
+
+    const ticketWhere = targetOrgId
+      ? { status: { in: ['OPEN', 'ASSIGNED', 'IN_PROGRESS'] }, creator: { organizationId: targetOrgId } }
+      : { status: { in: ['OPEN', 'ASSIGNED', 'IN_PROGRESS'] } };
+
+    const payrollMonthWhere = targetOrgId
+      ? { month: currentMonth, year: currentYear, organizationId: targetOrgId }
+      : { month: currentMonth, year: currentYear };
+
+    const payrollTotalWhere = targetOrgId ? { organizationId: targetOrgId } : {};
+
+    const attendanceWhere = (status) => {
+      const base = { date: { gte: todayDate, lt: tomorrowDate }, status };
+      if (targetOrgId) {
+        base.user = { organizationId: targetOrgId };
+      }
+      return base;
+    };
+
+    const taskWhere = (status) => {
+      const base = { status };
+      if (targetOrgId) {
+        base.creator = { organizationId: targetOrgId };
+      }
+      return base;
+    };
 
     const [
       totalUsers,
@@ -42,38 +84,39 @@ const getPlatformStats = async (req, res) => {
       tasksApproved,
       tasksCompleted
     ] = await Promise.all([
-      prisma.user.count(),
-      prisma.user.count({ where: { status: 'ACTIVE' } }),
-      prisma.user.count({ where: { role: 'ADMIN' } }),
-      prisma.user.count({ where: { role: 'ADMIN', status: 'ACTIVE' } }),
-      prisma.user.count({ where: { role: 'TEAM_LEADER' } }),
-      prisma.user.count({ where: { role: 'EMPLOYEE' } }),
-      prisma.user.count({ where: { role: 'INTERN' } }),
-      prisma.team.count(),
-      prisma.project.count({ where: { status: 'ACTIVE' } }),
-      prisma.ticket.count({ where: { status: { in: ['OPEN', 'ASSIGNED', 'IN_PROGRESS'] } } }),
-      prisma.payrollBatch.count({ where: { month: currentMonth, year: currentYear } }),
-      prisma.payrollBatch.count(),
-      prisma.user.count({ where: { status: 'INACTIVE' } }),
+      prisma.user.count({ where: userWhere }),
+      prisma.user.count({ where: activeUserWhere }),
+      prisma.user.count({ where: { ...userWhere, role: 'ADMIN' } }),
+      prisma.user.count({ where: { ...userWhere, role: 'ADMIN', status: 'ACTIVE' } }),
+      prisma.user.count({ where: { ...userWhere, role: 'TEAM_LEADER' } }),
+      prisma.user.count({ where: { ...userWhere, role: 'EMPLOYEE' } }),
+      prisma.user.count({ where: { ...userWhere, role: 'INTERN' } }),
+      prisma.team.count({ where: teamWhere }),
+      prisma.project.count({ where: projectWhere }),
+      prisma.ticket.count({ where: ticketWhere }),
+      prisma.payrollBatch.count({ where: payrollMonthWhere }),
+      prisma.payrollBatch.count({ where: payrollTotalWhere }),
+      prisma.user.count({ where: { ...userWhere, status: 'INACTIVE' } }),
       prisma.activityLog.findMany({
+        where: targetOrgId ? { user: { organizationId: targetOrgId } } : {},
         take: 10,
         orderBy: { createdAt: 'desc' },
         include: { user: { select: { id: true, name: true, role: true } } }
       }),
       prisma.activityLog.findFirst({
-        where: { user: { role: 'ADMIN' } },
+        where: targetOrgId ? { user: { organizationId: targetOrgId, role: 'ADMIN' } } : { user: { role: 'ADMIN' } },
         orderBy: { createdAt: 'desc' },
         include: { user: { select: { name: true } } }
       }).catch(() => null),
-      prisma.attendance.count({ where: { date: { gte: todayDate, lt: tomorrowDate }, status: 'PRESENT' } }),
-      prisma.attendance.count({ where: { date: { gte: todayDate, lt: tomorrowDate }, status: 'LATE' } }),
-      prisma.attendance.count({ where: { date: { gte: todayDate, lt: tomorrowDate }, status: 'WORK_FROM_HOME' } }),
-      prisma.attendance.count({ where: { date: { gte: todayDate, lt: tomorrowDate }, status: 'ABSENT' } }),
-      prisma.task.count({ where: { status: 'PENDING' } }),
-      prisma.task.count({ where: { status: 'IN_PROGRESS' } }),
-      prisma.task.count({ where: { status: 'WAITING_FOR_REVIEW' } }),
-      prisma.task.count({ where: { status: 'APPROVED' } }),
-      prisma.task.count({ where: { status: 'COMPLETED' } })
+      prisma.attendance.count({ where: attendanceWhere('PRESENT') }),
+      prisma.attendance.count({ where: attendanceWhere('LATE') }),
+      prisma.attendance.count({ where: attendanceWhere('WORK_FROM_HOME') }),
+      prisma.attendance.count({ where: attendanceWhere('ABSENT') }),
+      prisma.task.count({ where: taskWhere('PENDING') }),
+      prisma.task.count({ where: taskWhere('IN_PROGRESS') }),
+      prisma.task.count({ where: taskWhere('WAITING_FOR_REVIEW') }),
+      prisma.task.count({ where: taskWhere('APPROVED') }),
+      prisma.task.count({ where: taskWhere('COMPLETED') })
     ]);
 
     const platformSettings = await getOrCreatePlatformSettings();
@@ -152,10 +195,28 @@ const getOrCreatePlatformSettings = async () => {
 };
 
 /**
- * 2. Get Platform Branding & Theme Settings
+ * 2. Get Platform Branding & Theme Settings (Company Scoped)
  */
 const getPlatformSettings = async (req, res) => {
   try {
+    const { organizationId } = req.query;
+    if (organizationId) {
+      const org = await prisma.organization.findUnique({
+        where: { id: organizationId }
+      });
+      if (org) {
+        const stored = getCompanyBranding(organizationId) || {};
+        return res.json({
+          id: organizationId,
+          organizationId: organizationId,
+          companyName: stored.companyName || org.name,
+          companyLogo: stored.companyLogo || org.logo || null,
+          selectedTheme: stored.selectedTheme || 'emerald',
+          themeMode: stored.themeMode || 'light'
+        });
+      }
+    }
+
     const settings = await getOrCreatePlatformSettings();
     res.json(settings);
   } catch (error) {
@@ -165,11 +226,71 @@ const getPlatformSettings = async (req, res) => {
 };
 
 /**
- * 3. Update Platform Branding & Theme
+ * 3. Update Platform Branding & Theme (Company Scoped)
  */
 const updatePlatformSettings = async (req, res) => {
   try {
-    const { companyName, companyLogo, selectedTheme, themeMode, removeLogo } = req.body;
+    const { companyName, companyLogo, selectedTheme, themeMode, removeLogo, organizationId } = req.body;
+
+    if (organizationId) {
+      const org = await prisma.organization.findUnique({
+        where: { id: organizationId }
+      });
+
+      if (!org) {
+        return res.status(444).json({ message: 'Target company organization not found.' });
+      }
+
+      const stored = getCompanyBranding(organizationId) || {};
+
+      let newLogo = stored.companyLogo || org.logo || null;
+      if (req.file) {
+        newLogo = `/uploads/branding/${req.file.filename}`;
+      } else if (removeLogo === 'true' || removeLogo === true) {
+        newLogo = null;
+      } else if (companyLogo !== undefined) {
+        newLogo = companyLogo;
+      }
+
+      const newName = companyName || stored.companyName || org.name;
+      const newTheme = selectedTheme || stored.selectedTheme || 'emerald';
+      const newMode = themeMode || stored.themeMode || 'light';
+
+      const brandingData = {
+        companyName: newName,
+        companyLogo: newLogo,
+        selectedTheme: newTheme,
+        themeMode: newMode
+      };
+
+      setCompanyBranding(organizationId, brandingData);
+
+      try {
+        await prisma.organization.update({
+          where: { id: organizationId },
+          data: {
+            name: newName,
+            logo: newLogo
+          }
+        });
+      } catch (e) {
+        console.warn('Failed to update Organization Prisma record:', e);
+      }
+
+      await logActivity({
+        userId: req.user.id,
+        action: 'SUPER_ADMIN_UPDATE_BRANDING',
+        details: `Updated company branding for org '${org.name}' (${organizationId}): Name='${newName}', Theme='${newTheme}', Mode='${newMode}'`,
+        ipAddress: req.ip || '127.0.0.1'
+      });
+
+      return res.json({
+        id: organizationId,
+        organizationId: organizationId,
+        ...brandingData
+      });
+    }
+
     const currentSettings = await getOrCreatePlatformSettings();
 
     let newLogo = currentSettings.companyLogo;
@@ -218,7 +339,8 @@ const getUsersDirectory = async (req, res) => {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
         { email: { contains: search, mode: 'insensitive' } },
-        { employeeId: { contains: search, mode: 'insensitive' } }
+        { employeeId: { contains: search, mode: 'insensitive' } },
+        { organization: { name: { contains: search, mode: 'insensitive' } } }
       ];
     }
 
@@ -249,7 +371,17 @@ const getUsersDirectory = async (req, res) => {
           college: true,
           profilePic: true,
           createdAt: true,
-          updatedAt: true
+          updatedAt: true,
+          organizationId: true,
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              companyCode: true,
+              slug: true,
+              logo: true
+            }
+          }
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -431,30 +563,45 @@ const unlockUserAccount = async (req, res) => {
 };
 
 /**
- * 9. Team Directory (Super Admin - STRICTLY READ ONLY)
+ * 9. Team Directory (Super Admin - STRICTLY READ ONLY & Company Scoped)
  */
 const getTeamsDirectory = async (req, res) => {
   try {
-    const { search } = req.query;
+    const { search, organizationId } = req.query;
 
     const where = {};
+    if (organizationId) {
+      where.organizationId = organizationId;
+    }
+
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { code: { contains: search, mode: 'insensitive' } },
-        { department: { contains: search, mode: 'insensitive' } }
-      ];
+      const searchCondition = {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } }
+        ]
+      };
+
+      if (where.organizationId) {
+        where.AND = [
+          { organizationId: where.organizationId },
+          searchCondition
+        ];
+        delete where.organizationId;
+      } else {
+        where.OR = searchCondition.OR;
+      }
     }
 
     const teams = await prisma.team.findMany({
       where,
       include: {
         leader: {
-          select: { id: true, name: true, email: true, employeeId: true, profilePic: true }
+          select: { id: true, name: true, email: true, employeeId: true, profilePic: true, organizationId: true }
         },
         members: {
           include: {
-            user: { select: { id: true, name: true, email: true, role: true, employeeId: true } }
+            user: { select: { id: true, name: true, email: true, role: true, employeeId: true, organizationId: true, status: true } }
           }
         },
         projects: {
@@ -464,17 +611,26 @@ const getTeamsDirectory = async (req, res) => {
       orderBy: { name: 'asc' }
     });
 
-    const formattedTeams = teams.map(t => ({
-      id: t.id,
-      name: t.name,
-      code: t.code,
-      department: t.department,
-      leader: t.leader,
-      memberCount: t.members.length,
-      members: t.members.map(m => m.user),
-      activeProjectCount: t.projects.filter(p => p.status === 'ACTIVE').length,
-      createdAt: t.createdAt
-    }));
+    const formattedTeams = teams.map(t => {
+      const activeMembers = t.members
+        .map(m => m.user)
+        .filter(u => u && u.status === 'ACTIVE');
+
+      const activeProjects = t.projects.filter(p => p.status === 'ACTIVE');
+      const isLeaderValid = t.leader && (!organizationId || t.leader.organizationId === organizationId);
+
+      return {
+        id: t.id,
+        name: t.name,
+        code: t.id.substring(0, 6).toUpperCase(),
+        department: 'Engineering & Delivery',
+        leader: isLeaderValid ? t.leader : null,
+        memberCount: activeMembers.length,
+        members: activeMembers,
+        activeProjectCount: activeProjects.length,
+        createdAt: t.createdAt
+      };
+    });
 
     res.json(formattedTeams);
   } catch (error) {
@@ -488,8 +644,19 @@ const getTeamsDirectory = async (req, res) => {
  */
 const getAdmins = async (req, res) => {
   try {
+    const { organizationId } = req.query;
+    const targetOrgId = organizationId || (req.user?.role !== 'SUPER_ADMIN' ? req.user?.organizationId : null);
+
+    const where = {
+      role: { in: ['ADMIN', 'SUPER_ADMIN'] }
+    };
+
+    if (targetOrgId && targetOrgId !== 'all' && targetOrgId !== 'ALL') {
+      where.organizationId = targetOrgId;
+    }
+
     const admins = await prisma.user.findMany({
-      where: { role: 'ADMIN' },
+      where,
       select: {
         id: true,
         employeeId: true,
@@ -501,7 +668,16 @@ const getAdmins = async (req, res) => {
         department: true,
         designation: true,
         createdAt: true,
-        updatedAt: true
+        updatedAt: true,
+        organizationId: true,
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            companyCode: true,
+            slug: true
+          }
+        }
       },
       orderBy: { createdAt: 'desc' }
     });
@@ -544,7 +720,7 @@ const generateAdminEmployeeId = async () => {
  */
 const createAdmin = async (req, res) => {
   try {
-    const { name, email, phone, password, department, designation, status = 'ACTIVE' } = req.body;
+    const { name, email, phone, password, department, designation, organizationId, status = 'ACTIVE' } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'Name, email, and password are required.' });
@@ -575,7 +751,8 @@ const createAdmin = async (req, res) => {
             role: 'ADMIN',
             status,
             department: department || 'Administration',
-            designation: designation || 'System Administrator'
+            designation: designation || 'System Administrator',
+            organizationId: organizationId || null
           },
           select: {
             id: true,
@@ -587,7 +764,16 @@ const createAdmin = async (req, res) => {
             status: true,
             department: true,
             designation: true,
-            createdAt: true
+            createdAt: true,
+            organizationId: true,
+            organization: {
+              select: {
+                id: true,
+                name: true,
+                companyCode: true,
+                slug: true
+              }
+            }
           }
         });
       } catch (err) {
@@ -619,7 +805,7 @@ const createAdmin = async (req, res) => {
 const updateAdmin = async (req, res) => {
   try {
     const { adminId } = req.params;
-    const { name, email, phone, department, designation, status } = req.body;
+    const { name, email, phone, department, designation, organizationId, status } = req.body;
 
     const targetAdmin = await prisma.user.findUnique({ where: { id: adminId } });
     if (!targetAdmin || targetAdmin.role !== 'ADMIN') {
@@ -634,7 +820,8 @@ const updateAdmin = async (req, res) => {
         phone: phone !== undefined ? phone : targetAdmin.phone,
         department: department || targetAdmin.department,
         designation: designation || targetAdmin.designation,
-        status: status || targetAdmin.status
+        status: status || targetAdmin.status,
+        organizationId: organizationId !== undefined ? (organizationId || null) : targetAdmin.organizationId
       },
       select: {
         id: true,
@@ -646,7 +833,16 @@ const updateAdmin = async (req, res) => {
         status: true,
         department: true,
         designation: true,
-        updatedAt: true
+        updatedAt: true,
+        organizationId: true,
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            companyCode: true,
+            slug: true
+          }
+        }
       }
     });
 

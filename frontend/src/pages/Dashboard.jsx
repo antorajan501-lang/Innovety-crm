@@ -10,6 +10,8 @@ import ClockOutReminderModal from '../components/worklog/ClockOutReminderModal';
 import useClockOutWithReminder from '../hooks/useClockOutWithReminder';
 import EmployeeDashboard from '../components/dashboard/EmployeeDashboard';
 import TeamLeaderDashboard from '../components/dashboard/TeamLeaderDashboard';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 import LeaveOverviewCard from '../components/dashboard/LeaveOverviewCard';
 import TeamPerformanceRankings from '../components/dashboard/TeamPerformanceRankings';
 import {
@@ -104,6 +106,8 @@ const getRollingWeekDays = () => {
 
 const Dashboard = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId } = useCompanyScope();
 
   if (user?.role === 'EMPLOYEE' || user?.role === 'INTERN') {
     return <EmployeeDashboard />;
@@ -197,25 +201,27 @@ const Dashboard = () => {
     return matched;
   }, [allTasks, selectedDate, isTodaySelected]);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (orgId = effectiveOrgId) => {
     try {
       setLoading(true);
+      const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
+      const params = targetOrg ? { organizationId: targetOrg } : {};
 
       const promises = [
-        api.get('/tasks'),
-        api.get('/tickets'),
-        api.get('/announcements'),
-        api.get('/chat/rooms'),
-        api.get('/leaves'),
-        api.get('/dashboard/overview')
+        api.get('/tasks', { params }),
+        api.get('/tickets', { params }),
+        api.get('/announcements', { params }),
+        api.get('/chat/rooms', { params }),
+        api.get('/leaves', { params }),
+        api.get('/dashboard/overview', { params })
       ];
 
       const isManagementRole = ['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER'].includes(user?.role);
       if (isManagementRole) {
-        promises.push(api.get('/attendance/analytics'));
-        promises.push(api.get('/teams'));
-        promises.push(api.get('/users?limit=1000'));
-        promises.push(api.get('/logs?limit=8'));
+        promises.push(api.get('/attendance/analytics', { params }));
+        promises.push(api.get('/teams', { params }));
+        promises.push(api.get('/users', { params: { ...params, limit: 1000 } }));
+        promises.push(api.get('/logs', { params: { ...params, limit: 8 } }));
       }
 
       const results = await Promise.all(promises.map(p => p.catch(() => ({ error: true, data: null }))));
@@ -326,7 +332,7 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    fetchDashboardData();
+    fetchDashboardData(effectiveOrgId);
 
     const fetchStatus = async () => {
       try {
@@ -344,7 +350,7 @@ const Dashboard = () => {
     const socket = getSocket();
     if (socket) {
       const handleAttendanceEvent = () => {
-        fetchDashboardData();
+        fetchDashboardData(effectiveOrgId);
         fetchStatus();
       };
       socket.on('attendance_clock_in', handleAttendanceEvent);
@@ -356,7 +362,7 @@ const Dashboard = () => {
         socket.off('attendance_updated', handleAttendanceEvent);
       };
     }
-  }, [user]);
+  }, [user, effectiveOrgId, selectedOrgId]);
 
   useEffect(() => {
     if (user && (user.role === 'INTERN' || user.role === 'EMPLOYEE' || user.role === 'TEAM_LEADER')) {
@@ -532,6 +538,11 @@ const Dashboard = () => {
             </Link>
           </div>
         )}
+      </motion.div>
+
+      {/* Shared Company Selector Bar */}
+      <motion.div variants={itemVariants}>
+        <CompanyScopeSelector onScopeChange={(newId) => fetchDashboardData(newId)} />
       </motion.div>
 
       {/* Position #1 for Employee, Intern & Team Leader: Attendance Clock Portal */}

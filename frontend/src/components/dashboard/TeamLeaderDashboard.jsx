@@ -35,7 +35,6 @@ import {
   Activity,
   Search,
   MapPin,
-  Flame,
   Shield,
   Layers,
   ArrowUpRight,

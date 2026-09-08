@@ -1,17 +1,28 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 import AdvancedLeaveFilterSuite from '../components/leave/AdvancedLeaveFilterSuite';
 
 const LeaveManagementPage = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+  }, [targetOrg]);
+
   const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const fetchLeaves = async (isInitial = false) => {
     try {
       if (isInitial) setLoading(true);
-      const res = await api.get('/leaves');
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg } : {};
+      const res = await api.get('/leaves', { params });
       const data = Array.isArray(res.data) ? res.data : (res.data?.leaves || []);
       setLeaves(data);
     } catch (err) {
@@ -22,10 +33,14 @@ const LeaveManagementPage = () => {
   };
 
   useEffect(() => {
+    setLeaves([]);
     fetchLeaves(true);
+  }, [targetOrg, user?.organizationId]);
+
+  useEffect(() => {
     const interval = setInterval(() => fetchLeaves(false), 5000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedOrgId]);
 
   if (loading) {
     return (

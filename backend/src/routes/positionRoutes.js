@@ -18,6 +18,7 @@ router.get('/history/:userId', authenticate, getPositionHistory);
 // Super Admin Management Endpoints
 router.post('/', authenticate, requireRole(['SUPER_ADMIN']), createPosition);
 router.put('/reorder', authenticate, requireRole(['SUPER_ADMIN']), reorderPositions);
+router.patch('/reorder', authenticate, requireRole(['SUPER_ADMIN']), reorderPositions);
 router.put('/:id', authenticate, requireRole(['SUPER_ADMIN']), updatePosition);
 router.patch('/:id/status', authenticate, requireRole(['SUPER_ADMIN']), togglePositionStatus);
 router.delete('/:id', authenticate, requireRole(['SUPER_ADMIN']), deletePosition);

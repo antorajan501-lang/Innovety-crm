@@ -1,10 +1,21 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../../services/api';
-import { Plus, Edit2, Trash2, CheckCircle2, ShieldCheck, Layers, X, DollarSign } from 'lucide-react';
+import { Plus, Edit2, Trash2, CheckCircle2, ShieldCheck, Layers, X, DollarSign, AlertCircle } from 'lucide-react';
+import CompanyScopeSelector from '../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../context/CompanyScopeContext';
+
+import { useAuth } from '../../context/AuthContext';
 
 export default function SalaryTemplatesPage() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
   const [templates, setTemplates] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
@@ -27,21 +38,29 @@ export default function SalaryTemplatesPage() {
     otherDeductions: 0
   });
 
-  useEffect(() => {
-    fetchTemplates();
-  }, []);
-
   const fetchTemplates = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/payroll/templates');
-      setTemplates(res.data);
+      setErrorMessage('');
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg } : {};
+      const res = await api.get('/payroll/templates', { params });
+      setTemplates(res.data || []);
     } catch (err) {
       console.error('Failed to load salary templates:', err);
+      setErrorMessage('Failed to load salary templates.');
+      setTemplates([]);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setTemplates([]);
+    if (orgsLoading) return;
+    fetchTemplates();
+  }, [user, targetOrg, user?.organizationId, orgsLoading]);
 
   const handleOpenCreate = () => {
     setEditingId(null);
@@ -92,10 +111,16 @@ export default function SalaryTemplatesPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const payload = {
+        ...formData,
+        organizationId: targetOrg
+      };
+      const params = targetOrg ? { organizationId: targetOrg } : {};
       if (editingId) {
-        await api.put(`/payroll/templates/${editingId}`, formData);
+        await api.put(`/payroll/templates/${editingId}`, payload, { params });
       } else {
-        await api.post('/payroll/templates', formData);
+        await api.post('/payroll/templates', payload, { params });
       }
       setShowModal(false);
       fetchTemplates();
@@ -104,10 +129,12 @@ export default function SalaryTemplatesPage() {
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this salary template?')) return;
+  const handleDelete = async (id, name) => {
+    if (!window.confirm(`Are you sure you want to delete salary template "${name || 'this template'}"? This action cannot be undone.`)) return;
     try {
-      await api.delete(`/payroll/templates/${id}`);
+      const targetOrg = selectedOrgIdRef.current || selectedOrgId;
+      const params = targetOrg ? { organizationId: targetOrg } : {};
+      await api.delete(`/payroll/templates/${id}`, { params });
       fetchTemplates();
     } catch (err) {
       alert(err.response?.data?.message || 'Failed to delete template.');
@@ -118,13 +145,16 @@ export default function SalaryTemplatesPage() {
 
   return (
     <div className="space-y-6 text-left font-sans w-full max-w-7xl mx-auto">
+      {/* Company Scope Selector */}
+      <CompanyScopeSelector />
+
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-card border border-border p-6 rounded-2xl shadow-sm">
         <div>
           <h1 className="text-2xl font-black text-foreground flex items-center gap-2">
             <Layers className="w-6 h-6 text-primary" /> Salary Structure Templates
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure standardized salary components by role for quick assignment across the company.
+            Configure standardized salary components by role for quick assignment across <strong className="text-primary">{selectedCompany?.name || 'the selected company'}</strong>.
           </p>
         </div>
         <button
@@ -135,13 +165,28 @@ export default function SalaryTemplatesPage() {
         </button>
       </div>
 
+      {errorMessage && (
+        <div className="flex items-center justify-between p-4 rounded-xl border border-red-500/20 bg-red-500/10 text-red-500 text-xs font-semibold">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" />
+            <span>{errorMessage}</span>
+          </div>
+          <button onClick={fetchTemplates} className="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-600 dark:text-red-300 rounded-lg text-xs font-bold transition-colors">
+            Retry
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-muted-foreground py-8 text-center">Loading templates...</p>
       ) : templates.length === 0 ? (
-        <div className="bg-card border border-border rounded-2xl p-12 text-center text-muted-foreground space-y-2">
+        <div className="bg-card border border-border rounded-2xl p-12 text-center text-muted-foreground space-y-3">
           <Layers className="w-8 h-8 mx-auto opacity-50 text-primary" />
-          <p className="font-bold text-foreground">No Salary Templates Found</p>
-          <p className="text-xs">Click "Create Template" above to add your company's first salary structure template.</p>
+          <p className="font-bold text-foreground">No salary templates found for {selectedCompany?.name || 'this company'}.</p>
+          <p className="text-xs">Click "Create Template" above to add a new salary structure template for {selectedCompany?.name || 'this company'}.</p>
+          <button onClick={handleOpenCreate} className="mt-2 inline-flex items-center gap-2 px-4 py-2 btn-primary rounded-xl font-bold text-xs">
+            <Plus className="w-4 h-4" /> Create Template
+          </button>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -168,7 +213,7 @@ export default function SalaryTemplatesPage() {
                       <button onClick={() => handleOpenEdit(t)} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground">
                         <Edit2 className="w-4 h-4" />
                       </button>
-                      <button onClick={() => handleDelete(t.id)} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-destructive">
+                      <button onClick={() => handleDelete(t.id, t.name)} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-destructive">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>

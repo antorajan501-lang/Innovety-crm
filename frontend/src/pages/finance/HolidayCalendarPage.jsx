@@ -1,8 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../../services/api';
 import { Calendar, Plus, Trash2, ShieldCheck, X } from 'lucide-react';
+import CompanyScopeSelector from '../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../context/CompanyScopeContext';
+import { useAuth } from '../../context/AuthContext';
 
 export default function HolidayCalendarPage() {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, loading: orgsLoading, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
+  const selectedOrgIdRef = useRef(targetOrg);
+
   const [holidays, setHolidays] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -16,21 +25,26 @@ export default function HolidayCalendarPage() {
     remarks: ''
   });
 
-  useEffect(() => {
-    fetchHolidays();
-  }, []);
-
   const fetchHolidays = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/payroll/holidays');
-      setHolidays(res.data);
+      const activeOrg = selectedOrgIdRef.current || targetOrg;
+      const params = activeOrg ? { organizationId: activeOrg } : {};
+      const res = await api.get('/payroll/holidays', { params });
+      setHolidays(res.data || []);
     } catch (err) {
       console.error('Failed to load holidays:', err);
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    selectedOrgIdRef.current = targetOrg;
+    setHolidays([]);
+    if (orgsLoading) return;
+    fetchHolidays();
+  }, [user, targetOrg, user?.organizationId, orgsLoading]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -55,6 +69,9 @@ export default function HolidayCalendarPage() {
 
   return (
     <div className="space-y-6 text-left font-sans w-full max-w-7xl mx-auto">
+      {/* Company Scope Selector */}
+      <CompanyScopeSelector />
+
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-card border border-border p-6 rounded-2xl shadow-sm">
         <div>
           <h1 className="text-2xl font-black text-foreground flex items-center gap-2">

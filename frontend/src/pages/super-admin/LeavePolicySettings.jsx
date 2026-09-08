@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import CompanyScopeSelector from '../../components/common/CompanyScopeSelector';
 import {
   Calendar,
   Settings,
@@ -22,11 +23,29 @@ import {
   X,
   Stethoscope,
   Award,
-  DollarSign
+  DollarSign,
+  Building2
 } from 'lucide-react';
 import api from '../../services/api';
 
+const extractCompanyList = (responseData) => {
+  if (Array.isArray(responseData)) return responseData;
+  if (Array.isArray(responseData?.data)) return responseData.data;
+  if (Array.isArray(responseData?.organizations)) return responseData.organizations;
+  if (Array.isArray(responseData?.companies)) return responseData.companies;
+  return [];
+};
+
+import { useAuth } from '../../context/AuthContext';
+import { useCompanyScope } from '../../context/CompanyScopeContext';
+
 const LeavePolicySettings = () => {
+  const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, companies: scopeCompanies } = useCompanyScope();
+
+  const safeCompanies = Array.isArray(scopeCompanies) ? scopeCompanies : [];
+
   const [policy, setPolicy] = useState({
     allocationType: 'ANNUAL',
     carryForwardEnabled: true,
@@ -76,12 +95,14 @@ const LeavePolicySettings = () => {
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
-  const fetchPolicyData = async () => {
+  const fetchPolicyData = async (orgId = effectiveOrgId) => {
+    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
       setLoading(true);
+      const params = targetOrg ? { organizationId: targetOrg } : {};
       const [polRes, balRes] = await Promise.all([
-        api.get('/leave-policy'),
-        api.get('/leave-policy/balances')
+        api.get('/leave-policy', { params }),
+        api.get('/leave-policy/balances', { params })
       ]);
 
       if (polRes.data?.policy) {
@@ -92,15 +113,15 @@ const LeavePolicySettings = () => {
       setAlert({ type: '', text: '' });
     } catch (err) {
       console.error('Fetch leave policy error:', err);
-      setAlert({ type: 'error', text: 'Failed to load global leave policy settings.' });
+      setAlert({ type: 'error', text: 'Failed to load company leave policy settings.' });
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchPolicyData();
-  }, []);
+    fetchPolicyData(effectiveOrgId);
+  }, [effectiveOrgId, user?.organizationId]);
 
   const handleSavePolicy = async (e) => {
     e.preventDefault();
@@ -108,9 +129,13 @@ const LeavePolicySettings = () => {
     setAlert({ type: '', text: '' });
 
     try {
-      const res = await api.put('/leave-policy', policy);
+      const res = await api.put('/leave-policy', {
+        ...policy,
+        organizationId: selectedOrgId
+      });
       setPolicy(res.data.policy);
-      setAlert({ type: 'success', text: 'Global Leave Policy updated successfully!' });
+      const currentCompName = safeCompanies.find((c) => c.id === selectedOrgId)?.name || 'Company';
+      setAlert({ type: 'success', text: `${currentCompName} Leave Policy updated successfully!` });
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to update leave policy.' });
     } finally {
@@ -174,14 +199,20 @@ const LeavePolicySettings = () => {
     e.preventDefault();
     try {
       if (editingType) {
-        await api.put(`/leave-policy/types/${editingType.id}`, typeFormData);
+        await api.put(`/leave-policy/types/${editingType.id}`, {
+          ...typeFormData,
+          organizationId: selectedOrgId
+        });
         setAlert({ type: 'success', text: `Leave Type ${typeFormData.name} updated successfully!` });
       } else {
-        await api.post('/leave-policy/types', typeFormData);
+        await api.post('/leave-policy/types', {
+          ...typeFormData,
+          organizationId: selectedOrgId
+        });
         setAlert({ type: 'success', text: `Leave Type ${typeFormData.name} created successfully!` });
       }
       setTypeModalOpen(false);
-      fetchPolicyData();
+      fetchPolicyData(selectedOrgId);
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to save leave type.' });
     }
@@ -191,7 +222,7 @@ const LeavePolicySettings = () => {
     try {
       const res = await api.put(`/leave-policy/types/${lt.id}/status`);
       setAlert({ type: 'success', text: res.data.message });
-      fetchPolicyData();
+      fetchPolicyData(selectedOrgId);
     } catch (err) {
       setAlert({ type: 'error', text: 'Failed to toggle leave type status.' });
     }
@@ -207,7 +238,7 @@ const LeavePolicySettings = () => {
     try {
       await api.delete(`/leave-policy/types/${lt.id}`);
       setAlert({ type: 'success', text: `Leave Type ${lt.name} deleted.` });
-      fetchPolicyData();
+      fetchPolicyData(selectedOrgId);
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to delete leave type.' });
     }
@@ -232,7 +263,7 @@ const LeavePolicySettings = () => {
       await api.post('/leave-policy/adjust-balance', payload);
       setAlert({ type: 'success', text: 'User leave balance adjusted successfully!' });
       setAdjustModalOpen(false);
-      fetchPolicyData();
+      fetchPolicyData(selectedOrgId);
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to adjust user leave balance.' });
     } finally {
@@ -243,10 +274,10 @@ const LeavePolicySettings = () => {
   const handleRunAnnualReset = async () => {
     setResetting(true);
     try {
-      const res = await api.post('/leave-policy/annual-reset');
+      const res = await api.post('/leave-policy/annual-reset', { organizationId: selectedOrgId });
       setAlert({ type: 'success', text: res.data.message || 'Annual leave reset executed!' });
       setResetModalOpen(false);
-      fetchPolicyData();
+      fetchPolicyData(selectedOrgId);
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to execute annual reset.' });
     } finally {
@@ -259,6 +290,8 @@ const LeavePolicySettings = () => {
     u.leaveType?.code?.toLowerCase().includes(userSearch.toLowerCase())
   );
 
+  const currentCompany = safeCompanies.find((c) => c.id === selectedOrgId);
+
   return (
     <div className="space-y-8 p-4 sm:p-8 max-w-7xl mx-auto text-left">
       {/* Header */}
@@ -269,12 +302,12 @@ const LeavePolicySettings = () => {
               <Calendar className="h-6 w-6" />
             </div>
             <h1 className="text-2xl font-black tracking-tight text-foreground flex items-center gap-2">
-              <span>Innoveity Global Leave Policy</span>
+              <span>{currentCompany ? `${currentCompany.name} Leave Policy` : 'Company Leave Policy'}</span>
               <Sparkles className="h-5 w-5 text-amber-500" />
             </h1>
           </div>
           <p className="text-xs text-muted-foreground font-medium">
-            Single company-wide leave policy governing Interns, Employees, and Team Leaders.
+            Leave policy governing Interns, Employees, and Team Leaders for {currentCompany?.name || 'selected company'}.
           </p>
         </div>
 
@@ -295,6 +328,9 @@ const LeavePolicySettings = () => {
           </button>
         </div>
       </div>
+
+      {/* Shared Company Selector Bar */}
+      <CompanyScopeSelector onScopeChange={(newId) => fetchPolicyData(newId)} />
 
       {/* Alert Banner */}
       {alert.text && (
@@ -323,7 +359,7 @@ const LeavePolicySettings = () => {
         <div className="flex items-center justify-between border-b border-border/40 pb-4">
           <div className="flex items-center gap-2.5">
             <Calendar className="h-5 w-5 text-primary" />
-            <h2 className="text-base font-extrabold text-foreground">Global Leave Policy</h2>
+            <h2 className="text-base font-extrabold text-foreground">{currentCompany?.name || 'Company'} Leave Policy</h2>
           </div>
           <button
             onClick={handleSavePolicy}

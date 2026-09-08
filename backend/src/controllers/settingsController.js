@@ -1,33 +1,49 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 const { getSystemTimeZone, getTodayZonedDate, getZonedParts, createZonedDate } = require('../utils/attendanceUtils');
 const { broadcastAttendanceEvent } = require('../socket');
 
 const getSettings = async (req, res) => {
   try {
-    let settings = await prisma.systemSettings.findUnique({
-      where: { id: 'GLOBAL' }
-    });
+    const targetOrgId = getEffectiveOrgId(req);
+
+    let settings = null;
+    if (targetOrgId) {
+      settings = await prisma.systemSettings.findFirst({
+        where: { organizationId: targetOrgId }
+      });
+    }
 
     if (!settings) {
-      // Self-heal: Create default settings if not exists
-      settings = await prisma.systemSettings.create({
-        data: {
-          id: 'GLOBAL',
-          companyName: 'INNOVEITY',
-          senderEmail: 'somusuraj72@gmail.com',
-          internShiftStart: '09:00',
-          internShiftEnd: '18:00',
-          tlShiftStart: '09:00',
-          tlShiftEnd: '18:00',
-          clockInTime: '09:00',
-          clockOutTime: '18:00',
-          autoClockOutEnabled: true,
-          officeLocationName: 'Innoveity Headquarters',
-          earlyWindowMinutes: 30,
-          gracePeriodMinutes: 15
-        }
-      });
+      const org = targetOrgId ? await prisma.organization.findUnique({ where: { id: targetOrgId } }) : null;
+      const companyName = org?.name || 'Company Workspace';
+      const senderEmail = org?.email || 'no-reply@enterprise-crm.com';
+      const officeLocationName = org?.name ? `${org.name} Headquarters` : 'Company Headquarters';
+
+      if (targetOrgId) {
+        settings = await prisma.systemSettings.create({
+          data: {
+            organizationId: targetOrgId,
+            companyName,
+            senderEmail,
+            clockInTime: '09:00',
+            clockOutTime: '18:00',
+            internShiftStart: '09:00',
+            internShiftEnd: '18:00',
+            tlShiftStart: '09:00',
+            tlShiftEnd: '18:00',
+            autoClockOutEnabled: true,
+            officeLocationName,
+            earlyWindowMinutes: 30,
+            gracePeriodMinutes: 15
+          }
+        });
+      } else {
+        settings = (await prisma.systemSettings.findFirst()) || (await prisma.systemSettings.create({
+          data: { companyName: 'Company Workspace' }
+        }));
+      }
     }
 
     res.json({
@@ -38,12 +54,14 @@ const getSettings = async (req, res) => {
     });
   } catch (error) {
     console.error('Get settings error:', error);
-    res.status(500).json({ message: 'Failed to retrieve system settings.' });
+    res.status(500).json({ message: 'Failed to retrieve system settings.', reason: error.message });
   }
 };
 
 const updateSettings = async (req, res) => {
   try {
+    const targetOrgId = getEffectiveOrgId(req);
+
     const {
       companyName,
       senderEmail,
@@ -103,44 +121,58 @@ const updateSettings = async (req, res) => {
 
     const autoClockOutBool = autoClockOutEnabled !== undefined ? Boolean(autoClockOutEnabled) : undefined;
 
-    const updated = await prisma.systemSettings.upsert({
-      where: { id: 'GLOBAL' },
-      update: {
-        companyName,
-        senderEmail,
-        internShiftStart: internShiftStart || clockInTime,
-        internShiftEnd: internShiftEnd || clockOutTime,
-        tlShiftStart: tlShiftStart || clockInTime,
-        tlShiftEnd: tlShiftEnd || clockOutTime,
-        clockInTime: clockInTime || internShiftStart,
-        clockOutTime: clockOutTime || internShiftEnd,
-        autoClockOutEnabled: autoClockOutBool,
-        officeLatitude,
-        officeLongitude,
-        allowedRadiusMeters,
-        officeLocationName,
-        earlyWindowMinutes,
-        gracePeriodMinutes
-      },
-      create: {
-        id: 'GLOBAL',
-        companyName: companyName || 'INNOVEITY',
-        senderEmail: senderEmail || 'somusuraj72@gmail.com',
-        internShiftStart: internShiftStart || clockInTime || '09:00',
-        internShiftEnd: internShiftEnd || clockOutTime || '18:00',
-        tlShiftStart: tlShiftStart || clockInTime || '09:00',
-        tlShiftEnd: tlShiftEnd || clockOutTime || '18:00',
-        clockInTime: clockInTime || '09:00',
-        clockOutTime: clockOutTime || '18:00',
-        autoClockOutEnabled: autoClockOutBool !== undefined ? autoClockOutBool : true,
-        officeLatitude: officeLatitude || 12.971598,
-        officeLongitude: officeLongitude || 77.594562,
-        allowedRadiusMeters: allowedRadiusMeters || 200.0,
-        officeLocationName: officeLocationName || 'Innoveity Headquarters',
-        earlyWindowMinutes: earlyWindowMinutes !== undefined ? earlyWindowMinutes : 30,
-        gracePeriodMinutes: gracePeriodMinutes !== undefined ? gracePeriodMinutes : 15
+    // Load org name if companyName not explicitly supplied
+    let resolvedCompanyName = companyName;
+    if (!resolvedCompanyName && targetOrgId) {
+      const org = await prisma.organization.findUnique({ where: { id: targetOrgId } });
+      resolvedCompanyName = org?.name || 'Company Workspace';
+    }
+
+    const dataPayload = {
+      companyName: resolvedCompanyName || 'Company Workspace',
+      senderEmail: senderEmail || 'no-reply@enterprise-crm.com',
+      internShiftStart: internShiftStart || clockInTime || '09:00',
+      internShiftEnd: internShiftEnd || clockOutTime || '18:00',
+      tlShiftStart: tlShiftStart || clockInTime || '09:00',
+      tlShiftEnd: tlShiftEnd || clockOutTime || '18:00',
+      clockInTime: clockInTime || internShiftStart || '09:00',
+      clockOutTime: clockOutTime || internShiftEnd || '18:00',
+      autoClockOutEnabled: autoClockOutBool !== undefined ? autoClockOutBool : true,
+      officeLatitude: officeLatitude || 12.971598,
+      officeLongitude: officeLongitude || 77.594562,
+      allowedRadiusMeters: allowedRadiusMeters || 200.0,
+      officeLocationName: officeLocationName || 'Company Headquarters',
+      earlyWindowMinutes: earlyWindowMinutes !== undefined ? earlyWindowMinutes : 30,
+      gracePeriodMinutes: gracePeriodMinutes !== undefined ? gracePeriodMinutes : 15
+    };
+
+    let updated = null;
+    if (targetOrgId) {
+      const existing = await prisma.systemSettings.findFirst({ where: { organizationId: targetOrgId } });
+      if (existing) {
+        updated = await prisma.systemSettings.update({
+          where: { id: existing.id },
+          data: dataPayload
+        });
+      } else {
+        updated = await prisma.systemSettings.create({
+          data: {
+            organizationId: targetOrgId,
+            ...dataPayload
+          }
+        });
       }
-    });
+    } else {
+      const existingFirst = await prisma.systemSettings.findFirst();
+      if (existingFirst) {
+        updated = await prisma.systemSettings.update({
+          where: { id: existingFirst.id },
+          data: dataPayload
+        });
+      } else {
+        updated = await prisma.systemSettings.create({ data: dataPayload });
+      }
+    }
 
     // Synchronize today's active attendance records with the new shiftEndAt
     const timeZone = getSystemTimeZone(updated);
@@ -149,20 +181,24 @@ const updateSettings = async (req, res) => {
     const { year, month, day } = getZonedParts(now, timeZone);
     const newShiftEndAt = createZonedDate(year, month, day, outH, outM, timeZone);
 
-    await prisma.attendance.updateMany({
-      where: {
-        clockOut: null,
-        date: todayDate
-      },
-      data: {
-        shiftEndAt: newShiftEndAt
-      }
-    });
+    if (targetOrgId) {
+      await prisma.attendance.updateMany({
+        where: {
+          clockOut: null,
+          date: todayDate,
+          user: { organizationId: targetOrgId }
+        },
+        data: {
+          shiftEndAt: newShiftEndAt
+        }
+      });
+    }
 
     await logActivity({
       userId: req.user.id,
-      action: 'SYSTEM_SETTINGS_UPDATE',
-      details: `Updated settings. Clock In: ${updated.clockInTime}, Clock Out: ${updated.clockOutTime}, Auto Clock-Out: ${updated.autoClockOutEnabled ? 'ON' : 'OFF'}`
+      organizationId: targetOrgId,
+      action: 'ATTENDANCE_SETTINGS_UPDATE',
+      details: `Updated attendance settings for organization ${targetOrgId || 'Global'}. Clock In: ${updated.clockInTime}, Clock Out: ${updated.clockOutTime}, Auto Clock-Out: ${updated.autoClockOutEnabled ? 'ON' : 'OFF'}`
     });
 
     broadcastAttendanceEvent('settings_updated', updated);
@@ -171,7 +207,7 @@ const updateSettings = async (req, res) => {
     res.json(updated);
   } catch (error) {
     console.error('Update settings error:', error);
-    res.status(500).json({ message: 'Failed to update system settings.' });
+    res.status(500).json({ message: 'Failed to update system settings.', reason: error.message });
   }
 };
 

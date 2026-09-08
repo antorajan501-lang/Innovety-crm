@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../context/CompanyScopeContext';
 import {
   Clock,
   Plus,
@@ -52,6 +54,9 @@ const formatHoursMinutes = (decimalHours = 0) => {
 
 export const WorkLogs = () => {
   const { user } = useAuth();
+  const isSuperAdmin = user?.role === 'SUPER_ADMIN';
+  const { selectedOrgId, effectiveOrgId, selectedCompany } = useCompanyScope();
+  const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || user?.organizationId);
   const isAdminOrSuperAdmin = ['ADMIN', 'SUPER_ADMIN'].includes(user?.role);
 
   const [loading, setLoading] = useState(true);
@@ -184,6 +189,7 @@ export const WorkLogs = () => {
       params.append('limit', filters.limit);
       params.append('sortBy', filters.sortBy);
       params.append('sortOrder', filters.sortOrder);
+      if (targetOrg) params.append('organizationId', targetOrg);
 
       const res = await api.get(`/worklogs?${params.toString()}`);
       setLogs(res.data.data || res.data.logs || []);
@@ -209,6 +215,7 @@ export const WorkLogs = () => {
       if (adminFilters.employeeId !== 'ALL') params.append('employeeId', adminFilters.employeeId);
       if (adminFilters.date) params.append('date', adminFilters.date);
       if (adminFilters.status !== 'ALL') params.append('status', adminFilters.status);
+      if (targetOrg) params.append('organizationId', targetOrg);
 
       const res = await api.get(`/worklogs/admin?${params.toString()}`);
       setAdminLogs(res.data.logs || []);
@@ -222,17 +229,18 @@ export const WorkLogs = () => {
   // Fetch Projects, Tasks, Departments, Employees
   const fetchMetadata = async () => {
     try {
+      const params = targetOrg ? { organizationId: targetOrg } : {};
       const [pRes, tRes] = await Promise.all([
-        api.get('/projects').catch(() => ({ data: {} })),
-        api.get('/tasks').catch(() => ({ data: [] }))
+        api.get('/projects', { params }).catch(() => ({ data: {} })),
+        api.get('/tasks', { params }).catch(() => ({ data: [] }))
       ]);
       setProjectsList(pRes.data?.projects || []);
       setTasksList(tRes.data || []);
 
       if (isAdminOrSuperAdmin) {
         const [dRes, eRes] = await Promise.all([
-          api.get('/organization/departments').catch(() => ({ data: [] })),
-          api.get('/users').catch(() => ({ data: [] }))
+          api.get('/organization/departments', { params }).catch(() => ({ data: [] })),
+          api.get('/users', { params: { ...params, limit: 1000 } }).catch(() => ({ data: [] }))
         ]);
         setDepartmentsList(Array.isArray(dRes.data) ? dRes.data : dRes.data?.departments || []);
         setEmployeesList(Array.isArray(eRes.data) ? eRes.data : eRes.data?.users || []);
@@ -243,6 +251,7 @@ export const WorkLogs = () => {
   };
 
   useEffect(() => {
+    setAdminFilters(prev => ({ ...prev, departmentId: 'ALL', employeeId: 'ALL' }));
     fetchMetadata();
     if (isAdminOrSuperAdmin) {
       fetchAdminWorkLogs();
@@ -250,19 +259,15 @@ export const WorkLogs = () => {
       fetchTodayStatus();
       fetchEmployeeWorkLogs();
     }
-  }, [isAdminOrSuperAdmin]);
-
-  useEffect(() => {
-    if (!isAdminOrSuperAdmin) {
-      fetchEmployeeWorkLogs();
-    }
-  }, [filters]);
+  }, [isAdminOrSuperAdmin, targetOrg, user?.organizationId]);
 
   useEffect(() => {
     if (isAdminOrSuperAdmin) {
       fetchAdminWorkLogs();
+    } else {
+      fetchEmployeeWorkLogs();
     }
-  }, [adminFilters]);
+  }, [filters, adminFilters, targetOrg, user?.organizationId]);
 
   // Open Form Modal (Creates or Continues today's or specific draft)
   const openFormModal = (logToEdit = null) => {
@@ -416,6 +421,8 @@ export const WorkLogs = () => {
       )}
 
       {/* HEADER SECTION (With Single Primary Action Button) */}
+      <CompanyScopeSelector />
+
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black tracking-tight text-foreground flex items-center gap-2.5">
@@ -565,8 +572,8 @@ export const WorkLogs = () => {
                     <tr>
                       <td colSpan={8} className="text-center py-12">
                         <FileSearch className="w-10 h-10 text-muted-foreground/40 mx-auto mb-2" />
-                        <p className="font-bold text-foreground">No work logs found</p>
-                        <p className="text-[11px] text-muted-foreground">Try changing your filters.</p>
+                        <p className="font-bold text-foreground">No work logs found{selectedCompany?.name ? ` for ${selectedCompany.name}` : ''}</p>
+                        <p className="text-[11px] text-muted-foreground">Try changing your filters or selecting another company scope.</p>
                       </td>
                     </tr>
                   ) : (

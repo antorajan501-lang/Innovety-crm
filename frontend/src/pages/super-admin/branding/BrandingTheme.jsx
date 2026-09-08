@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import api, { getUploadUrl } from '../../../services/api';
 import { useTheme } from '../../../context/ThemeContext';
+import CompanyScopeSelector from '../../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../../context/CompanyScopeContext';
 
 const THEME_PRESETS = [
   {
@@ -79,6 +81,8 @@ const BrandingTheme = () => {
     updateThemeSettings
   } = useTheme();
 
+  const { selectedOrgId } = useCompanyScope();
+
   const [companyName, setCompanyName] = useState(ctxName || 'Innoviety Enterprise');
   const [selectedTheme, setSelectedTheme] = useState(ctxTheme || 'emerald');
   const [themeMode, setThemeMode] = useState(ctxMode || 'light');
@@ -87,14 +91,42 @@ const BrandingTheme = () => {
   const [removeLogo, setRemoveLogo] = useState(false);
 
   const [saving, setSaving] = useState(false);
+  const [loadingBranding, setLoadingBranding] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
 
+  const fetchCompanyBranding = async (orgId = selectedOrgId) => {
+    if (!orgId) return;
+    try {
+      setLoadingBranding(true);
+      const res = await api.get('/super-admin/branding', {
+        params: { organizationId: orgId }
+      });
+      if (res.data) {
+        setCompanyName(res.data.companyName || '');
+        setSelectedTheme(res.data.selectedTheme || 'emerald');
+        setThemeMode(res.data.themeMode || 'light');
+        setLogoPreview(res.data.companyLogo ? getUploadUrl(res.data.companyLogo) : null);
+        setLogoFile(null);
+        setRemoveLogo(false);
+        updateThemeSettings({
+          companyName: res.data.companyName,
+          companyLogo: res.data.companyLogo,
+          selectedTheme: res.data.selectedTheme,
+          themeMode: res.data.themeMode
+        });
+      }
+    } catch (err) {
+      console.error('Failed to fetch company branding:', err);
+    } finally {
+      setLoadingBranding(false);
+    }
+  };
+
   useEffect(() => {
-    setCompanyName(ctxName);
-    setSelectedTheme(ctxTheme);
-    setThemeMode(ctxMode);
-    setLogoPreview(ctxLogo);
-  }, [ctxName, ctxLogo, ctxTheme, ctxMode]);
+    if (selectedOrgId) {
+      fetchCompanyBranding(selectedOrgId);
+    }
+  }, [selectedOrgId]);
 
   const handleLogoFileChange = (e) => {
     const file = e.target.files?.[0];
@@ -132,6 +164,9 @@ const BrandingTheme = () => {
       formData.append('companyName', companyName);
       formData.append('selectedTheme', selectedTheme);
       formData.append('themeMode', themeMode);
+      if (selectedOrgId) {
+        formData.append('organizationId', selectedOrgId);
+      }
       if (removeLogo) {
         formData.append('removeLogo', 'true');
       }
@@ -179,13 +214,16 @@ const BrandingTheme = () => {
 
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || loadingBranding}
           className="flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white hover:bg-primary-hover shadow-md transition-all shrink-0 disabled:opacity-50"
         >
           {saving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           <span>{saving ? 'Saving...' : 'Save Branding & Theme'}</span>
         </button>
       </div>
+
+      {/* Shared Company Selector Bar */}
+      <CompanyScopeSelector onScopeChange={(newId) => fetchCompanyBranding(newId)} />
 
       {message.text && (
         <div className={`p-4 rounded-xl text-xs font-bold flex items-center gap-2 ${message.type === 'success' ? 'bg-primary/10 text-primary border border-primary/30' : 'bg-red-500/10 text-red-500 border border-red-500/30'}`}>

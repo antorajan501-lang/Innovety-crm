@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getClockInStatus, clockIn, clockOut, getAttendanceLogs, updateAttendance, getAttendanceAnalytics, getAttendanceHistory } = require('../controllers/attendanceController');
+const { getClockInStatus, clockIn, clockOut, getAttendanceLogs, updateAttendance, getAttendanceAnalytics, getAttendanceHistory, getCompanyLeaveReport } = require('../controllers/attendanceController');
 const { authenticate, requireRole } = require('../middleware/auth');
 
 router.use(authenticate);
@@ -11,6 +11,7 @@ router.post('/clock-out', requireRole(['INTERN', 'TEAM_LEADER', 'EMPLOYEE']), cl
 router.get('/logs', getAttendanceLogs);
 router.get('/history', getAttendanceHistory);
 router.get('/analytics', getAttendanceAnalytics);
+router.get('/leave-report', requireRole(['ADMIN', 'SUPER_ADMIN']), getCompanyLeaveReport);
 
 // Admin & Super Admin manual override of logs
 router.put('/:id', requireRole(['ADMIN', 'SUPER_ADMIN']), updateAttendance);

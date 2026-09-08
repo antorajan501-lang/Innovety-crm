@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api, { getUploadUrl } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
+import CompanyBadge from '../components/common/CompanyBadge';
 import {
   Trash2,
   X,
@@ -312,6 +313,10 @@ const Profile = () => {
           )}
 
           <div className="mt-6 border-t border-border/40 pt-4 w-full text-xs space-y-3 text-left text-muted-foreground font-medium">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-muted-foreground">Organization</span>
+              <CompanyBadge organization={fullUserDetails?.organization || user?.organization} />
+            </div>
             <div className="flex items-center justify-between">
               <span className="font-bold text-muted-foreground">Email</span>
               <span className="text-foreground font-semibold truncate max-w-[170px]">{user?.email}</span>

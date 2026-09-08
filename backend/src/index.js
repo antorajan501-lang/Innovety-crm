@@ -167,13 +167,31 @@ app.get('/api/platform/settings', async (req, res) => {
   }
 });
 const organizationRoutes = require('./routes/organizationRoutes');
+const companyRoutes = require('./routes/companyRoutes');
+const organizationSettingsRoutes = require('./routes/organizationSettingsRoutes');
+const publicCompanyRoutes = require('./routes/publicCompanyRoutes');
+const subscriptionRoutes = require('./routes/subscriptionRoutes');
+const platformRoutes = require('./routes/platformRoutes');
+const backupRoutes = require('./routes/backupRoutes');
+const maintenanceRoutes = require('./routes/maintenanceRoutes');
 const positionRoutes = require('./routes/positionRoutes');
 
+app.use('/api/public/company', publicCompanyRoutes);
 app.use('/api/organization', organizationRoutes);
+app.use('/api/organizations', companyRoutes);
+app.use('/api/organizations', organizationSettingsRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/platform', platformRoutes);
+app.use('/api/backups', backupRoutes);
+app.use('/api/maintenance', maintenanceRoutes);
 app.use('/api/positions', positionRoutes);
+
+const { completeWelcomePopup, resetWelcomePopup } = require('./controllers/userController');
+const { requireRole } = require('./middleware/auth');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.post('/api/admin/users/:id/reset-welcome', authenticate, requireRole(['ADMIN', 'SUPER_ADMIN']), resetWelcomePopup);
 app.use('/api/teams', teamRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/attendance', attendanceRoutes);

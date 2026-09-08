@@ -1,11 +1,13 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { CompanyScopeProvider } from './context/CompanyScopeContext';
 import { SocketProvider } from './context/SocketContext';
 import DashboardLayout from './components/layouts/DashboardLayout';
 
 // Pages
 import Login from './pages/Login';
+import CompanyLogin from './pages/CompanyLogin';
 import Dashboard from './pages/Dashboard';
 import Interns from './pages/Interns';
 import TeamLeaders from './pages/TeamLeaders';
@@ -41,6 +43,7 @@ import PayrollSettingsPage from './pages/finance/PayrollSettingsPage';
 import EmployeePayrollPage from './pages/finance/EmployeePayrollPage';
 
 import { ThemeProvider } from './context/ThemeContext';
+import { BrandProvider } from './context/BrandContext';
 import SuperAdminDashboard from './pages/super-admin/dashboard/SuperAdminDashboard';
 import BrandingTheme from './pages/super-admin/branding/BrandingTheme';
 import UsersDirectory from './pages/super-admin/users/UsersDirectory';
@@ -48,6 +51,7 @@ import TeamDirectory from './pages/super-admin/teams/TeamDirectory';
 import AdminManagement from './pages/super-admin/admins/AdminManagement';
 import PlatformBuilderDashboard from './pages/super-admin/builder/PlatformBuilderDashboard';
 import OrganizationManager from './pages/super-admin/organization/OrganizationManager';
+import PlatformOperationsDashboard from './pages/super-admin/operations/PlatformOperationsDashboard';
 import LeavePolicySettings from './pages/super-admin/LeavePolicySettings';
 
 import ErrorBoundary from './components/common/ErrorBoundary';
@@ -97,11 +101,14 @@ const App = () => {
   return (
     <Router>
       <AuthProvider>
-        <ThemeProvider>
-          <SocketProvider>
-            <Routes>
-              {/* Public Auth Route */}
-              <Route path="/login" element={<Login />} />
+        <CompanyScopeProvider>
+          <BrandProvider>
+            <ThemeProvider>
+              <SocketProvider>
+                <Routes>
+                {/* Public Auth Routes */}
+                <Route path="/login" element={<Login />} />
+                <Route path="/company/:slug" element={<CompanyLogin />} />
 
               {/* Super Admin Platform Control Center Routes */}
               <Route
@@ -201,6 +208,15 @@ const App = () => {
                 element={
                   <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
                     <PlatformBuilderDashboard defaultTab="extensions" />
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route
+                path="/super-admin/operations"
+                element={
+                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                    <PlatformOperationsDashboard />
                   </ProtectedRoute>
                 }
               />
@@ -453,8 +469,10 @@ const App = () => {
             </Routes>
           </SocketProvider>
         </ThemeProvider>
-      </AuthProvider>
-    </Router>
+      </BrandProvider>
+    </CompanyScopeProvider>
+  </AuthProvider>
+</Router>
   );
 };
 

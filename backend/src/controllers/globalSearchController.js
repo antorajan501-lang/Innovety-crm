@@ -1,4 +1,5 @@
 const prisma = require('../utils/db');
+const { getOrganizationWhere } = require('../utils/organizationScope');
 
 /**
  * Enterprise Global Search Controller
@@ -94,7 +95,7 @@ const globalSearch = async (req, res) => {
 
     // 2. USERS (EMPLOYEE, INTERN, TEAM_LEADER, ADMIN)
     const users = await prisma.user.findMany({
-      where: {
+      where: getOrganizationWhere(req, {
         OR: [
           { name: { contains: q, mode: 'insensitive' } },
           { email: { contains: q, mode: 'insensitive' } },
@@ -102,7 +103,7 @@ const globalSearch = async (req, res) => {
           { department: { contains: q, mode: 'insensitive' } },
           { college: { contains: q, mode: 'insensitive' } }
         ]
-      },
+      }),
       take: 8,
       select: {
         id: true,
@@ -150,13 +151,14 @@ const globalSearch = async (req, res) => {
     // 3. PROJECTS
     if (canAccess(['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN'])) {
       const projects = await prisma.project.findMany({
-        where: {
+        where: getOrganizationWhere(req, {
+          isDeleted: false,
           OR: [
-            { title: { contains: q, mode: 'insensitive' } },
-            { code: { contains: q, mode: 'insensitive' } },
+            { name: { contains: q, mode: 'insensitive' } },
+            { projectCode: { contains: q, mode: 'insensitive' } },
             { description: { contains: q, mode: 'insensitive' } }
           ]
-        },
+        }),
         take: 5,
         select: {
           id: true,
@@ -181,12 +183,12 @@ const globalSearch = async (req, res) => {
     // 4. TASKS
     if (canAccess(['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN'])) {
       const tasks = await prisma.task.findMany({
-        where: {
+        where: getOrganizationWhere(req, {
           OR: [
             { title: { contains: q, mode: 'insensitive' } },
             { description: { contains: q, mode: 'insensitive' } }
           ]
-        },
+        }),
         take: 5,
         select: {
           id: true,

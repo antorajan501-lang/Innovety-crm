@@ -1,5 +1,6 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 
 // Helper to auto-generate asset ID (e.g. AST-1001)
 const generateAssetId = async () => {
@@ -48,8 +49,11 @@ const createAsset = async (req, res) => {
       billPhoto,
       status,
       description,
-      quantity
+      quantity,
+      organizationId
     } = req.body;
+
+    const targetOrgId = getEffectiveOrgId(req);
 
     if (!name || !category) {
       return res.status(400).json({ message: 'Asset name and category are required.' });
@@ -92,7 +96,8 @@ const createAsset = async (req, res) => {
           billPhoto: uploadedBillPhoto,
           status: status || 'AVAILABLE',
           description: description || null,
-          quantity: 1
+          quantity: 1,
+          organizationId: targetOrgId
         }
       });
 
@@ -145,7 +150,8 @@ const createAsset = async (req, res) => {
           billPhoto: uploadedBillPhoto,
           status: status || 'AVAILABLE',
           description: description || null,
-          quantity: qty
+          quantity: qty,
+          organizationId: targetOrgId
         };
 
         const created = await tx.asset.create({ data: assetData });
@@ -176,7 +182,9 @@ const createAsset = async (req, res) => {
 // Get all assets with filter, search & role checks
 const getAllAssets = async (req, res) => {
   try {
-    const { category, status, department, brand, search, page = 1, limit = 50 } = req.query;
+    const { category, status, department, brand, search, page = 1, limit = 50, organizationId } = req.query;
+
+    const targetOrgId = getEffectiveOrgId(req);
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -208,6 +216,26 @@ const getAllAssets = async (req, res) => {
         { serialNumber: { contains: search, mode: 'insensitive' } },
         { assignedTo: { name: { contains: search, mode: 'insensitive' } } }
       ];
+    }
+
+    // Company Tenant Scoping
+    if (targetOrgId) {
+      const tenantCondition = {
+        OR: [
+          { organizationId: targetOrgId },
+          { organizationId: null, assignedTo: { organizationId: targetOrgId } }
+        ]
+      };
+
+      if (where.OR) {
+        where.AND = [
+          { OR: where.OR },
+          tenantCondition
+        ];
+        delete where.OR;
+      } else {
+        where.OR = tenantCondition.OR;
+      }
     }
 
     const [assets, totalCount] = await Promise.all([
@@ -508,10 +536,16 @@ const returnAsset = async (req, res) => {
 const deleteAsset = async (req, res) => {
   try {
     const { id } = req.params;
+    const targetOrgId = getEffectiveOrgId(req);
 
     const asset = await prisma.asset.findUnique({ where: { id } });
     if (!asset) {
       return res.status(404).json({ message: 'Asset not found.' });
+    }
+
+    // Company ownership validation
+    if (targetOrgId && asset.organizationId && asset.organizationId !== targetOrgId) {
+      return res.status(403).json({ message: 'Unauthorized: Asset does not belong to the selected company scope.' });
     }
 
     if (asset.assignedToId || asset.status === 'ASSIGNED') {
@@ -528,7 +562,7 @@ const deleteAsset = async (req, res) => {
       details: `Deleted asset "${asset.name}" (${asset.assetId})`
     });
 
-    res.json({ message: 'Asset deleted successfully.' });
+    res.json({ success: true, message: 'Asset deleted successfully.' });
   } catch (error) {
     console.error('Delete asset error:', error);
     res.status(500).json({ message: 'Failed to delete asset.' });
@@ -538,15 +572,31 @@ const deleteAsset = async (req, res) => {
 // Get asset KPI statistics for dashboard
 const getAssetAnalytics = async (req, res) => {
   try {
-    const totalAssets = await prisma.asset.count();
+    const targetOrgId = getEffectiveOrgId(req);
+
+    const tenantCondition = targetOrgId ? {
+      OR: [
+        { organizationId: targetOrgId },
+        { organizationId: null, assignedTo: { organizationId: targetOrgId } }
+      ]
+    } : {};
+
+    const totalAssets = await prisma.asset.count({ where: tenantCondition });
+
     const assignedAssets = await prisma.asset.count({
       where: {
-        OR: [
-          { status: 'ASSIGNED' },
-          { NOT: { assignedToId: null } }
+        AND: [
+          tenantCondition,
+          {
+            OR: [
+              { status: 'ASSIGNED' },
+              { NOT: { assignedToId: null } }
+            ]
+          }
         ]
       }
     });
+
     const availableAssets = Math.max(0, totalAssets - assignedAssets);
 
     res.json({

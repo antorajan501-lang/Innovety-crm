@@ -9,6 +9,18 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isTempPassword, setIsTempPassword] = useState(false);
 
+  const logout = () => {
+    disconnectSocket();
+    if (api.defaults.headers.common) {
+      delete api.defaults.headers.common['Authorization'];
+    }
+    localStorage.clear();
+    sessionStorage.clear();
+    setToken(null);
+    setUser(null);
+    setIsTempPassword(false);
+  };
+
   useEffect(() => {
     const initializeAuth = async () => {
       const savedToken = localStorage.getItem('token');
@@ -16,17 +28,32 @@ export const AuthProvider = ({ children }) => {
 
       if (savedToken && savedUser) {
         try {
+          const parsedUser = JSON.parse(savedUser);
           setToken(savedToken);
-          setUser(JSON.parse(savedUser));
+          setUser(parsedUser);
 
-          // Verify token session with fresh profile pull
-          const res = await api.get('/auth/profile');
-          setUser(res.data);
-          localStorage.setItem('user', JSON.stringify(res.data));
-        } catch (error) {
-          console.error('Session validation failed:', error);
+          // Verify token session with fresh profile pull in background
+          try {
+            const res = await api.get('/auth/profile');
+            if (res.data) {
+              setUser(res.data);
+              localStorage.setItem('user', JSON.stringify(res.data));
+            }
+          } catch (profileErr) {
+            console.warn('[AuthContext] Background profile check notice:', profileErr?.message);
+            // ONLY log out if server explicitly returned HTTP 401 Unauthorized or HTTP 403 Forbidden
+            if (profileErr.response && (profileErr.response.status === 401 || profileErr.response.status === 403)) {
+              console.error('[AuthContext] Session invalid (401/403). Logging out user.');
+              logout();
+            }
+            // For network errors (offline mode, cold PWA launch delay, server startup), keep cached user session active!
+          }
+        } catch (parseError) {
+          console.error('[AuthContext] Session parse failed:', parseError);
           logout();
         }
+      } else {
+        logout();
       }
       setLoading(false);
     };
@@ -34,33 +61,45 @@ export const AuthProvider = ({ children }) => {
     initializeAuth();
   }, []);
 
-  const login = async (userId, password) => {
+  const login = async (userId, password, options = {}) => {
     setLoading(true);
     try {
-      const res = await api.post('/auth/login', { userId, employeeId: userId, email: userId, password });
-      const { token, user: userData, isTempPassword } = res.data;
+      // Clear any stale cached data and tokens from prior session
+      disconnectSocket();
+      if (api.defaults.headers.common) {
+        delete api.defaults.headers.common['Authorization'];
+      }
+      localStorage.clear();
+      sessionStorage.clear();
+      setToken(null);
+      setUser(null);
+
+      const res = await api.post('/auth/login', {
+        userId,
+        employeeId: userId,
+        email: userId,
+        password,
+        ...options
+      });
+      const { token, refreshToken, user: userData, isTempPassword } = res.data;
 
       localStorage.setItem('token', token);
+      if (refreshToken) {
+        localStorage.setItem('refreshToken', refreshToken);
+      }
       localStorage.setItem('user', JSON.stringify(userData));
 
       setToken(token);
       setUser(userData);
       setIsTempPassword(isTempPassword);
       setLoading(false);
-      return { success: true, isTempPassword };
+      return { success: true, isTempPassword, user: userData };
     } catch (error) {
+      logout();
       setLoading(false);
       const msg = error.response?.data?.message || 'Login failed. Please check your credentials.';
       return { success: false, message: msg };
     }
-  };
-
-  const logout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setToken(null);
-    setUser(null);
-    setIsTempPassword(false);
   };
 
   const updateProfile = async (formData) => {
@@ -97,11 +136,10 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-
   const changePassword = async (currentPassword, newPassword) => {
     try {
       await api.put('/auth/change-password', { currentPassword, newPassword });
-      setIsTempPassword(false); // Cleared on successful change
+      setIsTempPassword(false);
       return { success: true, message: 'Password changed successfully.' };
     } catch (error) {
       const msg = error.response?.data?.message || 'Failed to change password.';
@@ -114,7 +152,7 @@ export const AuthProvider = ({ children }) => {
       const res = await api.post('/auth/forgot-password', { email });
       return { success: true, message: res.data.message };
     } catch (error) {
-      const msg = error.response?.data?.message || 'Failed to process password reset request.';
+      const msg = error.response?.data?.message || 'Failed to send reset link.';
       return { success: false, message: msg };
     }
   };
@@ -139,12 +177,59 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const completeWelcomePopup = async () => {
+    if (!user) return { success: false };
+    try {
+      const storageKey = `company_welcome_dismissed_${user.id}`;
+      localStorage.setItem(storageKey, 'true');
+
+      const updatedUser = { ...user, welcomePopupSeen: true };
+      setUser(updatedUser);
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+
+      const res = await api.post('/users/me/welcome-complete');
+      if (res.data?.user) {
+        const freshUser = { ...res.data.user, welcomePopupSeen: true };
+        setUser(freshUser);
+        localStorage.setItem('user', JSON.stringify(freshUser));
+      }
+      return { success: true };
+    } catch (error) {
+      console.warn('Failed to complete welcome popup on server:', error);
+      return { success: false };
+    }
+  };
+
+  const resetWelcomePopup = async (targetUserId) => {
+    try {
+      const uid = targetUserId || user?.id;
+      if (!uid) return { success: false, message: 'User ID required' };
+      localStorage.removeItem(`company_welcome_dismissed_${uid}`);
+
+      const res = await api.post(`/admin/users/${uid}/reset-welcome`);
+      if (user && user.id === uid) {
+        const updatedUser = { ...user, welcomePopupSeen: false };
+        setUser(updatedUser);
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+      }
+      return { success: true, message: res.data.message || 'Welcome popup reset.' };
+    } catch (error) {
+      const msg = error.response?.data?.message || 'Failed to reset welcome popup.';
+      return { success: false, message: msg };
+    }
+  };
+
   const value = {
     user,
     setUser,
     token,
     loading,
     isTempPassword,
+    organization: user?.organization || null,
+    organizationId: user?.organizationId || user?.organization?.id || null,
+    organizationSlug: user?.organization?.slug || 'innoveity',
+    organizationName: user?.organization?.name || 'INNOVEITY',
+    organizationLogo: user?.organization?.logo || null,
     login,
     logout,
     updateProfile,
@@ -153,7 +238,9 @@ export const AuthProvider = ({ children }) => {
     changePassword,
     requestPasswordReset,
     verifyResetOtp,
-    resetPasswordWithToken
+    resetPasswordWithToken,
+    completeWelcomePopup,
+    resetWelcomePopup
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

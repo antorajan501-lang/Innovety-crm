@@ -1,6 +1,7 @@
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
+const { getOrganizationWhere, getProjectWhere, getTaskWhere, getEffectiveOrgId } = require('../utils/organizationScope');
 const { syncProjectLifecycleChatRoom } = require('../services/projectChatService');
 const { getIo, broadcastTeamPerformanceUpdate } = require('../socket');
 
@@ -139,6 +140,26 @@ const createProject = async (req, res) => {
       return res.status(400).json({ message: 'Estimated End Date must be after Estimated Start Date.' });
     }
 
+    // Check Organization Project Limit (maxProjects)
+    if (req.user?.organizationId) {
+      const orgWithPlan = await prisma.organization.findUnique({
+        where: { id: req.user.organizationId },
+        include: { subscriptionPlan: true }
+      });
+
+      if (orgWithPlan && orgWithPlan.slug !== 'innoveity' && req.user?.role !== 'SUPER_ADMIN') {
+        const currentProjectCount = await prisma.project.count({
+          where: { organizationId: req.user.organizationId }
+        });
+        const maxProjectsAllowed = orgWithPlan.subscriptionPlan?.maxProjects || 5;
+        if (currentProjectCount >= maxProjectsAllowed) {
+          return res.status(403).json({
+            message: `Your organization has reached its project limit (${maxProjectsAllowed}) for the ${orgWithPlan.subscriptionPlan?.name || 'Starter'} plan.`
+          });
+        }
+      }
+    }
+
     // Process & deduplicate members; ensure mandatory Project Leader is included if set
     const rawMemberIds = Array.isArray(memberIds) ? memberIds : [];
     if (leaderId && !rawMemberIds.includes(leaderId)) {
@@ -172,6 +193,7 @@ const createProject = async (req, res) => {
     const project = await prisma.project.create({
       data: {
         projectCode,
+        organizationId: req.body.organizationId || req.user?.organizationId || null,
         name,
         description: description || null,
         type: type || 'CLIENT',
@@ -351,11 +373,11 @@ const getProjects = async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
 
-    let whereClause = { isDeleted: false };
+    let baseFilter = { isDeleted: false };
 
     // Role-based filtering: non-ADMIN/SUPER_ADMIN users see projects where they are creator, leader, team member, or project member
     if (!['ADMIN', 'SUPER_ADMIN'].includes(userRole)) {
-      whereClause = {
+      baseFilter = {
         isDeleted: false,
         OR: [
           { creatorId: userId },
@@ -366,6 +388,8 @@ const getProjects = async (req, res) => {
         ]
       };
     }
+
+    const whereClause = getProjectWhere(req, baseFilter);
 
     const projectsList = await prisma.project.findMany({
       where: whereClause,

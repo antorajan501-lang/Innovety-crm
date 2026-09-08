@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import api from '../../../services/api';
 import UserAvatar from '../../../components/common/UserAvatar';
+import CompanyBadge from '../../../components/common/CompanyBadge';
 
 const UsersDirectory = () => {
   const [users, setUsers] = useState([]);
@@ -283,6 +284,7 @@ const UsersDirectory = () => {
                 />
               </th>
               <th className="px-4 py-3.5 whitespace-nowrap">USER</th>
+              <th className="px-4 py-3.5 whitespace-nowrap">COMPANY</th>
               <th className="px-4 py-3.5 whitespace-nowrap">EMPLOYEE ID</th>
               <th className="px-4 py-3.5 whitespace-nowrap">POSITION RANK</th>
               <th className="px-4 py-3.5 whitespace-nowrap">ROLE</th>
@@ -294,7 +296,7 @@ const UsersDirectory = () => {
           <tbody className="divide-y divide-border/20 text-xs">
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-muted-foreground">
+                <td colSpan={8} className="px-4 py-12 text-center text-muted-foreground">
                   <div className="flex items-center justify-center gap-2">
                     <RefreshCw className="h-4 w-4 animate-spin text-primary" />
                     <span>Loading users directory...</span>
@@ -303,7 +305,7 @@ const UsersDirectory = () => {
               </tr>
             ) : users.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-10 text-center text-muted-foreground">
+                <td colSpan={8} className="px-6 py-10 text-center text-muted-foreground">
                   No users found matching search criteria.
                 </td>
               </tr>
@@ -326,6 +328,9 @@ const UsersDirectory = () => {
                         <p className="text-[11px] text-muted-foreground font-medium">{u.email}</p>
                       </div>
                     </div>
+                  </td>
+                  <td className="px-4 py-4 whitespace-nowrap">
+                    <CompanyBadge organization={u.organization} />
                   </td>
                   <td className="px-4 py-4 font-mono text-muted-foreground text-xs whitespace-nowrap">
                     {u.employeeId}
