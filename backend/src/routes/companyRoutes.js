@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate, requireRole } = require('../middleware/auth');
+const { authenticate, optionalAuthenticate, requireRole } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 const {
   getAllOrganizations,
@@ -14,9 +14,9 @@ const {
   getPlatformHealthStats
 } = require('../controllers/companyController');
 
-// All Company Management endpoints are restricted to SUPER_ADMIN
+// Company endpoints
 router.get('/platform/health', authenticate, requireRole(['SUPER_ADMIN']), getPlatformHealthStats);
-router.get('/', authenticate, getAllOrganizations);
+router.get('/', optionalAuthenticate, getAllOrganizations);
 router.get('/:id', authenticate, requireRole(['SUPER_ADMIN']), getOrganizationById);
 router.get('/:id/stats', authenticate, requireRole(['SUPER_ADMIN']), getOrganizationStats);
 router.post('/', authenticate, requireRole(['SUPER_ADMIN']), upload.single('logo'), createOrganization);

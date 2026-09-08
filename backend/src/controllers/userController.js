@@ -4,12 +4,12 @@ const bcrypt = require('bcrypt');
 const prisma = require('../utils/db');
 const { sendWelcomeEmail } = require('../services/email');
 const { logActivity } = require('../utils/activityLogger');
-const { getOrganizationWhere } = require('../utils/organizationScope');
+const { getOrganizationWhere, getEffectiveOrgId } = require('../utils/organizationScope');
 const { addUserToCompanyChat, removeUserFromCompanyChat } = require('../services/companyChatService');
 const { disconnectUserSocket } = require('../socket');
 
 // Helper to auto-generate employee ID per role (e.g. EM-1001, IN-1005)
-const generateEmployeeId = async (role) => {
+const generateEmployeeId = async (role, organizationId) => {
   const prefix = role === 'EMPLOYEE' ? 'EM' : role === 'ADMIN' ? 'AD' : role === 'TEAM_LEADER' ? 'TL' : 'IN';
 
   const users = await prisma.user.findMany({
@@ -106,8 +106,10 @@ const createUser = async (req, res) => {
       finalRole = 'EMPLOYEE';
     }
 
-    // Multi-Tenant Organization Resolution
-    let finalOrganizationId = req.body.organizationId;
+    // Multi-Tenant Organization Resolution: getEffectiveOrgId(req) is the single source of truth
+    const effectiveOrgId = getEffectiveOrgId(req);
+    let finalOrganizationId = effectiveOrgId || req.body.organizationId || req.user?.organizationId;
+
     if (finalOrganizationId) {
       const targetOrg = await prisma.organization.findUnique({
         where: { id: finalOrganizationId },
@@ -213,11 +215,15 @@ const createUser = async (req, res) => {
     }
 
     let finalDepartmentName = department || null;
-    if (!finalDepartmentName && departmentId) {
+    if (departmentId) {
       const deptObj = await prisma.departmentMaster.findUnique({ where: { id: departmentId } });
-      if (deptObj) {
-        finalDepartmentName = deptObj.name;
+      if (!deptObj) {
+        return res.status(400).json({ message: 'Selected department does not exist.' });
       }
+      if (deptObj.organizationId && finalOrganizationId && deptObj.organizationId !== finalOrganizationId) {
+        return res.status(403).json({ message: 'Department does not belong to your organization.' });
+      }
+      finalDepartmentName = deptObj.name;
     }
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
@@ -228,7 +234,7 @@ const createUser = async (req, res) => {
     if (positionId) {
       const targetPos = await prisma.position.findUnique({ where: { id: positionId } });
       if (targetPos && targetPos.organizationId && targetPos.organizationId !== finalOrganizationId) {
-        return res.status(400).json({ message: 'Employee and Position belong to different organizations.' });
+        return res.status(403).json({ message: 'Position does not belong to your organization.' });
       }
     }
 
@@ -241,7 +247,7 @@ const createUser = async (req, res) => {
 
     while (!newUser && attempts < maxAttempts) {
       attempts++;
-      const employeeId = await generateEmployeeId(finalRole);
+      const employeeId = await generateEmployeeId(finalRole, finalOrganizationId);
       try {
         newUser = await prisma.user.create({
           data: {

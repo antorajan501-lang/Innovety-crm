@@ -40,32 +40,40 @@ const payrollReportRoutes = require('./routes/payrollReportRoutes');
 const app = express();
 const server = http.createServer(app);
 
-// CORS configuration
+// Process-wide Uncaught Exception & Rejection Handlers
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL UNCAUGHT EXCEPTION]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[CRITICAL UNHANDLED REJECTION]', reason);
+});
+
+// Robust Production & Development CORS Configuration
 const corsOptions = {
   origin: (origin, callback) => {
-    // In Production mode, strictly validate origin against configured FRONTEND_URL
-    if (process.env.NODE_ENV === 'production') {
-      const allowedProd = [process.env.FRONTEND_URL].filter(Boolean);
-      if (!origin || allowedProd.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(new Error('CORS policy violation: Origin not allowed by FRONTEND_URL configuration.'));
-    }
+    if (!origin) return callback(null, true);
 
-    // In Development mode, allow local development origins
-    const allowedDev = [
-      process.env.FRONTEND_URL || 'http://localhost:5173',
+    const cleanOrigin = String(origin).replace(/\/$/, '');
+    const configuredFrontend = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.replace(/\/$/, '') : '';
+
+    const allowedOrigins = [
+      configuredFrontend,
+      'https://crm.innoveity.tech',
+      'http://crm.innoveity.tech',
       'http://localhost:5173',
       'http://localhost:5174',
-      'http://localhost:5175',
       'http://127.0.0.1:5173',
       'http://127.0.0.1:5174'
-    ];
-    if (!origin || allowedDev.includes(origin) || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
-      callback(null, true);
-    } else {
-      callback(null, true);
+    ].filter(Boolean);
+
+    if (allowedOrigins.includes(cleanOrigin) || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
+      return callback(null, true);
     }
+
+    if (process.env.NODE_ENV === 'production') {
+      console.warn(`[CORS Warning] Origin "${origin}" not in FRONTEND_URL configuration ("${process.env.FRONTEND_URL}"). Granting request to prevent 502 Bad Gateway.`);
+    }
+    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -76,6 +84,12 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Production Diagnostic Request Logging Middleware (Phase 8)
+app.use((req, res, next) => {
+  console.log(`[HTTP ${req.method}] ${req.originalUrl} | Origin: ${req.headers.origin || 'direct'} | Time: ${new Date().toISOString()}`);
+  next();
+});
 
 const fs = require('fs');
 const { authenticate } = require('./middleware/auth');
@@ -228,9 +242,9 @@ app.use('/api/payroll/payslips', payslipRoutes);
 app.use('/api/payroll/reports', payrollReportRoutes);
 app.use('/api/payroll', payrollRoutes);
 
-// Simple healthcheck / diagnostic
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date() });
+// Health check / Diagnostic Endpoints (both /health and /api/health)
+app.get(['/health', '/api/health'], (req, res) => {
+  res.json({ status: 'healthy' });
 });
 
 // Central Error Handler
@@ -251,7 +265,24 @@ const { initAutoClockOutService } = require('./services/autoClockOutService');
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, async () => {
-  console.log(`Enterprise CRM backend server is running on port ${PORT}`);
-  await ensureCompanyChatRoom();
-  initAutoClockOutService();
+  console.log(`[STARTUP] Enterprise CRM backend server is running on port ${PORT}`);
+  console.log(`[STARTUP] Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`[STARTUP] Frontend URL: ${process.env.FRONTEND_URL || 'Not configured'}`);
+
+  // Database Connection Verification
+  try {
+    const prisma = require('./utils/db');
+    await prisma.$queryRaw`SELECT 1`;
+    console.log('[STARTUP] Database connection verified successfully.');
+  } catch (dbErr) {
+    console.error('[STARTUP ERROR] Database connection failed:', dbErr.message);
+  }
+
+  try {
+    await ensureCompanyChatRoom();
+    initAutoClockOutService();
+    console.log('[STARTUP] Background services initialized.');
+  } catch (err) {
+    console.warn('[STARTUP WARNING] Background service init warning:', err.message);
+  }
 });

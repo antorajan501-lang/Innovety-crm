@@ -2,29 +2,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { logActivity } = require('../utils/activityLogger');
 const { setCompanyOrder, sortPositionsForCompany, removePositionFromCompanyOrder } = require('../utils/companyPositionStore');
-
-/**
- * Robust helper to resolve non-empty organizationId from request body, query, or user session
- */
-const resolveOrgId = (req) => {
-  if (req.user?.role === 'SUPER_ADMIN') {
-    const bodyOrg = req.body?.organizationId;
-    const queryOrg = req.query?.organizationId;
-    const userOrg = req.user?.organizationId;
-
-    if (bodyOrg && typeof bodyOrg === 'string' && bodyOrg.trim() !== '' && bodyOrg.trim() !== 'all') {
-      return bodyOrg.trim();
-    }
-    if (queryOrg && typeof queryOrg === 'string' && queryOrg.trim() !== '' && queryOrg.trim() !== 'all') {
-      return queryOrg.trim();
-    }
-    if (userOrg && typeof userOrg === 'string' && userOrg.trim() !== '') {
-      return userOrg.trim();
-    }
-    return null;
-  }
-  return req.user?.organizationId || null;
-};
+const { getEffectiveOrgId } = require('../utils/organizationScope');
 
 /**
  * GET /api/positions
@@ -32,7 +10,7 @@ const resolveOrgId = (req) => {
  */
 const getPositions = async (req, res) => {
   try {
-    const organizationId = resolveOrgId(req);
+    const organizationId = getEffectiveOrgId(req);
 
     const whereClause = organizationId ? { organizationId } : {};
     const whereUsers = organizationId ? { organizationId } : {};
@@ -72,7 +50,7 @@ const getPositions = async (req, res) => {
 const createPosition = async (req, res) => {
   try {
     const { name, code, level, description, color, textColor, icon, priority, sortOrder } = req.body;
-    const organizationId = resolveOrgId(req);
+    const organizationId = getEffectiveOrgId(req);
 
     if (!organizationId) {
       return res.status(400).json({ message: 'Valid organizationId is required to create a position.' });
@@ -168,7 +146,7 @@ const updatePosition = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, code, level, description, color, textColor, icon, priority, sortOrder, status } = req.body;
-    const organizationId = resolveOrgId(req);
+    const organizationId = getEffectiveOrgId(req);
 
     // Validate position ownership
     const existingPos = await prisma.position.findFirst({
@@ -274,7 +252,7 @@ const togglePositionStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const organizationId = resolveOrgId(req);
+    const organizationId = getEffectiveOrgId(req);
 
     if (!['ACTIVE', 'INACTIVE'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status. Must be ACTIVE or INACTIVE.' });
@@ -313,7 +291,7 @@ const togglePositionStatus = async (req, res) => {
 const deletePosition = async (req, res) => {
   try {
     const { id } = req.params;
-    const organizationId = resolveOrgId(req);
+    const organizationId = getEffectiveOrgId(req);
 
     // Strict ownership validation
     const position = await prisma.position.findFirst({
@@ -373,7 +351,7 @@ const deletePosition = async (req, res) => {
 const reorderPositions = async (req, res) => {
   try {
     const { items, positions } = req.body;
-    const organizationId = resolveOrgId(req);
+    const organizationId = getEffectiveOrgId(req);
 
     const reorderItems = Array.isArray(items) ? items : (Array.isArray(positions) ? positions : []);
 

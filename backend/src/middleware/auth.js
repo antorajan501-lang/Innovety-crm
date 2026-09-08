@@ -81,8 +81,45 @@ const requireOrganizationActive = (req, res, next) => {
   next();
 };
 
+/**
+ * Optional Authentication middleware: Attaches req.user if a valid Bearer token is provided,
+ * but proceeds safely without error if unauthenticated.
+ */
+const optionalAuthenticate = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'enterprise_internship_crm_super_secret_jwt_key_123!');
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        include: {
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              logo: true,
+              status: true,
+              companyCode: true,
+              timezone: true
+            }
+          }
+        }
+      });
+      if (user && user.status === 'ACTIVE') {
+        req.user = user;
+      }
+    }
+  } catch (error) {
+    // Soft ignore token verification failures for optional auth
+  }
+  next();
+};
+
 module.exports = {
   authenticate,
+  optionalAuthenticate,
   requireRole,
   requireOrganizationActive
 };
