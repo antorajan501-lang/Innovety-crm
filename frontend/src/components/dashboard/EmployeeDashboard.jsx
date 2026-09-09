@@ -99,16 +99,7 @@ export const EmployeeDashboard = () => {
     }
   });
 
-  useEffect(() => {
-    if (clockStatus || clockedRecord) {
-      console.log('[ShiftCountdown]', {
-        isClockedIn: clockStatus?.isClockedIn || isClockedIn,
-        shiftEndAt: clockStatus?.shiftEndAt || clockedRecord?.shiftEndAt,
-        serverTime: clockStatus?.serverTime,
-        countdown: shiftCountdown.formattedTime || shiftCountdown.formattedRemaining
-      });
-    }
-  }, [clockStatus, clockedRecord, isClockedIn, shiftCountdown.formattedRemaining]);
+
 
   // Data States (Strictly Database Fetched & Employee Scoped)
   const [myTasks, setMyTasks] = useState([]);

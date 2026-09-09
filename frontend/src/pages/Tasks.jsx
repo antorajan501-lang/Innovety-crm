@@ -507,6 +507,7 @@ const Tasks = () => {
 
   const openCreateTaskForProject = (proj) => {
     const nextWeek = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    const defaultStageId = proj?.workflowStages?.[0]?.id || '';
     setCreateFormData({
       title: '',
       description: '',
@@ -517,7 +518,8 @@ const Tasks = () => {
       type: 'TASK',
       storyPoints: 0,
       sprintName: '',
-      projectId: proj?.id || ''
+      projectId: proj?.id || '',
+      stageId: defaultStageId
     });
     setTaskFiles([]);
     setCreateModalOpen(true);
@@ -527,25 +529,32 @@ const Tasks = () => {
     e.preventDefault();
     try {
       setLoading(true);
+      const targetOrg = effectiveOrgId || selectedOrgId || user?.organizationId || null;
+
       const formData = new FormData();
       formData.append('title', createFormData.title);
       formData.append('description', createFormData.description);
       formData.append('priority', createFormData.priority);
       formData.append('deadline', createFormData.deadline);
+      formData.append('dueDate', createFormData.deadline);
       formData.append('assignType', assignType);
       
       if (assignType === 'TEAM') {
         formData.append('teamId', createFormData.teamId);
-      } else {
+      } else if (createFormData.assigneeId) {
         formData.append('assigneeId', createFormData.assigneeId);
       }
 
       if (createFormData.projectId) {
         formData.append('projectId', createFormData.projectId);
       }
+
+      if (createFormData.stageId) {
+        formData.append('stageId', createFormData.stageId);
+      }
       
-      if (selectedOrgId) {
-        formData.append('organizationId', selectedOrgId);
+      if (targetOrg) {
+        formData.append('organizationId', targetOrg);
       }
       
       formData.append('type', createFormData.type);
@@ -556,9 +565,26 @@ const Tasks = () => {
         formData.append('attachments', file);
       }
 
+      console.log('[TASK CREATE]', {
+        Project: createFormData.projectId,
+        Organization: targetOrg,
+        Payload: {
+          title: createFormData.title,
+          description: createFormData.description,
+          priority: createFormData.priority,
+          deadline: createFormData.deadline,
+          assigneeId: createFormData.assigneeId,
+          stageId: createFormData.stageId,
+          projectId: createFormData.projectId
+        },
+        Endpoint: '/tasks'
+      });
+
       const res = await api.post('/tasks', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
+
+      console.log('[TASK CREATE] Response:', res.data);
 
       const createdTask = res.data?.task || (res.data?.id ? res.data : null);
       const createdTasksList = res.data?.tasks || (createdTask ? [createdTask] : []);
@@ -578,14 +604,16 @@ const Tasks = () => {
         type: 'TASK',
         storyPoints: 0,
         sprintName: '',
-        projectId: ''
+        projectId: '',
+        stageId: ''
       });
       setTaskFiles([]);
       setAlertMsg(res.data?.message || 'Task created successfully.');
-      await fetchTasks();
-      await fetchProjects();
+      await fetchTasks(targetOrg);
+      await fetchProjects(targetOrg);
     } catch (err) {
-      setAlertMsg(err.response?.data?.message || 'Failed to assign task.');
+      console.error('[TASK CREATE] Error:', err);
+      setAlertMsg(err.response?.data?.message || 'Failed to create task.');
     } finally {
       setLoading(false);
     }

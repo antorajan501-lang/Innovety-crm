@@ -61,6 +61,7 @@ const getProjectWhere = (req, extra = {}) => {
 
   const orgCondition = {
     OR: [
+      { organizationId: targetOrgId },
       { creator: { organizationId: targetOrgId } },
       { leader: { organizationId: targetOrgId } },
       { team: { organizationId: targetOrgId } }
@@ -97,12 +98,14 @@ const getTaskWhere = (req, extra = {}) => {
 
   const orgCondition = {
     OR: [
+      { organizationId: targetOrgId },
       { assignee: { organizationId: targetOrgId } },
       { creator: { organizationId: targetOrgId } },
       { team: { organizationId: targetOrgId } },
       {
         project: {
           OR: [
+            { organizationId: targetOrgId },
             { creator: { organizationId: targetOrgId } },
             { leader: { organizationId: targetOrgId } },
             { team: { organizationId: targetOrgId } }

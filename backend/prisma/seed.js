@@ -6,25 +6,26 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Seeding complete, accurate Innovety CRM dataset...');
 
-  // 0. Default Organization (INNOVEITY)
-  const innoveityOrg = await prisma.organization.findUnique({
-    where: { slug: 'innoveity' }
+  // 0. Default Organizations (INNOVEITY, C2C Global Portal, RENI)
+  const innoveityOrg = await prisma.organization.upsert({
+    where: { slug: 'innoveity' },
+    update: { name: 'INNOVEITY Workspace', companyCode: 'INN001', status: 'ACTIVE' },
+    create: { name: 'INNOVEITY Workspace', slug: 'innoveity', companyCode: 'INN001', status: 'ACTIVE', timezone: 'Asia/Kolkata' }
   });
 
-  if (!innoveityOrg) {
-    await prisma.organization.create({
-      data: {
-        name: 'INNOVEITY',
-        slug: 'innoveity',
-        companyCode: 'INN001',
-        status: 'ACTIVE',
-        timezone: 'Asia/Kolkata'
-      }
-    });
-    console.log('Default organization INNOVEITY created.');
-  } else {
-    console.log('Default organization INNOVEITY already exists, skipping.');
-  }
+  const c2cOrg = await prisma.organization.upsert({
+    where: { slug: 'c2c' },
+    update: { name: 'C2C Global Portal', companyCode: 'C2C001', status: 'ACTIVE' },
+    create: { name: 'C2C Global Portal', slug: 'c2c', companyCode: 'C2C001', status: 'ACTIVE', timezone: 'Asia/Kolkata' }
+  });
+
+  const reniOrg = await prisma.organization.upsert({
+    where: { slug: 'reni' },
+    update: { name: 'RENI', companyCode: 'RENI001', status: 'ACTIVE' },
+    create: { name: 'RENI', slug: 'reni', companyCode: 'RENI001', status: 'ACTIVE', timezone: 'Asia/Kolkata' }
+  });
+
+  console.log('Organizations (INNOVEITY, C2C, RENI) verified/created.');
 
   // Phase 7.1: Seed Default Subscription Plans
   const plans = [
@@ -53,7 +54,7 @@ async function main() {
       });
       console.log('INNOVEITY assigned to Enterprise subscription plan.');
     }
-    const models = ['user', 'attendance', 'leaveRequest', 'workLog', 'project', 'task', 'chatRoom', 'chatMessage', 'notification'];
+    const models = ['user', 'project', 'task', 'chatRoom', 'team', 'ticket', 'asset', 'workCalendar'];
     for (const m of models) {
       const res = await prisma[m].updateMany({
         where: { organizationId: null },
@@ -133,10 +134,54 @@ async function main() {
       dob: new Date('1990-01-01'),
       role: 'ADMIN',
       status: 'ACTIVE',
-      department: 'Management',
       phone: '9876543210',
       joiningDate: new Date('2023-01-01'),
       profilePic: null
+    }
+  });
+
+  // 1b. C2C Admin (Vedha) & RENI Admin (John)
+  await prisma.user.upsert({
+    where: { email: 'vedha@gmail.com' },
+    update: {
+      employeeId: 'AD-C2C-01',
+      name: 'Vedha Admin',
+      password: adminPass,
+      role: 'ADMIN',
+      organizationId: c2cOrg.id,
+      status: 'ACTIVE'
+    },
+    create: {
+      employeeId: 'AD-C2C-01',
+      name: 'Vedha Admin',
+      email: 'vedha@gmail.com',
+      password: adminPass,
+      role: 'ADMIN',
+      organizationId: c2cOrg.id,
+      status: 'ACTIVE',
+      department: 'Management'
+    }
+  });
+
+  await prisma.user.upsert({
+    where: { email: 'john@gmail.com' },
+    update: {
+      employeeId: 'AD-RENI-01',
+      name: 'John Admin',
+      password: adminPass,
+      role: 'ADMIN',
+      organizationId: reniOrg.id,
+      status: 'ACTIVE'
+    },
+    create: {
+      employeeId: 'AD-RENI-01',
+      name: 'John Admin',
+      email: 'john@gmail.com',
+      password: adminPass,
+      role: 'ADMIN',
+      organizationId: reniOrg.id,
+      status: 'ACTIVE',
+      department: 'Management'
     }
   });
 
@@ -183,13 +228,12 @@ async function main() {
   await prisma.user.upsert({
     where: { email: 'employee@gmail.com' },
     update: {
-      employeeId: 'EM-1001',
       name: 'Divya R',
       role: 'EMPLOYEE',
       profilePic: '/uploads/profile-pics/1784611100866-782649457-WhatsApp Image 2026-07-21 at 10.45.15 AM.jpeg'
     },
     create: {
-      employeeId: 'EM-1001',
+      employeeId: 'EM-9001',
       name: 'Divya R',
       email: 'employee@gmail.com',
       password: await bcrypt.hash('01012004', 10),
@@ -206,9 +250,10 @@ async function main() {
 
   await prisma.user.upsert({
     where: { email: 'e2etest.employee@crm.com' },
-    update: { employeeId: 'EM-1002', name: 'E2E Test Employee', role: 'EMPLOYEE', profilePic: null },
+    update: {
+      name: 'E2E Test Employee', role: 'EMPLOYEE', profilePic: null },
     create: {
-      employeeId: 'EM-1002',
+      employeeId: 'EM-9002',
       name: 'E2E Test Employee',
       email: 'e2etest.employee@crm.com',
       password: await bcrypt.hash('15051999', 10),
@@ -227,13 +272,12 @@ async function main() {
   await prisma.user.upsert({
     where: { email: 'yeshwanthy1504@gmail.com' },
     update: {
-      employeeId: 'IN-1001',
       name: 'Yeshwanth Y',
       role: 'INTERN',
       profilePic: '/uploads/profile-pics/1784613332745-367438346-WhatsApp Image 2026-07-21 at 10.54.42 AM (2).jpeg'
     },
     create: {
-      employeeId: 'IN-1001',
+      employeeId: 'IN-9001',
       name: 'Yeshwanth Y',
       email: 'yeshwanthy1504@gmail.com',
       password: await bcrypt.hash('15042004', 10),
@@ -251,13 +295,12 @@ async function main() {
   await prisma.user.upsert({
     where: { email: 'antorajan501@gmail.com' },
     update: {
-      employeeId: 'IN-1002',
       name: 'Anto A',
       role: 'INTERN',
       profilePic: '/uploads/profile-pics/1784611752758-479642495-file_00000000b40871fd9d636256e04dfd7e.png'
     },
     create: {
-      employeeId: 'IN-1002',
+      employeeId: 'IN-9002',
       name: 'Anto A',
       email: 'antorajan501@gmail.com',
       password: await bcrypt.hash('10062004', 10),
@@ -275,13 +318,12 @@ async function main() {
   await prisma.user.upsert({
     where: { email: 'prasathragul75@gmail.com' },
     update: {
-      employeeId: 'IN-1003',
       name: 'Raghul Prasath',
       role: 'INTERN',
       profilePic: '/uploads/profile-pics/1784611003235-757691450-WhatsApp Image 2026-07-21 at 10.44.46 AM.jpeg'
     },
     create: {
-      employeeId: 'IN-1003',
+      employeeId: 'IN-9003',
       name: 'Raghul Prasath',
       email: 'prasathragul75@gmail.com',
       password: await bcrypt.hash('29092003', 10),
@@ -299,13 +341,12 @@ async function main() {
   await prisma.user.upsert({
     where: { email: 'praveen.natarajan.in@gmail.com' },
     update: {
-      employeeId: 'IN-1004',
       name: 'Praveen N',
       role: 'INTERN',
       profilePic: '/uploads/profile-pics/1784611528366-422846841-WhatsApp Image 2026-07-21 at 10.54.42 AM.jpeg'
     },
     create: {
-      employeeId: 'IN-1004',
+      employeeId: 'IN-9004',
       name: 'Praveen N',
       email: 'praveen.natarajan.in@gmail.com',
       password: await bcrypt.hash('12032004', 10),

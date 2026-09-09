@@ -140,16 +140,29 @@ const createProject = async (req, res) => {
       return res.status(400).json({ message: 'Estimated End Date must be after Estimated Start Date.' });
     }
 
+    const targetOrgId = getEffectiveOrgId(req) || req.body.organizationId || req.user?.organizationId || null;
+
+    console.log('[PROJECT API] Incoming Creation Request:', {
+      user: req.user?.email,
+      role: req.user?.role,
+      userOrgId: req.user?.organizationId,
+      targetOrgId,
+      projectName: name,
+      leaderId,
+      memberIdsCount: Array.isArray(memberIds) ? memberIds.length : 0,
+      workflowStagesCount: Array.isArray(workflowStages) ? workflowStages.length : 0
+    });
+
     // Check Organization Project Limit (maxProjects)
-    if (req.user?.organizationId) {
+    if (targetOrgId) {
       const orgWithPlan = await prisma.organization.findUnique({
-        where: { id: req.user.organizationId },
+        where: { id: targetOrgId },
         include: { subscriptionPlan: true }
       });
 
       if (orgWithPlan && orgWithPlan.slug !== 'innoveity' && req.user?.role !== 'SUPER_ADMIN') {
         const currentProjectCount = await prisma.project.count({
-          where: { organizationId: req.user.organizationId }
+          where: { organizationId: targetOrgId }
         });
         const maxProjectsAllowed = orgWithPlan.subscriptionPlan?.maxProjects || 5;
         if (currentProjectCount >= maxProjectsAllowed) {
@@ -175,10 +188,13 @@ const createProject = async (req, res) => {
     const rawStages = (Array.isArray(workflowStages) && workflowStages.length > 0) ? workflowStages : DEFAULT_WORKFLOW_STAGES;
     const lastIndex = rawStages.length - 1;
     const enforcedStages = rawStages.map((stage, index) => ({
-      ...stage,
-      order: index,
-      isCompletedStage: index === lastIndex,
+      name: (stage.name || '').trim(),
+      color: stage.color || '#6366F1',
+      order: typeof stage.order === 'number' ? stage.order : index,
       requiresApproval: index === lastIndex ? true : !!stage.requiresApproval,
+      approverRole: stage.approverRole || null,
+      approverId: (stage.approverId && String(stage.approverId).trim() !== '') ? stage.approverId : null,
+      isCompletedStage: index === lastIndex || !!stage.isCompletedStage
     }));
 
     const stageValidation = validateWorkflowStages(enforcedStages);
@@ -190,57 +206,76 @@ const createProject = async (req, res) => {
     const initialStatus = (status && String(status).trim() !== '') ? status : 'ACTIVE';
     const isNowActive = initialStatus === 'ACTIVE';
 
-    const project = await prisma.project.create({
-      data: {
-        projectCode,
-        organizationId: req.body.organizationId || req.user?.organizationId || null,
-        name,
-        description: description || null,
-        type: type || 'CLIENT',
-        priority: priority || 'MEDIUM',
-        status: initialStatus,
-        estimatedStartDate: new Date(estimatedStartDate),
-        estimatedEndDate: new Date(estimatedEndDate),
-        actualStartDate: isNowActive ? new Date() : null,
-        teamId: teamId || null,
-        leaderId: leaderId || null,
-        creatorId: req.user.id,
-        members: {
-          create: finalMemberIds.map(userId => ({ userId }))
-        },
-        workflowStages: {
-          create: rawStages.map((stg, idx) => ({
-            name: stg.name.trim(),
-            color: stg.color || '#6366F1',
-            order: typeof stg.order === 'number' ? stg.order : idx,
-            requiresApproval: !!stg.requiresApproval,
-            approverRole: stg.approverRole || null,
-            approverId: stg.approverId || null,
-            isCompletedStage: !!stg.isCompletedStage
-          }))
-        }
-      },
-      include: {
-        leader: { select: { id: true, name: true, email: true, role: true, profilePic: true } },
-        team: { select: { id: true, name: true } },
-        members: {
-          include: {
-            user: { select: { id: true, name: true, email: true, role: true, profilePic: true } }
+    const VALID_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
+    const safePriority = (priority && VALID_PRIORITIES.includes(String(priority).toUpperCase()))
+      ? String(priority).toUpperCase()
+      : 'MEDIUM';
+
+    // Single Prisma transaction for atomic creation
+    const project = await prisma.$transaction(async (tx) => {
+      const createdProject = await tx.project.create({
+        data: {
+          projectCode,
+          organizationId: targetOrgId,
+          name: name.trim(),
+          description: description ? description.trim() : null,
+          type: type || 'CLIENT',
+          priority: safePriority,
+          status: initialStatus,
+          estimatedStartDate: new Date(estimatedStartDate),
+          estimatedEndDate: new Date(estimatedEndDate),
+          actualStartDate: isNowActive ? new Date() : null,
+          teamId: teamId || null,
+          leaderId: leaderId || null,
+          creatorId: req.user.id,
+          members: {
+            create: finalMemberIds.map(userId => ({ userId }))
+          },
+          workflowStages: {
+            create: enforcedStages.map((stg, idx) => ({
+              name: stg.name,
+              color: stg.color,
+              order: stg.order,
+              requiresApproval: stg.requiresApproval,
+              approverRole: stg.approverRole,
+              approverId: stg.approverId,
+              isCompletedStage: stg.isCompletedStage
+            }))
           }
         },
-        workflowStages: { orderBy: { order: 'asc' } }
-      }
+        include: {
+          organization: { select: { id: true, name: true, slug: true } },
+          leader: { select: { id: true, name: true, email: true, role: true, profilePic: true } },
+          team: { select: { id: true, name: true } },
+          members: {
+            include: {
+              user: { select: { id: true, name: true, email: true, role: true, profilePic: true } }
+            }
+          },
+          workflowStages: { orderBy: { order: 'asc' } }
+        }
+      });
+
+      // Create ProjectHistory audit entry inside transaction
+      await tx.projectHistory.create({
+        data: {
+          projectId: createdProject.id,
+          changedById: req.user.id,
+          action: 'CREATED',
+          newStatus: initialStatus,
+          detail: `Project "${createdProject.name}" (${createdProject.projectCode}) created with status ${initialStatus}`
+        }
+      });
+
+      return createdProject;
     });
 
-    // Create ProjectHistory audit entry
-    await prisma.projectHistory.create({
-      data: {
-        projectId: project.id,
-        changedById: req.user.id,
-        action: 'CREATED',
-        newStatus: initialStatus,
-        detail: `Project "${project.name}" (${project.projectCode}) created with status ${initialStatus}`
-      }
+    console.log('[PROJECT API] Project Created Successfully in Transaction:', {
+      projectId: project.id,
+      projectCode: project.projectCode,
+      organizationId: project.organizationId,
+      stagesCreatedCount: project.workflowStages.length,
+      membersAssignedCount: project.members.length
     });
 
     // Notify assigned leader and members

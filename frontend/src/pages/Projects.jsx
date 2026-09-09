@@ -386,15 +386,25 @@ const Projects = () => {
       return;
     }
 
+    const targetOrg = effectiveOrgId || selectedOrgId || user?.organizationId || null;
+    const payload = {
+      ...formData,
+      organizationId: targetOrg
+    };
+
+    console.log('[PROJECT CREATE]', {
+      Payload: payload,
+      Endpoint: '/projects'
+    });
+
     try {
-      const res = await api.post('/projects', {
-        ...formData,
-        organizationId: selectedOrgId
-      });
-      setAlertMsg(`Project "${res.data.project.name}" (${res.data.project.projectCode}) created successfully.`);
+      const res = await api.post('/projects', payload);
+      console.log('[PROJECT CREATE] Response:', res.data);
+      setAlertMsg(`Project "${res.data.project?.name || formData.name}" (${res.data.project?.projectCode || ''}) created successfully.`);
       setCreateModalOpen(false);
-      fetchProjects(selectedOrgId);
+      fetchProjects(targetOrg);
     } catch (err) {
+      console.error('[PROJECT CREATE] Error:', err);
       setAlertMsg(err.response?.data?.message || 'Failed to create project.');
     }
   };

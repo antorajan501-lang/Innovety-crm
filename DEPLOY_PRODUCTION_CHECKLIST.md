@@ -35,7 +35,10 @@ npx prisma generate
 # 4. Apply Prisma database schema migrations cleanly without data loss
 npx prisma migrate deploy
 
-# 5. Restart PM2 node application processes
+# 5. Seed initial multi-tenant organizations and accounts
+npx prisma db seed
+
+# 6. Restart PM2 node application processes
 pm2 restart all
 
 # 6. Check PM2 logs to verify clean startup and database connection

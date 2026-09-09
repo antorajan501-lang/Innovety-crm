@@ -8,16 +8,18 @@ const { getIo, broadcastTeamPerformanceUpdate } = require('../socket');
 
 const createTask = async (req, res) => {
   try {
-    const { title, description, priority, deadline, assigneeId, type, storyPoints, sprintName, assignType, teamId, projectId, estimatedHours, stageId } = req.body;
+    const { title, description, priority, deadline, dueDate, assigneeId, type, storyPoints, sprintName, assignType, teamId, projectId, estimatedHours, stageId } = req.body;
     let filePaths = [];
 
     if (req.files) {
       filePaths = req.files.map((file) => `/uploads/attachments/${file.filename}`);
     }
 
-    if (!title || !description || !deadline) {
-      return res.status(400).json({ message: 'Title, description, and deadline are required.' });
+    if (!title || !description) {
+      return res.status(400).json({ message: 'Title and description are required.' });
     }
+
+    const effectiveDeadline = deadline || dueDate || new Date(Date.now() + 7 * 24 * 3600 * 1000);
 
     if (assignType === 'TEAM') {
       if (!teamId) {
@@ -56,16 +58,17 @@ const createTask = async (req, res) => {
         return res.status(400).json({ message: 'Cannot assign task: the selected team has no active members or interns. Please allocate members to this team in Team Hub.' });
       }
 
+      const targetOrgId = getEffectiveOrgId(req) || req.body.organizationId || req.user?.organizationId || null;
       const tasksCreated = [];
 
       for (let member of targetAssignees) {
         const t = await prisma.task.create({
           data: {
-            title,
-            organizationId: req.body.organizationId || req.user?.organizationId || null,
-            description,
-            priority,
-            deadline: new Date(deadline),
+            title: title.trim(),
+            organizationId: targetOrgId,
+            description: description.trim(),
+            priority: priority || 'MEDIUM',
+            deadline: new Date(effectiveDeadline),
             assigneeId: member.userId,
             creatorId: req.user.id,
             teamId: team.id,
@@ -104,7 +107,7 @@ const createTask = async (req, res) => {
         }
       }
 
-      await sendTeamTaskAssignmentEmail(team, { title, priority, deadline }, req.user, team.leader, team.members);
+      await sendTeamTaskAssignmentEmail(team, { title, priority, deadline: effectiveDeadline }, req.user, team.leader, team.members);
 
       await logActivity({
         userId: req.user.id,
@@ -120,127 +123,155 @@ const createTask = async (req, res) => {
       });
     }
 
-    if (!assigneeId) {
-      return res.status(400).json({ message: 'Assignee ID is required.' });
-    }
+    // Single Assignee Handling
+    const finalAssigneeId = (assigneeId && String(assigneeId).trim() !== '' && assigneeId !== 'unassigned') ? assigneeId : null;
+    let targetAssignee = null;
+    let assigneeTeam = null;
 
-    // Check if target assignee is System Admin
-    const targetAssignee = await prisma.user.findUnique({ where: { id: assigneeId } });
-    if (targetAssignee && targetAssignee.role === 'ADMIN') {
-      return res.status(400).json({ message: 'Tasks cannot be assigned to System Administrators. Please assign tasks to Team Leaders or Interns.' });
-    }
-
-    // Verify team association
-    const assigneeTeam = await prisma.teamMember.findFirst({
-      where: { userId: assigneeId },
-      include: { team: true }
-    });
-
-    if (req.user.role === 'TEAM_LEADER') {
-      // Confirm lead status
-      if (!assigneeTeam || assigneeTeam.team.leaderId !== req.user.id) {
-        return res.status(403).json({ message: 'You can only assign tasks to your own team members.' });
+    if (finalAssigneeId) {
+      targetAssignee = await prisma.user.findUnique({ where: { id: finalAssigneeId } });
+      if (!targetAssignee) {
+        return res.status(404).json({ message: 'Assignee user not found.' });
       }
-    }
+      if (targetAssignee.role === 'ADMIN') {
+        return res.status(400).json({ message: 'Tasks cannot be assigned to System Administrators. Please assign tasks to Team Leaders or Interns.' });
+      }
 
-    if (projectId) {
-      const project = await prisma.project.findUnique({
-        where: { id: projectId },
-        include: { members: { select: { userId: true } } }
+      assigneeTeam = await prisma.teamMember.findFirst({
+        where: { userId: finalAssigneeId },
+        include: { team: true }
       });
 
-      if (!project || project.isDeleted) {
-        return res.status(404).json({ message: 'Project not found' });
-      }
-
-      const isPrivileged = ['ADMIN', 'SUPER_ADMIN'].includes(req.user.role);
-      if (!isPrivileged) {
-        const isProjectMember = project.members.some(m => m.userId === assigneeId) ||
-          project.leaderId === assigneeId ||
-          project.creatorId === assigneeId;
-        if (!isProjectMember) {
-          return res.status(400).json({ message: 'Task assignee must be a member of the selected project.' });
+      if (req.user.role === 'TEAM_LEADER') {
+        if (!assigneeTeam || assigneeTeam.team.leaderId !== req.user.id) {
+          return res.status(403).json({ message: 'You can only assign tasks to your own team members.' });
         }
       }
     }
 
+    let projectObj = null;
     let targetStageId = stageId || null;
     let initialTaskStatus = 'PENDING';
 
-    if (projectId && !targetStageId) {
-      const firstStage = await prisma.projectWorkflowStage.findFirst({
-        where: { projectId },
-        orderBy: { order: 'asc' }
+    if (projectId) {
+      projectObj = await prisma.project.findUnique({
+        where: { id: projectId },
+        include: {
+          members: { select: { userId: true } },
+          workflowStages: { orderBy: { order: 'asc' } }
+        }
       });
-      if (firstStage) {
+
+      if (!projectObj || projectObj.isDeleted) {
+        return res.status(404).json({ message: 'Project not found.' });
+      }
+
+      if (finalAssigneeId) {
+        const isPrivileged = ['ADMIN', 'SUPER_ADMIN'].includes(req.user.role);
+        if (!isPrivileged) {
+          const isProjectMember = projectObj.members.some(m => m.userId === finalAssigneeId) ||
+            projectObj.leaderId === finalAssigneeId ||
+            projectObj.creatorId === finalAssigneeId;
+          if (!isProjectMember) {
+            return res.status(400).json({ message: 'Task assignee must be a member of the selected project.' });
+          }
+        }
+      }
+
+      // Workflow Stage Mapping: use valid passed stageId OR auto-select first stage (To Do)
+      if (stageId && projectObj.workflowStages.some(s => s.id === stageId)) {
+        targetStageId = stageId;
+        const matchingStage = projectObj.workflowStages.find(s => s.id === stageId);
+        if (matchingStage && matchingStage.isCompletedStage) {
+          initialTaskStatus = 'APPROVED';
+        }
+      } else if (projectObj.workflowStages && projectObj.workflowStages.length > 0) {
+        const firstStage = projectObj.workflowStages[0];
         targetStageId = firstStage.id;
         if (firstStage.isCompletedStage) {
           initialTaskStatus = 'APPROVED';
         }
       }
-    } else if (targetStageId) {
-      const assignedStage = await prisma.projectWorkflowStage.findUnique({
-        where: { id: targetStageId }
-      });
-      if (assignedStage && assignedStage.isCompletedStage) {
-        initialTaskStatus = 'APPROVED';
-      }
     }
 
-    const task = await prisma.task.create({
-      data: {
-        title,
-        organizationId: req.body.organizationId || (project ? project.organizationId : null) || req.user?.organizationId || null,
-        description,
-        priority,
-        deadline: new Date(deadline),
-        assigneeId,
-        creatorId: req.user.id,
-        teamId: assigneeTeam ? assigneeTeam.teamId : null,
-        projectId: projectId || null,
-        stageId: targetStageId,
-        attachments: filePaths,
-        status: initialTaskStatus,
-        type: type || 'TASK',
-        storyPoints: storyPoints ? parseInt(storyPoints, 10) : 0,
-        sprintName: sprintName || null,
-        estimatedHours: parseFloat(estimatedHours) || 0
-      },
-      include: {
-        assignee: { select: { id: true, name: true, email: true } },
-        creator: { select: { id: true, name: true, role: true } },
-        project: { select: { id: true, projectCode: true, name: true } },
-        stage: true
+    const targetOrgId = (projectObj ? projectObj.organizationId : null) || getEffectiveOrgId(req) || req.body.organizationId || req.user?.organizationId || null;
+
+    const VALID_PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
+    const safePriority = (priority && VALID_PRIORITIES.includes(String(priority).toUpperCase()))
+      ? String(priority).toUpperCase()
+      : 'MEDIUM';
+
+    console.log('[TASK API] Creating Task with Scoping:', {
+      user: req.user?.email,
+      role: req.user?.role,
+      projectId,
+      targetOrgId,
+      stageId: targetStageId,
+      assigneeId: finalAssigneeId,
+      title
+    });
+
+    const task = await prisma.$transaction(async (tx) => {
+      const createdTask = await tx.task.create({
+        data: {
+          title: title.trim(),
+          organizationId: targetOrgId,
+          description: description.trim(),
+          priority: safePriority,
+          deadline: new Date(effectiveDeadline),
+          assigneeId: finalAssigneeId,
+          creatorId: req.user.id,
+          teamId: assigneeTeam ? assigneeTeam.teamId : null,
+          projectId: projectId || null,
+          stageId: targetStageId,
+          attachments: filePaths,
+          status: initialTaskStatus,
+          type: type || 'TASK',
+          storyPoints: storyPoints ? parseInt(storyPoints, 10) : 0,
+          sprintName: sprintName || null,
+          estimatedHours: parseFloat(estimatedHours) || 0
+        },
+        include: {
+          assignee: { select: { id: true, name: true, email: true } },
+          creator: { select: { id: true, name: true, role: true } },
+          project: { select: { id: true, projectCode: true, name: true } },
+          stage: true
+        }
+      });
+
+      await tx.taskHistory.create({
+        data: {
+          taskId: createdTask.id,
+          userId: req.user.id,
+          action: 'CREATED',
+          detail: finalAssigneeId
+            ? `Task created and assigned to ${createdTask.assignee?.name || finalAssigneeId}`
+            : `Task created (unassigned)`
+        }
+      });
+
+      return createdTask;
+    });
+
+    if (finalAssigneeId) {
+      await createNotification({
+        userId: finalAssigneeId,
+        title: 'New Task Assigned',
+        message: `You have been assigned a new task: "${title}". Deadline: ${new Date(effectiveDeadline).toLocaleDateString()}`,
+        type: 'TASK_ASSIGNED'
+      });
+
+      if (task.assignee) {
+        sendTaskAssignmentEmail(task.assignee, task, task.creator).catch((err) => {
+          console.error('Failed to send task assignment email:', err);
+        });
       }
-    });
-
-    // Create history record
-    await prisma.taskHistory.create({
-      data: {
-        taskId: task.id,
-        userId: req.user.id,
-        action: 'ASSIGNED',
-        detail: `Task created and assigned to ${task.assignee.name}`
-      }
-    });
-
-    // Notify Intern
-    await createNotification({
-      userId: assigneeId,
-      title: 'New Task Assigned',
-      message: `You have been assigned a new task: "${title}". Deadline: ${new Date(deadline).toLocaleDateString()}`,
-      type: 'TASK_ASSIGNED'
-    });
-
-    // Email Dispatch
-    sendTaskAssignmentEmail(task.assignee, task, task.creator).catch((err) => {
-      console.error('Failed to send task assignment welcome email:', err);
-    });
+    }
 
     await logActivity({
       userId: req.user.id,
       action: 'TASK_CREATE',
-      details: `Created task "${title}" assigned to user ID: ${assigneeId}`
+      details: `Created task "${title}" (ID: ${task.id})`
     });
 
     if (projectId) {
@@ -256,12 +287,9 @@ const createTask = async (req, res) => {
 
     try { broadcastTeamPerformanceUpdate(); } catch (e) { /* non-critical */ }
 
-    console.log('Creating task for project:', projectId);
-    console.log('Created task id:', task.id);
-
     return res.status(201).json({
       success: true,
-      message: 'Task created successfully',
+      message: 'Task created successfully.',
       task
     });
   } catch (error) {
