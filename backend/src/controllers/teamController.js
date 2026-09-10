@@ -64,12 +64,12 @@ const getAllTeams = async (req, res) => {
       where: orgWhere,
       include: {
         leader: {
-          select: { id: true, name: true, email: true, employeeId: true }
+          select: { id: true, name: true, email: true, employeeId: true, role: true, profilePic: true }
         },
         members: {
           include: {
             user: {
-              select: { id: true, name: true, email: true, employeeId: true }
+              select: { id: true, name: true, email: true, employeeId: true, role: true, profilePic: true }
             }
           }
         },

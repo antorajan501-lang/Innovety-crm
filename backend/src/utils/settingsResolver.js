@@ -9,7 +9,7 @@ const prisma = require('./db');
  * @returns {Promise<Object>} Normalized settings object
  */
 const getEffectiveSettings = async (organizationId) => {
-  let globalSettings;
+  let globalSettings = null;
   try {
     globalSettings = await prisma.systemSettings.findUnique({
       where: { id: 'GLOBAL' }
@@ -42,41 +42,49 @@ const getEffectiveSettings = async (organizationId) => {
     return defaultGlobal;
   }
 
-  let orgSettings;
+  let orgSettings = null;
+  let sysSettingsForOrg = null;
+
   try {
-    orgSettings = await prisma.organizationSettings.findUnique({
-      where: { organizationId }
-    });
+    [orgSettings, sysSettingsForOrg] = await Promise.all([
+      prisma.organizationSettings.findUnique({ where: { organizationId } }).catch(() => null),
+      prisma.systemSettings.findFirst({ where: { organizationId } }).catch(() => null)
+    ]);
   } catch (e) {
-    console.warn(`[settingsResolver] Failed to fetch OrganizationSettings for org ${organizationId}:`, e);
+    console.warn(`[settingsResolver] Failed to fetch settings for org ${organizationId}:`, e);
   }
 
-  if (!orgSettings) {
+  if (!orgSettings && !sysSettingsForOrg) {
     return defaultGlobal;
   }
 
+  const effectiveClockIn = orgSettings?.clockInTime || sysSettingsForOrg?.clockInTime || defaultGlobal.clockInTime || '09:00';
+  const effectiveClockOut = orgSettings?.clockOutTime || sysSettingsForOrg?.clockOutTime || defaultGlobal.clockOutTime || '18:00';
+
+  const effectiveAutoClockOut = orgSettings?.autoClockOutEnabled !== undefined
+    ? orgSettings.autoClockOutEnabled
+    : (sysSettingsForOrg?.autoClockOutEnabled !== undefined ? sysSettingsForOrg.autoClockOutEnabled : defaultGlobal.autoClockOutEnabled !== false);
+
   return {
     ...defaultGlobal,
-    ...orgSettings,
-    id: orgSettings.id,
-    organizationId: orgSettings.organizationId,
-    companyName: orgSettings.companyName || defaultGlobal.companyName,
-    logo: orgSettings.logo || null,
-    primaryColor: orgSettings.primaryColor || '#10B981',
-    timezone: orgSettings.timezone || defaultGlobal.timezone || 'Asia/Kolkata',
-    clockInTime: orgSettings.clockInTime || defaultGlobal.clockInTime || '09:00',
-    clockOutTime: orgSettings.clockOutTime || defaultGlobal.clockOutTime || '18:00',
-    autoClockOutEnabled: orgSettings.autoClockOutEnabled !== false,
-    internShiftStart: orgSettings.clockInTime || defaultGlobal.clockInTime || '09:00',
-    internShiftEnd: orgSettings.clockOutTime || defaultGlobal.clockOutTime || '18:00',
-    tlShiftStart: orgSettings.clockInTime || defaultGlobal.clockInTime || '09:00',
-    tlShiftEnd: orgSettings.clockOutTime || defaultGlobal.clockOutTime || '18:00',
-    officeLatitude: defaultGlobal.officeLatitude ?? 12.971598,
-    officeLongitude: defaultGlobal.officeLongitude ?? 77.594562,
-    allowedRadiusMeters: defaultGlobal.allowedRadiusMeters ?? 200.0,
-    officeLocationName: defaultGlobal.officeLocationName || 'Innoveity Headquarters',
-    earlyWindowMinutes: defaultGlobal.earlyWindowMinutes !== undefined ? defaultGlobal.earlyWindowMinutes : 30,
-    gracePeriodMinutes: defaultGlobal.gracePeriodMinutes !== undefined ? defaultGlobal.gracePeriodMinutes : 15
+    ...(sysSettingsForOrg || {}),
+    ...(orgSettings || {}),
+    id: orgSettings?.id || sysSettingsForOrg?.id || defaultGlobal.id,
+    organizationId,
+    companyName: orgSettings?.companyName || sysSettingsForOrg?.companyName || defaultGlobal.companyName,
+    clockInTime: effectiveClockIn,
+    clockOutTime: effectiveClockOut,
+    internShiftStart: effectiveClockIn,
+    internShiftEnd: effectiveClockOut,
+    tlShiftStart: effectiveClockIn,
+    tlShiftEnd: effectiveClockOut,
+    autoClockOutEnabled: Boolean(effectiveAutoClockOut),
+    officeLatitude: sysSettingsForOrg?.officeLatitude ?? defaultGlobal.officeLatitude ?? 12.971598,
+    officeLongitude: sysSettingsForOrg?.officeLongitude ?? defaultGlobal.officeLongitude ?? 77.594562,
+    allowedRadiusMeters: sysSettingsForOrg?.allowedRadiusMeters ?? defaultGlobal.allowedRadiusMeters ?? 200.0,
+    officeLocationName: sysSettingsForOrg?.officeLocationName || defaultGlobal.officeLocationName || 'Innoveity Headquarters',
+    earlyWindowMinutes: sysSettingsForOrg?.earlyWindowMinutes ?? defaultGlobal.earlyWindowMinutes ?? 30,
+    gracePeriodMinutes: sysSettingsForOrg?.gracePeriodMinutes ?? defaultGlobal.gracePeriodMinutes ?? 15
   };
 };
 

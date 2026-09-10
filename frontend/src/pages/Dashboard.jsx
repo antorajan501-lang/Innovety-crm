@@ -7,6 +7,8 @@ import api, { getSocket } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
 import ClockInModal from '../components/attendance/ClockInModal';
 import ClockOutReminderModal from '../components/worklog/ClockOutReminderModal';
+import ClockInToast from '../components/common/ClockInToast';
+import TimeRollSuccessBanner from '../components/common/TimeRollSuccessBanner';
 import useClockOutWithReminder from '../hooks/useClockOutWithReminder';
 import EmployeeDashboard from '../components/dashboard/EmployeeDashboard';
 import TeamLeaderDashboard from '../components/dashboard/TeamLeaderDashboard';
@@ -20,6 +22,8 @@ import {
   Clock,
   AlertCircle,
   CheckCircle,
+  CheckCircle2,
+  RefreshCw,
   Activity,
   ArrowUpRight,
   TrendingUp,
@@ -356,10 +360,12 @@ const Dashboard = () => {
       socket.on('attendance_clock_in', handleAttendanceEvent);
       socket.on('attendance_clock_out', handleAttendanceEvent);
       socket.on('attendance_updated', handleAttendanceEvent);
+      socket.on('settings_updated', handleAttendanceEvent);
       return () => {
         socket.off('attendance_clock_in', handleAttendanceEvent);
         socket.off('attendance_clock_out', handleAttendanceEvent);
         socket.off('attendance_updated', handleAttendanceEvent);
+        socket.off('settings_updated', handleAttendanceEvent);
       };
     }
   }, [user, effectiveOrgId, selectedOrgId]);
@@ -372,6 +378,37 @@ const Dashboard = () => {
   }, [user]);
 
   const [isClockInModalOpen, setIsClockInModalOpen] = useState(false);
+  const [clockInToast, setClockInToast] = useState(null);
+
+  const handleClockInSuccess = (resData) => {
+    setIsClockInModalOpen(false);
+    const statusStr = resData?.attendanceStatus || resData?.status || (resData?.attendance?.status === 'LATE' ? 'LATE' : 'PRESENT');
+    const timeStr = resData?.checkInTime || (resData?.clockIn ? new Date(resData.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+    setClockInToast({
+      type: 'success',
+      checkInTime: timeStr,
+      attendanceStatus: statusStr
+    });
+    fetchDashboardData();
+    api.get('/attendance/status').then(res => setClockInStatus(res.data)).catch(() => {});
+
+    setTimeout(() => {
+      setClockInToast(null);
+    }, 3000);
+  };
+
+  const handleClockInError = (errMsg) => {
+    setClockInToast({
+      type: 'error',
+      title: 'Clock-In Failed',
+      message: errMsg || 'Please try again.'
+    });
+
+    setTimeout(() => {
+      setClockInToast(null);
+    }, 3000);
+  };
 
   const handleClockIn = () => {
     setIsClockInModalOpen(true);
@@ -394,12 +431,39 @@ const Dashboard = () => {
         }
       }
 
-      await api.post('/attendance/clock-out', { location: locationStr });
-      setClockedRecord(null);
-      fetchDashboardData();
+      const res = await api.post('/attendance/clock-out', { location: locationStr });
+      const record = res.data;
+      setClockedRecord(record);
+
+      const outTimeStr = record?.clockOutTime || (record?.clockOut ? new Date(record.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      const durationStr = record?.workingDuration || (record?.workingHours ? `${Math.floor(record.workingHours)}h ${Math.round((record.workingHours % 1) * 60)}m` : '00h 00m');
+
+      setClockInToast({
+        mode: 'clockOut',
+        type: 'success',
+        clockOutTime: outTimeStr,
+        workingDuration: durationStr,
+        title: 'Clock-Out Successful!',
+        subtitle: 'See you tomorrow 👋'
+      });
+
+      await fetchDashboardData();
       api.get('/attendance/status').then(res => setClockInStatus(res.data)).catch(() => {});
+
+      setTimeout(() => {
+        setClockInToast(null);
+      }, 3000);
     } catch (err) {
-      setAttendanceAlert(err.response?.data?.message || 'Clock out failed.');
+      setClockInToast({
+        mode: 'clockOut',
+        type: 'error',
+        title: 'Clock-Out Failed',
+        message: err.response?.data?.message || 'Please try again.'
+      });
+
+      setTimeout(() => {
+        setClockInToast(null);
+      }, 2000);
     } finally {
       setClockLoading(false);
     }
@@ -445,14 +509,8 @@ const Dashboard = () => {
             <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
               Workforce Attendance Check-In Portal
             </span>
-            <div className="flex items-center gap-2 mt-1">
-              <Clock className="w-5 h-5 text-primary animate-pulse" />
-              <h2 className="text-xl font-extrabold text-foreground tracking-tight">
-                {time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-              </h2>
-              <span className="text-xs font-semibold text-muted-foreground ml-1">
-                ({time.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })})
-              </span>
+            <div className="flex items-center gap-2 mt-1 min-w-[200px]">
+              <TimeRollSuccessBanner clockInToast={clockInToast} time={time} size="sm" />
             </div>
           </div>
 
@@ -483,14 +541,24 @@ const Dashboard = () => {
           </div>
 
           {!isClockedIn ? (
-            <button
-              onClick={handleClockIn}
-              disabled={clockLoading || clockInStatus?.canClockIn === false}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
-            >
-              <Play className="w-4 h-4 fill-current" />
-              <span>Clock In Now</span>
-            </button>
+            clockLoading ? (
+              <button
+                disabled
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600/70 text-white font-bold text-xs shadow-md cursor-not-allowed"
+              >
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>Clocking In...</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleClockIn}
+                disabled={clockInStatus?.canClockIn === false}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Clock In Now</span>
+              </button>
+            )
           ) : (
             <button
               onClick={() => {
@@ -1042,10 +1110,8 @@ const Dashboard = () => {
       <ClockInModal
         isOpen={isClockInModalOpen}
         onClose={() => setIsClockInModalOpen(false)}
-        onSuccess={() => {
-          fetchDashboardData();
-          api.get('/attendance/status').then(res => setClockInStatus(res.data)).catch(() => {});
-        }}
+        onSuccess={handleClockInSuccess}
+        onError={handleClockInError}
         user={user}
       />
 
@@ -1058,6 +1124,8 @@ const Dashboard = () => {
         onCompleteWorkLog={handleCompleteWorkLog}
         onClockOutAnyway={handleClockOutAnyway}
       />
+
+
     </motion.div>
   );
 };

@@ -162,6 +162,20 @@ const updateSettings = async (req, res) => {
           }
         });
       }
+
+      // Synchronize OrganizationSettings if present for this org
+      const existingOrgSet = await prisma.organizationSettings.findUnique({ where: { organizationId: targetOrgId } }).catch(() => null);
+      if (existingOrgSet) {
+        await prisma.organizationSettings.update({
+          where: { organizationId: targetOrgId },
+          data: {
+            companyName: dataPayload.companyName,
+            clockInTime: effectiveClockIn,
+            clockOutTime: effectiveClockOut,
+            autoClockOutEnabled: autoClockOutBool !== undefined ? autoClockOutBool : true
+          }
+        }).catch(e => console.warn('Sync OrganizationSettings error:', e));
+      }
     } else {
       const existingFirst = await prisma.systemSettings.findFirst();
       if (existingFirst) {
@@ -177,22 +191,19 @@ const updateSettings = async (req, res) => {
     // Synchronize today's active attendance records with the new shiftEndAt
     const timeZone = getSystemTimeZone(updated);
     const now = new Date();
-    const todayDate = getTodayZonedDate(now, timeZone);
     const { year, month, day } = getZonedParts(now, timeZone);
     const newShiftEndAt = createZonedDate(year, month, day, outH, outM, timeZone);
 
-    if (targetOrgId) {
-      await prisma.attendance.updateMany({
-        where: {
-          clockOut: null,
-          date: todayDate,
-          user: { organizationId: targetOrgId }
-        },
-        data: {
-          shiftEndAt: newShiftEndAt
-        }
-      });
-    }
+    await prisma.attendance.updateMany({
+      where: {
+        clockOut: null,
+        clockIn: { not: null },
+        ...(targetOrgId ? { user: { organizationId: targetOrgId } } : {})
+      },
+      data: {
+        shiftEndAt: newShiftEndAt
+      }
+    });
 
     await logActivity({
       userId: req.user.id,

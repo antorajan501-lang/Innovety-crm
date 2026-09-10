@@ -79,8 +79,17 @@ const login = async (req, res) => {
     }
 
     // Check if non-super-admin user is trying to log into a different company than their own when org context was explicitly sent
-    if (targetOrgId && user.role !== 'SUPER_ADMIN' && user.organizationId !== targetOrgId) {
+    if (targetOrgId && user.role !== 'SUPER_ADMIN' && user.organizationId && user.organizationId !== targetOrgId) {
       return res.status(404).json({ message: 'Account not found in this organization.' });
+    }
+
+    // Auto-link organizationId if user record has no organization assigned
+    if (!user.organizationId && targetOrgId) {
+      user.organizationId = targetOrgId;
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { organizationId: targetOrgId }
+      }).catch(e => console.warn('[Auth] Failed to auto-assign user organizationId:', e));
     }
 
     if (user.status !== 'ACTIVE') {

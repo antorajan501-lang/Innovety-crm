@@ -167,6 +167,51 @@ const updateOrganizationSettings = async (req, res) => {
       }).catch(() => {});
     }
 
+    // Synchronize SystemSettings for this organization
+    const { getSystemTimeZone, getZonedParts, createZonedDate } = require('../utils/attendanceUtils');
+    const { broadcastAttendanceEvent } = require('../socket');
+
+    const effectiveIn = settings.clockInTime || '09:00';
+    const effectiveOut = settings.clockOutTime || '18:00';
+
+    const existingSysSettings = await prisma.systemSettings.findFirst({ where: { organizationId } }).catch(() => null);
+    if (existingSysSettings) {
+      await prisma.systemSettings.update({
+        where: { id: existingSysSettings.id },
+        data: {
+          companyName: settings.companyName || org.name,
+          clockInTime: effectiveIn,
+          clockOutTime: effectiveOut,
+          internShiftStart: effectiveIn,
+          internShiftEnd: effectiveOut,
+          tlShiftStart: effectiveIn,
+          tlShiftEnd: effectiveOut,
+          autoClockOutEnabled: settings.autoClockOutEnabled !== false
+        }
+      }).catch(e => console.warn('Sync SystemSettings error:', e));
+    }
+
+    // Synchronize active attendance records
+    const timeZone = getSystemTimeZone(settings);
+    const now = new Date();
+    const [outH, outM] = effectiveOut.split(':').map(Number);
+    const { year, month, day } = getZonedParts(now, timeZone);
+    const newShiftEndAt = createZonedDate(year, month, day, outH, outM, timeZone);
+
+    await prisma.attendance.updateMany({
+      where: {
+        clockOut: null,
+        clockIn: { not: null },
+        user: { organizationId }
+      },
+      data: {
+        shiftEndAt: newShiftEndAt
+      }
+    }).catch(e => console.warn('Sync attendance shiftEndAt error:', e));
+
+    broadcastAttendanceEvent('settings_updated', settings);
+    broadcastAttendanceEvent('attendance_updated', { shiftEndAt: newShiftEndAt, clockOutTime: effectiveOut });
+
     return res.json({
       message: 'Organization settings updated successfully.',
       settings

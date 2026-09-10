@@ -394,8 +394,19 @@ const clockIn = async (req, res) => {
     broadcastAttendanceEvent('attendance_clock_in', { userId, record: attendance });
     broadcastAttendanceEvent('attendance_updated', { userId, record: attendance });
 
+    const checkInTimeFormatted = now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone
+    });
+
+    const attendanceStatus = (finalStatus === 'WORK_FROM_HOME' || finalStatus === 'PRESENT') ? 'PRESENT' : (finalStatus === 'LATE' ? 'LATE' : finalStatus);
+
     res.status(201).json({
       success: true,
+      checkInTime: checkInTimeFormatted,
+      attendanceStatus: attendanceStatus,
       message: 'Clocked in successfully.',
       attendance,
       ...attendance
@@ -469,7 +480,27 @@ const clockOut = async (req, res) => {
     broadcastAttendanceEvent('attendance_clock_out', { userId, record: updatedAttendance });
     broadcastAttendanceEvent('attendance_updated', { userId, record: updatedAttendance });
 
-    res.json(updatedAttendance);
+    const totalMinutes = Math.max(0, Math.floor(diffMs / (1000 * 60)));
+    const hrs = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    const workingDurationStr = `${String(hrs).padStart(2, '0')}h ${String(mins).padStart(2, '0')}m`;
+
+    const clockOutTimeFormatted = now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+      timeZone
+    });
+
+    res.json({
+      success: true,
+      clockOutTime: clockOutTimeFormatted,
+      workingDuration: workingDurationStr,
+      workingHours,
+      message: `Clocked out successfully. Worked: ${workingDurationStr}.`,
+      attendance: updatedAttendance,
+      ...updatedAttendance
+    });
   } catch (error) {
     console.error('Clock out error:', error);
     res.status(500).json({ success: false, reason: 'SERVER_ERROR', message: 'Clock out failed.' });
@@ -513,12 +544,26 @@ const getAttendanceLogs = async (req, res) => {
     const settings = await getOrCreateSystemSettings(targetOrgId);
     const timeZone = getSystemTimeZone(settings);
     const now = new Date();
-    const todayZoned = getTodayZonedDate(now, timeZone);
+    const { year: nowY, month: nowM, day: nowD } = getZonedParts(now, timeZone);
+    const todayZoned = createZonedDate(nowY, nowM, nowD, 0, 0, timeZone);
 
-    // 1. Determine Date Range (Default to 60 days ago if no startDate provided for ALL dates)
-    const defaultMinDate = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-    let minDate = (startDate && String(startDate).trim() !== '') ? new Date(startDate) : defaultMinDate;
-    let maxDate = (endDate && String(endDate).trim() !== '') ? new Date(endDate) : todayZoned;
+    let minDate;
+    if (startDate && String(startDate).trim() !== '') {
+      minDate = parseInputDate(startDate, timeZone) || new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+    } else {
+      minDate = createZonedDate(nowY, nowM, nowD, 0, 0, timeZone);
+      minDate.setDate(minDate.getDate() - 60);
+    }
+
+    let maxDate = (endDate && String(endDate).trim() !== '')
+      ? (parseInputDate(endDate, timeZone) || todayZoned)
+      : todayZoned;
+
+    const minYMD = getZonedParts(minDate, timeZone);
+    minDate = createZonedDate(minYMD.year, minYMD.month, minYMD.day, 0, 0, timeZone);
+
+    const maxYMD = getZonedParts(maxDate, timeZone);
+    maxDate = createZonedDate(maxYMD.year, maxYMD.month, maxYMD.day, 0, 0, timeZone);
 
     if (minDate > maxDate) {
       const temp = minDate;
@@ -550,7 +595,28 @@ const getAttendanceLogs = async (req, res) => {
       role: { in: ['INTERN', 'EMPLOYEE', 'TEAM_LEADER'] }
     };
     if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
-      userWhere.id = req.user.id;
+      const userTeams = await prisma.teamMember.findMany({
+        where: { userId: req.user.id },
+        select: { teamId: true }
+      });
+      const teamIds = userTeams.map((t) => t.teamId);
+      if (teamIds.length > 0) {
+        const teamMembers = await prisma.teamMember.findMany({
+          where: { teamId: { in: teamIds } }
+        });
+        const teams = await prisma.team.findMany({
+          where: { id: { in: teamIds } },
+          select: { leaderId: true }
+        });
+        const allowedIds = teamMembers.map((m) => m.userId);
+        teams.forEach((t) => {
+          if (t.leaderId) allowedIds.push(t.leaderId);
+        });
+        allowedIds.push(req.user.id);
+        userWhere.id = { in: [...new Set(allowedIds)] };
+      } else {
+        userWhere.id = req.user.id;
+      }
     } else if (req.user.role === 'TEAM_LEADER') {
       if (userId && userId !== 'ALL' && userId !== '') {
         userWhere.id = userId;
@@ -588,9 +654,10 @@ const getAttendanceLogs = async (req, res) => {
     const userIds = activeUsers.map(u => u.id);
 
     // 3. Fetch Real Attendance & Approved Leaves for the date range & users
+    const queryMaxDate = createZonedDate(maxYMD.year, maxYMD.month, maxYMD.day, 23, 59, timeZone);
     const realAttendances = await prisma.attendance.findMany({
       where: {
-        date: { gte: minDate, lte: maxDate },
+        date: { gte: minDate, lte: queryMaxDate },
         userId: { in: userIds }
       },
       include: {
@@ -601,7 +668,7 @@ const getAttendanceLogs = async (req, res) => {
     const approvedLeaves = await prisma.leaveRequest.findMany({
       where: {
         status: 'APPROVED',
-        startDate: { lte: maxDate },
+        startDate: { lte: queryMaxDate },
         endDate: { gte: minDate },
         userId: { in: userIds }
       }
@@ -610,7 +677,7 @@ const getAttendanceLogs = async (req, res) => {
     // Build lookup maps for fast matching
     const attendanceMap = new Map();
     realAttendances.forEach(att => {
-      const dateStr = att.date.toISOString().split('T')[0];
+      const dateStr = getZonedParts(att.date, timeZone).dateStr;
       attendanceMap.set(`${att.userId}_${dateStr}`, att);
     });
 
@@ -618,7 +685,7 @@ const getAttendanceLogs = async (req, res) => {
     const mergedLogs = [];
 
     for (const dObj of dateList) {
-      const dateStr = dObj.toISOString().split('T')[0];
+      const dateStr = getZonedParts(dObj, timeZone).dateStr;
       const dTime = new Date(`${dateStr}T00:00:00.000Z`).getTime();
       const dayEnded = isShiftEndedForDate(dObj, now, settings);
 

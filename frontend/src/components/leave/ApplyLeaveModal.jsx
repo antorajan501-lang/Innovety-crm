@@ -170,21 +170,33 @@ const ApplyLeaveModal = ({
     }
   };
 
+  // Lock body scroll when modal is open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-3 sm:p-4">
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 10 }}
           transition={{ duration: 0.2, ease: 'easeOut' }}
-          className="relative w-full max-w-xl rounded-3xl border border-border/70 bg-card p-6 sm:p-7 shadow-2xl text-left space-y-5 font-sans my-8"
+          className="relative w-[95vw] sm:w-full max-w-xl max-h-[90vh] rounded-3xl border border-border/70 bg-card shadow-2xl text-left font-sans flex flex-col overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
-          <div className="flex items-start justify-between border-b border-border/40 pb-4">
+          {/* Fixed Header */}
+          <div className="shrink-0 p-5 sm:p-6 border-b border-border/40 flex items-start justify-between bg-card z-10">
             <div className="flex items-center gap-3">
               <div className="p-3 rounded-2xl bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
                 <CalendarPlus className="h-6 w-6" />
@@ -211,142 +223,145 @@ const ApplyLeaveModal = ({
             </button>
           </div>
 
-          {/* Server Error Alert */}
-          {serverError && (
-            <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-600 text-xs font-semibold flex items-start gap-2.5">
-              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-              <span>{serverError}</span>
-            </div>
-          )}
+          {/* Form wrapper */}
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+            {/* Scrollable Body Container */}
+            <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+              {/* Server Error Alert */}
+              {serverError && (
+                <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-600 text-xs font-semibold flex items-start gap-2.5">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>{serverError}</span>
+                </div>
+              )}
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* 1. Leave Type Selector */}
-            <div>
-              <label className="block text-xs font-extrabold uppercase tracking-wider text-foreground mb-1.5">
-                Leave Type <span className="text-rose-500">*</span>
-              </label>
-              <select
-                value={formData.leaveType}
-                onChange={(e) => handleChange('leaveType', e.target.value)}
-                className={`w-full h-11 bg-muted/30 border ${
-                  errors.leaveType ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
-                } rounded-xl px-3.5 py-2 text-xs font-bold text-foreground cursor-pointer focus:outline-none focus:ring-2`}
-              >
-                {LEAVE_TYPES.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-              {errors.leaveType && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.leaveType}</p>}
-            </div>
+              {/* 1. Leave Type Selector */}
+              <div>
+                <label className="block text-xs font-extrabold uppercase tracking-wider text-foreground mb-1.5">
+                  Leave Type <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={formData.leaveType}
+                  onChange={(e) => handleChange('leaveType', e.target.value)}
+                  className={`w-full h-11 bg-muted/30 border ${
+                    errors.leaveType ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
+                  } rounded-xl px-3.5 py-2 text-xs font-bold text-foreground cursor-pointer focus:outline-none focus:ring-2`}
+                >
+                  {LEAVE_TYPES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                {errors.leaveType && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.leaveType}</p>}
+              </div>
 
-            {/* 2. Half Day Toggle */}
-            <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/20 border border-border/50">
-              <div className="flex items-center gap-2.5">
-                <Clock className="h-4 w-4 text-primary" />
+              {/* 2. Half Day Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-2xl bg-muted/20 border border-border/50">
+                <div className="flex items-center gap-2.5">
+                  <Clock className="h-4 w-4 text-primary" />
+                  <div>
+                    <span className="text-xs font-bold text-foreground block">Half Day Leave</span>
+                    <span className="text-[10px] text-muted-foreground block">Count as 0.5 working day</span>
+                  </div>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.isHalfDay}
+                    onChange={(e) => handleChange('isHalfDay', e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+
+              {/* 3. Dates Range */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <span className="text-xs font-bold text-foreground block">Half Day Leave</span>
-                  <span className="text-[10px] text-muted-foreground block">Count as 0.5 working day</span>
+                  <label className="block text-xs font-extrabold uppercase tracking-wider text-foreground mb-1.5">
+                    Start Date <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="date"
+                      value={formData.startDate}
+                      onChange={(e) => handleChange('startDate', e.target.value)}
+                      className={`w-full h-11 bg-muted/30 border ${
+                        errors.startDate ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
+                      } rounded-xl px-3.5 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2`}
+                    />
+                  </div>
+                  {errors.startDate && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.startDate}</p>}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-extrabold uppercase tracking-wider text-foreground mb-1.5">
+                    End Date <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="date"
+                      value={formData.isHalfDay ? formData.startDate : formData.endDate}
+                      disabled={formData.isHalfDay}
+                      onChange={(e) => handleChange('endDate', e.target.value)}
+                      className={`w-full h-11 bg-muted/30 border ${
+                        errors.endDate ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
+                      } rounded-xl px-3.5 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed`}
+                    />
+                  </div>
+                  {errors.endDate && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.endDate}</p>}
                 </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={formData.isHalfDay}
-                  onChange={(e) => handleChange('isHalfDay', e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-muted peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-              </label>
-            </div>
 
-            {/* 3. Dates Range */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* 4. Live Duration Banner */}
+              <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-primary/5 border border-primary/20">
+                <span className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 text-primary" />
+                  <span>Calculated Duration:</span>
+                </span>
+                <span className="text-xs font-extrabold font-mono px-2.5 py-0.5 rounded-lg bg-primary/10 text-primary border border-primary/20">
+                  {totalCalculatedDays === 0.5 ? '0.5 Day (Half Day)' : totalCalculatedDays === 1 ? '1 Working Day' : `${totalCalculatedDays} Working Days`}
+                </span>
+              </div>
+
+              {/* 5. Reason Textarea */}
               <div>
                 <label className="block text-xs font-extrabold uppercase tracking-wider text-foreground mb-1.5">
-                  Start Date <span className="text-rose-500">*</span>
+                  Reason / Purpose <span className="text-rose-500">*</span>
                 </label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    value={formData.startDate}
-                    onChange={(e) => handleChange('startDate', e.target.value)}
-                    className={`w-full h-11 bg-muted/30 border ${
-                      errors.startDate ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
-                    } rounded-xl px-3.5 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2`}
-                  />
-                </div>
-                {errors.startDate && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.startDate}</p>}
+                <textarea
+                  rows={3}
+                  placeholder="Explain the reason for taking leave (e.g. Medical emergency, family function, personal work)..."
+                  value={formData.reason}
+                  onChange={(e) => handleChange('reason', e.target.value)}
+                  className={`w-full bg-muted/30 border ${
+                    errors.reason ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
+                  } rounded-xl p-3 text-xs font-medium text-foreground focus:outline-none focus:ring-2 resize-none`}
+                />
+                {errors.reason && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.reason}</p>}
               </div>
 
+              {/* 6. Emergency Contact Phone (Optional) */}
               <div>
                 <label className="block text-xs font-extrabold uppercase tracking-wider text-foreground mb-1.5">
-                  End Date <span className="text-rose-500">*</span>
+                  Emergency Contact Phone <span className="text-muted-foreground font-normal text-[10px] lowercase">(optional)</span>
                 </label>
                 <div className="relative">
+                  <Phone className="absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" />
                   <input
-                    type="date"
-                    value={formData.isHalfDay ? formData.startDate : formData.endDate}
-                    disabled={formData.isHalfDay}
-                    onChange={(e) => handleChange('endDate', e.target.value)}
-                    className={`w-full h-11 bg-muted/30 border ${
-                      errors.endDate ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
-                    } rounded-xl px-3.5 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed`}
+                    type="tel"
+                    placeholder="+91 98765 43210"
+                    value={formData.contactPhone}
+                    onChange={(e) => handleChange('contactPhone', e.target.value)}
+                    className="w-full h-11 bg-muted/30 border border-border/70 rounded-xl pl-9 pr-3.5 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
-                {errors.endDate && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.endDate}</p>}
               </div>
             </div>
 
-            {/* 4. Live Duration Banner */}
-            <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-primary/5 border border-primary/20">
-              <span className="text-xs font-bold text-muted-foreground flex items-center gap-1.5">
-                <Calendar className="h-3.5 w-3.5 text-primary" />
-                <span>Calculated Duration:</span>
-              </span>
-              <span className="text-xs font-extrabold font-mono px-2.5 py-0.5 rounded-lg bg-primary/10 text-primary border border-primary/20">
-                {totalCalculatedDays === 0.5 ? '0.5 Day (Half Day)' : totalCalculatedDays === 1 ? '1 Working Day' : `${totalCalculatedDays} Working Days`}
-              </span>
-            </div>
-
-            {/* 5. Reason Textarea */}
-            <div>
-              <label className="block text-xs font-extrabold uppercase tracking-wider text-foreground mb-1.5">
-                Reason / Purpose <span className="text-rose-500">*</span>
-              </label>
-              <textarea
-                rows={3}
-                placeholder="Explain the reason for taking leave (e.g. Medical emergency, family function, personal work)..."
-                value={formData.reason}
-                onChange={(e) => handleChange('reason', e.target.value)}
-                className={`w-full bg-muted/30 border ${
-                  errors.reason ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
-                } rounded-xl p-3 text-xs font-medium text-foreground focus:outline-none focus:ring-2 resize-none`}
-              />
-              {errors.reason && <p className="text-[11px] font-semibold text-rose-500 mt-1">{errors.reason}</p>}
-            </div>
-
-            {/* 6. Emergency Contact Phone (Optional) */}
-            <div>
-              <label className="block text-xs font-extrabold uppercase tracking-wider text-foreground mb-1.5">
-                Emergency Contact Phone <span className="text-muted-foreground font-normal text-[10px] lowercase">(optional)</span>
-              </label>
-              <div className="relative">
-                <Phone className="absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" />
-                <input
-                  type="tel"
-                  placeholder="+91 98765 43210"
-                  value={formData.contactPhone}
-                  onChange={(e) => handleChange('contactPhone', e.target.value)}
-                  className="w-full h-11 bg-muted/30 border border-border/70 rounded-xl pl-9 pr-3.5 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
-                />
-              </div>
-            </div>
-
-            {/* Modal Actions Footer */}
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-border/40">
+            {/* Fixed Modal Actions Footer */}
+            <div className="shrink-0 p-4 sm:p-5 border-t border-border/40 bg-card flex items-center justify-end gap-3 z-10">
               <button
                 type="button"
                 onClick={onClose}

@@ -11,10 +11,14 @@ import ClockOutReminderModal from '../worklog/ClockOutReminderModal';
 import useClockOutWithReminder from '../../hooks/useClockOutWithReminder';
 import useShiftCountdown from '../../hooks/useShiftCountdown';
 import { getTargetShiftHours, getShiftProgressColor } from '../../utils/shiftProgress';
+import ClockInToast from '../common/ClockInToast';
+import TeamRosterStatus from './TeamRosterStatus';
+import TimeRollSuccessBanner from '../common/TimeRollSuccessBanner';
 import {
   Clock,
   CheckCircle2,
   AlertCircle,
+  RefreshCw,
   Play,
   Square,
   FileText,
@@ -86,11 +90,41 @@ export const EmployeeDashboard = () => {
   const [clockLoading, setClockLoading] = useState(false);
   const [clockStatus, setClockStatus] = useState(null);
   const [attendanceAlert, setAttendanceAlert] = useState('');
+  const [clockInToast, setClockInToast] = useState(null);
+
+  const handleClockInSuccess = (resData) => {
+    setIsClockInModalOpen(false);
+    const statusStr = resData?.attendanceStatus || resData?.status || (resData?.attendance?.status === 'LATE' ? 'LATE' : 'PRESENT');
+    const timeStr = resData?.checkInTime || (resData?.clockIn ? new Date(resData.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+    setClockInToast({
+      type: 'success',
+      checkInTime: timeStr,
+      attendanceStatus: statusStr
+    });
+    fetchEmployeeDashboardData();
+
+    setTimeout(() => {
+      setClockInToast(null);
+    }, 3000);
+  };
+
+  const handleClockInError = (errMsg) => {
+    setClockInToast({
+      type: 'error',
+      title: 'Clock-In Failed',
+      message: errMsg || 'Please try again.'
+    });
+
+    setTimeout(() => {
+      setClockInToast(null);
+    }, 3000);
+  };
 
   const isClockedIn = Boolean(clockedRecord && clockedRecord.clockIn && !clockedRecord.clockOut);
 
   const shiftCountdown = useShiftCountdown({
-    shiftEndAt: clockedRecord?.shiftEndAt || clockStatus?.shiftEndAt,
+    shiftEndAt: clockStatus?.shiftEndAt || clockedRecord?.shiftEndAt,
     serverTime: clockStatus?.serverTime,
     autoClockOutEnabled: clockStatus?.autoClockOutEnabled,
     isClockedIn,
@@ -103,6 +137,7 @@ export const EmployeeDashboard = () => {
 
   // Data States (Strictly Database Fetched & Employee Scoped)
   const [myTasks, setMyTasks] = useState([]);
+  const [teamTasks, setTeamTasks] = useState([]);
   const [myProjects, setMyProjects] = useState([]);
   const [myTeam, setMyTeam] = useState(null);
   const [myActivities, setMyActivities] = useState([]);
@@ -219,6 +254,7 @@ export const EmployeeDashboard = () => {
 
       // 1. My Tasks (Strictly Filtered for logged-in Employee)
       const tasksData = Array.isArray(tasksRes.data) ? tasksRes.data : [];
+      setTeamTasks(tasksData);
       const userAssigned = tasksData.filter(t => 
         t.assigneeId === user.id || 
         t.assignedToId === user.id || 
@@ -309,11 +345,37 @@ export const EmployeeDashboard = () => {
       setAttendanceAlert('');
       const locationStr = await getCoordinates();
       const res = await api.post('/attendance/clock-out', { location: locationStr });
-      setClockedRecord(res.data);
-      setAttendanceAlert(`Clocked Out successfully at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+      const record = res.data;
+      setClockedRecord(record);
+
+      const outTimeStr = record?.clockOutTime || (record?.clockOut ? new Date(record.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      const durationStr = record?.workingDuration || (record?.workingHours ? `${Math.floor(record.workingHours)}h ${Math.round((record.workingHours % 1) * 60)}m` : '00h 00m');
+
+      setClockInToast({
+        mode: 'clockOut',
+        type: 'success',
+        clockOutTime: outTimeStr,
+        workingDuration: durationStr,
+        title: 'Clock-Out Successful!',
+        subtitle: 'See you tomorrow 👋'
+      });
+
       await fetchEmployeeDashboardData();
+
+      setTimeout(() => {
+        setClockInToast(null);
+      }, 3000);
     } catch (err) {
-      setAttendanceAlert(err.response?.data?.message || 'Clock out failed.');
+      setClockInToast({
+        mode: 'clockOut',
+        type: 'error',
+        title: 'Clock-Out Failed',
+        message: err.response?.data?.message || 'Please try again.'
+      });
+
+      setTimeout(() => {
+        setClockInToast(null);
+      }, 2000);
     } finally {
       setClockLoading(false);
     }
@@ -535,6 +597,97 @@ export const EmployeeDashboard = () => {
     return items;
   }, [clockedRecord, myTasks]);
 
+  // Enriched Team Members for Team Roster & Status (Active Tasks + Today's Attendance)
+  const enrichedTeamMembers = useMemo(() => {
+    if (!myTeam) return [];
+    const todayStr = new Date().toLocaleDateString('en-CA');
+
+    const memberMap = new Map();
+
+    // 1. Add Leader if exists
+    if (myTeam.leader) {
+      memberMap.set(myTeam.leader.id, {
+        ...myTeam.leader,
+        role: myTeam.leader.role || 'TEAM_LEADER'
+      });
+    }
+
+    // 2. Add Members
+    if (Array.isArray(myTeam.members)) {
+      myTeam.members.forEach((mem) => {
+        const u = mem.user || mem;
+        if (u && u.id && !memberMap.has(u.id)) {
+          memberMap.set(u.id, {
+            ...u,
+            role: u.role || 'MEMBER'
+          });
+        }
+      });
+    }
+
+    // Build O(1) Today Attendance Map by userId
+    const todayAttendanceMap = new Map();
+    (attendanceLogs || []).forEach((log) => {
+      if (!log || !log.userId) return;
+      const logDateStr = new Date(log.date).toLocaleDateString('en-CA');
+      if (logDateStr === todayStr) {
+        todayAttendanceMap.set(log.userId, log);
+      }
+    });
+
+    // Build O(1) Today Approved Leave Map by userId
+    const todayLeaveMap = new Map();
+    (leaves || []).forEach((leave) => {
+      if (!leave || !leave.userId || leave.status !== 'APPROVED') return;
+      const startStr = new Date(leave.startDate).toLocaleDateString('en-CA');
+      const endStr = new Date(leave.endDate || leave.startDate).toLocaleDateString('en-CA');
+      if (todayStr >= startStr && todayStr <= endStr) {
+        todayLeaveMap.set(leave.userId, leave);
+      }
+    });
+
+    const membersList = Array.from(memberMap.values());
+
+    return membersList.map((member) => {
+      // Active tasks count for this member
+      const memberTasksCount = teamTasks.filter((t) =>
+        (t.assigneeId === member.id || t.assignedToId === member.id || t.assignedTo?.id === member.id) &&
+        (t.status === 'IN_PROGRESS' || t.status === 'WAITING_FOR_REVIEW' || t.status === 'PENDING')
+      ).length;
+
+      const todayLog = todayAttendanceMap.get(member.id);
+      const todayLeave = todayLeaveMap.get(member.id);
+
+      let attStatus = 'ABSENT';
+
+      if (todayLeave) {
+        const lType = (todayLeave.type || todayLeave.leaveType || '').toUpperCase();
+        if (lType === 'WFH') {
+          attStatus = 'WFH';
+        } else {
+          attStatus = 'ON LEAVE';
+        }
+      } else if (todayLog) {
+        const hasClockIn = Boolean(todayLog.clockIn);
+        const isPresentStatus = ['PRESENT', 'LATE', 'WORK_FROM_HOME', 'HALF_DAY'].includes((todayLog.status || '').toUpperCase());
+
+        if (hasClockIn || isPresentStatus) {
+          attStatus = 'PRESENT';
+        } else {
+          attStatus = 'ABSENT';
+        }
+      } else {
+        attStatus = 'ABSENT';
+      }
+
+      return {
+        ...member,
+        memberTasksCount,
+        attStatus
+      };
+    });
+  }, [myTeam, teamTasks, attendanceLogs, leaves]);
+
   if (loading) {
     return (
       <div className="space-y-6 p-2">
@@ -616,25 +769,36 @@ export const EmployeeDashboard = () => {
           </div>
 
           {/* Live Date & Time Counter Badge with Clock In/Out Buttons underneath */}
-          <div className="flex flex-col items-center justify-center gap-2 bg-muted/40 border border-border/60 rounded-2xl p-4 shrink-0 text-center min-w-[210px]">
-            <div className="text-center space-y-0.5">
-              <span className="text-2xl font-black font-mono tracking-tight text-primary block">
-                {time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-              </span>
-              <span className="text-xs text-muted-foreground font-bold block">
-                {time.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-              </span>
-            </div>
+          <div className="flex flex-col items-center justify-center gap-2 bg-muted/40 border border-border/60 rounded-2xl p-4 shrink-0 text-center min-w-[220px]">
+            <TimeRollSuccessBanner clockInToast={clockInToast} time={time} />
 
             <div className="flex items-center justify-center gap-2 pt-2 border-t border-border/40 w-full">
-              <button
-                onClick={handleClockIn}
-                disabled={clockLoading || !clockStatus?.canClockIn}
-                className="flex items-center gap-1.5 bg-primary hover:bg-primary-hover text-white px-3.5 py-1.5 rounded-xl text-xs font-extrabold shadow-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-              >
-                <Play className="h-3.5 w-3.5 fill-current" />
-                <span>Clock In</span>
-              </button>
+              {isClockedIn ? (
+                <button
+                  disabled
+                  className="flex items-center gap-1.5 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 px-3.5 py-1.5 rounded-xl text-xs font-extrabold shadow-xs cursor-not-allowed opacity-90"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  <span>Clocked In</span>
+                </button>
+              ) : clockLoading ? (
+                <button
+                  disabled
+                  className="flex items-center gap-1.5 bg-primary/70 text-white px-3.5 py-1.5 rounded-xl text-xs font-extrabold shadow-xs cursor-not-allowed"
+                >
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  <span>Clocking In...</span>
+                </button>
+              ) : (
+                <button
+                  onClick={handleClockIn}
+                  disabled={!clockStatus?.canClockIn}
+                  className="flex items-center gap-1.5 bg-primary hover:bg-primary-hover text-white px-3.5 py-1.5 rounded-xl text-xs font-extrabold shadow-sm transition-all active:scale-95 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Clock In</span>
+                </button>
+              )}
               <button
                 onClick={() => {
                 console.log("[CLOCKOUT] Button clicked");
@@ -1108,40 +1272,9 @@ export const EmployeeDashboard = () => {
             </div>
           </motion.div>
 
-          {/* 10. Real Team Card */}
-          <motion.div variants={itemVariants} className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold text-foreground">My Team {myTeam ? `(${myTeam.name})` : ''}</h3>
-              <Users className="h-5 w-5 text-primary" />
-            </div>
-
-            {!myTeam ? (
-              <p className="text-xs text-muted-foreground py-4 text-center font-medium">No team assigned.</p>
-            ) : (
-              <>
-                {myTeam.leader && (
-                  <div className="p-3 rounded-2xl bg-primary/10 border border-primary/20 flex items-center gap-3">
-                    <UserAvatar user={myTeam.leader} className="h-10 w-10 rounded-xl" />
-                    <div>
-                      <span className="text-xs font-bold text-foreground block">{myTeam.leader.name}</span>
-                      <span className="text-[10px] text-primary font-bold">Team Leader</span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="dash-scroll max-h-48 space-y-2">
-                  {myTeam.members && myTeam.members.map((mem) => (
-                    <div key={mem.id || mem.userId} className="flex items-center justify-between p-2 rounded-xl border border-border/40 bg-muted/20 text-xs">
-                      <div className="flex items-center gap-2">
-                        <UserAvatar user={mem.user || mem} className="h-7 w-7 rounded-lg" />
-                        <span className="font-semibold text-foreground">{mem.user?.name || mem.name}</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground font-bold">{mem.user?.role || 'MEMBER'}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+          {/* 10. Team Roster & Status Widget */}
+          <motion.div variants={itemVariants}>
+            <TeamRosterStatus members={enrichedTeamMembers} />
           </motion.div>
 
           {/* 7. Real Announcements & Alerts */}
@@ -1182,11 +1315,14 @@ export const EmployeeDashboard = () => {
         userRole={user?.role || 'EMPLOYEE'}
       />
 
+
+
       {/* Clock In Modal */}
       <ClockInModal
         isOpen={isClockInModalOpen}
         onClose={() => setIsClockInModalOpen(false)}
-        onSuccess={() => fetchEmployeeDashboardData()}
+        onSuccess={handleClockInSuccess}
+        onError={handleClockInError}
         user={user}
       />
 

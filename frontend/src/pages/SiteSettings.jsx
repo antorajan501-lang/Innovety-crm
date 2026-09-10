@@ -184,6 +184,7 @@ const SiteSettings = () => {
         ...res.data,
         companyName: selectedCompany?.name || res.data.companyName || 'Company Workspace'
       }));
+      window.dispatchEvent(new CustomEvent('settings_updated', { detail: res.data }));
       setCapturedGps(null);
       setAlert({ type: 'success', message: `Attendance settings for ${selectedCompany?.name || 'Company'} updated successfully.` });
       setLoading(false);

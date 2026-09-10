@@ -171,7 +171,7 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
       const res = await api.post('/attendance/clock-in', payload);
 
       if (onSuccess) {
-        onSuccess(res.data?.attendance || res.data);
+        onSuccess(res.data);
       }
       onClose();
     } catch (err) {
@@ -186,6 +186,9 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
         setErrorMsg(errRes.message || 'You are currently outside the permitted location.');
       } else {
         setErrorMsg(errRes?.message || err.message || 'Clock in failed. Please try again.');
+      }
+      if (onError) {
+        onError(errRes?.message || 'Clock-In Failed. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -443,7 +446,7 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
               >
                 {loading ? (
                   <>
-                    <Clock className="w-4 h-4 animate-spin" /> Clocking In...
+                    <RefreshCw className="w-4 h-4 animate-spin" /> Clocking In...
                   </>
                 ) : (
                   'Confirm Clock In'

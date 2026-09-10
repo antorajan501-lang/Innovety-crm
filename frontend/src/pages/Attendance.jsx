@@ -10,6 +10,8 @@ import { getTargetShiftHours, getShiftProgressColor } from '../utils/shiftProgre
 import AttendanceHistorySection from '../components/attendance/AttendanceHistorySection';
 import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import { useCompanyScope } from '../context/CompanyScopeContext';
+import ClockInToast from '../components/common/ClockInToast';
+import TimeRollSuccessBanner from '../components/common/TimeRollSuccessBanner';
 import {
   Clock,
   Play,
@@ -18,7 +20,8 @@ import {
   Laptop,
   CheckCircle,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 
 const Attendance = () => {
@@ -31,6 +34,38 @@ const Attendance = () => {
   const [settings, setSettings] = useState(null);
   const [currentCoords, setCurrentCoords] = useState(null);
   const [clockInStatus, setClockInStatus] = useState(null);
+  const [clockInToast, setClockInToast] = useState(null);
+
+  const handleClockInSuccess = (resData) => {
+    setIsClockInModalOpen(false);
+    const statusStr = resData?.attendanceStatus || resData?.status || (resData?.attendance?.status === 'LATE' ? 'LATE' : 'PRESENT');
+    const timeStr = resData?.checkInTime || (resData?.clockIn ? new Date(resData.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+
+    setClockInToast({
+      type: 'success',
+      checkInTime: timeStr,
+      attendanceStatus: statusStr
+    });
+    fetchAttendanceStatus();
+    fetchClockInStatus();
+    setHistoryRefreshTrigger(prev => prev + 1);
+
+    setTimeout(() => {
+      setClockInToast(null);
+    }, 3000);
+  };
+
+  const handleClockInError = (errMsg) => {
+    setClockInToast({
+      type: 'error',
+      title: 'Clock-In Failed',
+      message: errMsg || 'Please try again.'
+    });
+
+    setTimeout(() => {
+      setClockInToast(null);
+    }, 3000);
+  };
 
   const isClockedIn = Boolean(clockedRecord && clockedRecord.clockIn && !clockedRecord.clockOut);
 
@@ -59,7 +94,7 @@ const Attendance = () => {
   }, [shiftProgressPercent]);
 
   const shiftCountdown = useShiftCountdown({
-    shiftEndAt: clockedRecord?.shiftEndAt || clockInStatus?.shiftEndAt,
+    shiftEndAt: clockInStatus?.shiftEndAt || clockedRecord?.shiftEndAt,
     serverTime: clockInStatus?.serverTime,
     autoClockOutEnabled: clockInStatus?.autoClockOutEnabled,
     isClockedIn,
@@ -262,11 +297,37 @@ const Attendance = () => {
       }
 
       const res = await api.post('/attendance/clock-out', { location });
-      setClockedRecord(res.data);
-      setAlert(`Successfully clocked out. Worked: ${res.data.workingHours || 0} hrs.`);
-      fetchAttendanceStatus();
+      const record = res.data;
+      setClockedRecord(record);
+
+      const outTimeStr = record?.clockOutTime || (record?.clockOut ? new Date(record.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      const durationStr = record?.workingDuration || (record?.workingHours ? `${Math.floor(record.workingHours)}h ${Math.round((record.workingHours % 1) * 60)}m` : '00h 00m');
+
+      setClockInToast({
+        mode: 'clockOut',
+        type: 'success',
+        clockOutTime: outTimeStr,
+        workingDuration: durationStr,
+        title: 'Clock-Out Successful!',
+        subtitle: 'See you tomorrow 👋'
+      });
+
+      await fetchAttendanceStatus();
+
+      setTimeout(() => {
+        setClockInToast(null);
+      }, 3000);
     } catch (err) {
-      setAlert(err.response?.data?.message || 'Clock out failed.');
+      setClockInToast({
+        mode: 'clockOut',
+        type: 'error',
+        title: 'Clock-Out Failed',
+        message: err.response?.data?.message || 'Please try again.'
+      });
+
+      setTimeout(() => {
+        setClockInToast(null);
+      }, 2000);
       setLoading(false);
     }
   };
@@ -409,10 +470,7 @@ const Attendance = () => {
             <Clock className="h-10 w-10" />
           </div>
 
-          <h2 className="text-3xl font-extrabold tracking-tight font-mono">{formatTimeString(time)}</h2>
-          <p className="text-xs text-muted-foreground mt-1.5 font-medium">
-            {time.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-          </p>
+          <TimeRollSuccessBanner clockInToast={clockInToast} time={time} size="lg" dateFormatOptions={{ weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }} />
 
           {/* Active status indicator */}
           <div className="mt-4 flex flex-col items-center gap-2">
@@ -476,14 +534,32 @@ const Attendance = () => {
           </div>
 
           <div className="mt-8 flex gap-4 w-full max-w-sm">
-            <button
-              onClick={handleClockIn}
-              disabled={loading || !clockInStatus?.canClockIn}
-              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground py-3 text-sm font-semibold hover:bg-primary-hover active:scale-95 disabled:opacity-40 shadow-lg shadow-primary/25 transition-all cursor-pointer"
-            >
-              <Play className="h-4 w-4" />
-              <span>Clock In</span>
-            </button>
+            {isClockedIn ? (
+              <button
+                disabled
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 py-3 text-sm font-semibold cursor-not-allowed opacity-90"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                <span>Clocked In</span>
+              </button>
+            ) : loading ? (
+              <button
+                disabled
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-primary/70 text-primary-foreground py-3 text-sm font-semibold cursor-not-allowed"
+              >
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                <span>Clocking In...</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleClockIn}
+                disabled={!clockInStatus?.canClockIn}
+                className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-primary text-primary-foreground py-3 text-sm font-semibold hover:bg-primary-hover active:scale-95 disabled:opacity-40 shadow-lg shadow-primary/25 transition-all cursor-pointer"
+              >
+                <Play className="h-4 w-4" />
+                <span>Clock In</span>
+              </button>
+            )}
 
             <button
               onClick={() => {
@@ -552,10 +628,8 @@ const Attendance = () => {
       <ClockInModal
         isOpen={isClockInModalOpen}
         onClose={() => setIsClockInModalOpen(false)}
-        onSuccess={() => {
-          fetchAttendanceStatus();
-          setHistoryRefreshTrigger(prev => prev + 1);
-        }}
+        onSuccess={handleClockInSuccess}
+        onError={handleClockInError}
         user={user}
       />
 
@@ -568,6 +642,8 @@ const Attendance = () => {
         onCompleteWorkLog={handleCompleteWorkLog}
         onClockOutAnyway={handleClockOutAnyway}
       />
+
+
     </div>
   );
 };

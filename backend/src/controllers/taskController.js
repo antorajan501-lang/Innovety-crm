@@ -324,7 +324,19 @@ const getTasks = async (req, res) => {
 
     // Role filters
     if (req.user.role === 'INTERN' || req.user.role === 'EMPLOYEE') {
-      where.assigneeId = req.user.id;
+      const userTeams = await prisma.teamMember.findMany({
+        where: { userId: req.user.id },
+        select: { teamId: true }
+      });
+      const teamIds = userTeams.map((t) => t.teamId);
+      if (teamIds.length > 0) {
+        where.OR = [
+          { assigneeId: req.user.id },
+          { teamId: { in: teamIds } }
+        ];
+      } else {
+        where.assigneeId = req.user.id;
+      }
     } else if (req.user.role === 'TEAM_LEADER') {
       // Find all teams led by this leader
       const teams = await prisma.team.findMany({

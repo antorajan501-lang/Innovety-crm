@@ -399,7 +399,6 @@ const applyLeave = async (req, res) => {
     const leave = await prisma.leaveRequest.create({
       data: {
         userId,
-        organizationId: req.user?.organizationId || null,
         startDate: start,
         endDate: end,
         totalDays,
