@@ -95,21 +95,23 @@ const LeavePolicySettings = () => {
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
+  const isProtectedLeaveType = (lt) => {
+    if (!lt) return false;
+    const protectedCodes = ['WFH', 'CL', 'SL'];
+    return protectedCodes.includes((lt.code || '').toUpperCase());
+  };
+
   const fetchPolicyData = async (orgId = effectiveOrgId) => {
     const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
       setLoading(true);
       const params = targetOrg ? { organizationId: targetOrg } : {};
-      const [polRes, balRes] = await Promise.all([
-        api.get('/leave-policy', { params }),
-        api.get('/leave-policy/balances', { params })
-      ]);
+      const polRes = await api.get('/leave-policy', { params });
 
       if (polRes.data?.policy) {
         setPolicy(polRes.data.policy);
       }
       setLeaveTypes(polRes.data?.leaveTypes || []);
-      setUserBalances(balRes.data || []);
       setAlert({ type: '', text: '' });
     } catch (err) {
       console.error('Fetch leave policy error:', err);
@@ -229,8 +231,8 @@ const LeavePolicySettings = () => {
   };
 
   const handleDeleteLeaveType = async (lt) => {
-    if (lt.isSystem) {
-      setAlert({ type: 'error', text: 'System default leave types cannot be deleted.' });
+    if (isProtectedLeaveType(lt)) {
+      setAlert({ type: 'error', text: 'System leave types cannot be deleted.' });
       return;
     }
     if (!window.confirm(`Are you sure you want to delete custom leave type "${lt.name}"?`)) return;
@@ -284,11 +286,6 @@ const LeavePolicySettings = () => {
       setResetting(false);
     }
   };
-
-  const filteredUserBalances = userBalances.filter(u =>
-    u.leaveType?.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.leaveType?.code?.toLowerCase().includes(userSearch.toLowerCase())
-  );
 
   const currentCompany = safeCompanies.find((c) => c.id === selectedOrgId);
 
@@ -446,139 +443,86 @@ const LeavePolicySettings = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-            {leaveTypes.map((lt) => (
-              <div
-                key={lt.id}
-                className={`p-6 rounded-3xl border transition-all flex flex-col justify-between space-y-5 shadow-xs ${
-                  lt.isActive ? 'bg-card border-border/80 hover:border-primary/50 hover:shadow-md' : 'bg-muted/30 border-border/40 opacity-60'
-                }`}
-              >
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <span
-                        className="h-4 w-4 rounded-full shrink-0 shadow-xs border border-white/20"
-                        style={{ backgroundColor: lt.color }}
-                      />
-                      <span className="font-mono text-xs font-black text-foreground tracking-wider">{lt.code}</span>
-                    </div>
+            {leaveTypes.map((lt) => {
+              const isProtected = isProtectedLeaveType(lt);
+              return (
+                <div
+                  key={lt.id}
+                  className={`p-6 rounded-3xl border transition-all flex flex-col justify-between space-y-5 shadow-xs ${
+                    lt.isActive ? 'bg-card border-border/80 hover:border-primary/50 hover:shadow-md' : 'bg-muted/30 border-border/40 opacity-60'
+                  }`}
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className="h-4 w-4 rounded-full shrink-0 shadow-xs border border-white/20"
+                          style={{ backgroundColor: lt.color }}
+                        />
+                        <span className="font-mono text-xs font-black text-foreground tracking-wider">{lt.code}</span>
+                      </div>
 
-                    <div className="flex items-center gap-1.5">
-                      {lt.isSystem && (
-                        <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-600 border border-indigo-500/20 flex items-center gap-1" title="System default leave type">
-                          <Lock className="h-3 w-3" /> System
-                        </span>
-                      )}
-                      <button
-                        onClick={() => handleToggleStatus(lt)}
-                        className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full transition-all cursor-pointer ${
-                          lt.isActive ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
-                        }`}
-                      >
-                        {lt.isActive ? 'Active' : 'Disabled'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-base font-black text-foreground">{lt.name}</h3>
-                    <p className="text-xs text-muted-foreground font-medium mt-1 leading-relaxed">
-                      {lt.description || 'Configurable organizational leave category'}
-                    </p>
-                  </div>
-
-                  <div className="pt-3 border-t border-border/40 grid grid-cols-2 gap-3 text-center text-xs">
-                    <div className="bg-muted/40 p-3 rounded-2xl border border-border/40">
-                      <span className="text-[10px] text-muted-foreground font-extrabold block uppercase tracking-wider">Annual Allowance</span>
-                      <span className="font-black text-sm text-foreground mt-0.5 block">{lt.isPaid ? `${lt.annualDays} Days` : 'Unpaid'}</span>
-                    </div>
-                    <div className="bg-muted/40 p-3 rounded-2xl border border-border/40">
-                      <span className="text-[10px] text-muted-foreground font-extrabold block uppercase tracking-wider">Monthly Credit</span>
-                      <span className="font-black text-sm text-foreground mt-0.5 block">{lt.isPaid ? `${lt.monthlyCreditDays} Days` : 'N/A'}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/40">
-                  <button
-                    onClick={() => openTypeModal(lt)}
-                    className="p-2 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
-                    title="Edit Leave Type"
-                  >
-                    <Edit2 className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteLeaveType(lt)}
-                    disabled={lt.isSystem}
-                    className={`p-2 rounded-xl transition-colors ${
-                      lt.isSystem
-                        ? 'text-muted-foreground/30 cursor-not-allowed'
-                        : 'text-muted-foreground hover:bg-muted hover:text-rose-600 cursor-pointer'
-                    }`}
-                    title={lt.isSystem ? 'System defaults cannot be deleted' : 'Delete Leave Type'}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* USER LEAVE BALANCES */}
-      <div className="bg-card border border-border/80 rounded-3xl p-6 sm:p-8 shadow-md text-left space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/40 pb-4">
-          <div className="flex items-center gap-2.5">
-            <Briefcase className="h-5 w-5 text-primary" />
-            <h2 className="text-base font-extrabold text-foreground">User Leave Balances</h2>
-          </div>
-
-          <div className="relative max-w-xs w-full">
-            <Search className="h-4 w-4 absolute left-3 top-2.5 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Search user balances..."
-              value={userSearch}
-              onChange={(e) => setUserSearch(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 text-xs font-medium rounded-xl border border-border bg-background focus:ring-2 focus:ring-primary/20 outline-none"
-            />
-          </div>
-        </div>
-
-        <div className="overflow-x-auto rounded-2xl border border-border/60">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-muted/40 text-muted-foreground font-bold uppercase text-[10px]">
-              <tr>
-                <th className="px-4 py-3">Leave Category</th>
-                <th className="px-4 py-3 text-center">Allocated</th>
-                <th className="px-4 py-3 text-center">Used</th>
-                <th className="px-4 py-3 text-center">Pending</th>
-                <th className="px-4 py-3 text-center">Available</th>
-                <th className="px-4 py-3 text-center">Carry Forward</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/40">
-              {filteredUserBalances.map((b) => (
-                <tr key={b.id} className="hover:bg-muted/20 transition-all">
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex items-center gap-2.5">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: b.leaveType?.color || '#3B82F6' }} />
-                      <div>
-                        <span className="font-bold text-foreground block">{b.leaveType?.name}</span>
-                        <span className="text-[10px] font-mono text-muted-foreground">{b.leaveType?.code}</span>
+                      <div className="flex items-center gap-1.5">
+                        {isProtected && (
+                          <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-600 border border-indigo-500/20 flex items-center gap-1" title="System leave type">
+                            <Lock className="h-3 w-3" /> System
+                          </span>
+                        )}
+                        <button
+                          onClick={() => handleToggleStatus(lt)}
+                          className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full transition-all cursor-pointer ${
+                            lt.isActive ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-600 border border-rose-500/20'
+                          }`}
+                        >
+                          {lt.isActive ? 'Active' : 'Disabled'}
+                        </button>
                       </div>
                     </div>
-                  </td>
-                  <td className="px-4 py-3 text-center font-extrabold text-foreground">{b.allocated}</td>
-                  <td className="px-4 py-3 text-center font-extrabold text-rose-600">{b.used}</td>
-                  <td className="px-4 py-3 text-center font-extrabold text-amber-600">{b.pending}</td>
-                  <td className="px-4 py-3 text-center font-extrabold text-emerald-600">{b.available}</td>
-                  <td className="px-4 py-3 text-center font-extrabold text-muted-foreground">{b.carryForward}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+
+                    <div>
+                      <h3 className="text-base font-black text-foreground">{lt.name}</h3>
+                      <p className="text-xs text-muted-foreground font-medium mt-1 leading-relaxed">
+                        {lt.description || 'Configurable organizational leave category'}
+                      </p>
+                    </div>
+
+                    <div className="pt-3 border-t border-border/40 grid grid-cols-2 gap-3 text-center text-xs">
+                      <div className="bg-muted/40 p-3 rounded-2xl border border-border/40">
+                        <span className="text-[10px] text-muted-foreground font-extrabold block uppercase tracking-wider">Annual Allowance</span>
+                        <span className="font-black text-sm text-foreground mt-0.5 block">{lt.isPaid ? `${lt.annualDays} Days` : 'Unpaid'}</span>
+                      </div>
+                      <div className="bg-muted/40 p-3 rounded-2xl border border-border/40">
+                        <span className="text-[10px] text-muted-foreground font-extrabold block uppercase tracking-wider">Monthly Credit</span>
+                        <span className="font-black text-sm text-foreground mt-0.5 block">{lt.isPaid ? `${lt.monthlyCreditDays} Days` : 'N/A'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-3 border-t border-border/40">
+                    <button
+                      onClick={() => openTypeModal(lt)}
+                      className="p-2 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                      title="Edit Leave Type"
+                    >
+                      <Edit2 className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteLeaveType(lt)}
+                      disabled={isProtected}
+                      className={`p-2 rounded-xl transition-colors ${
+                        isProtected
+                          ? 'text-muted-foreground/30 cursor-not-allowed'
+                          : 'text-muted-foreground hover:bg-muted hover:text-rose-600 cursor-pointer'
+                      }`}
+                      title={isProtected ? 'System leave types cannot be deleted.' : 'Delete Leave Type'}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 

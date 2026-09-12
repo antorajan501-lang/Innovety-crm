@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Building2, Plus, Search, Edit2, ShieldCheck, CheckCircle2, XCircle,
-  RefreshCw, AlertTriangle, Eye, Globe, Mail, Phone, MapPin, Clock, X,
+  RefreshCw, AlertTriangle, AlertCircle, Eye, Globe, Mail, Phone, MapPin, Clock, X,
   Lock, ArrowRight, Upload, Info, Cog, Palette, Check, Key, Users, FolderKanban,
   ClipboardList, FileText, MessageSquare, HeartPulse, HardDrive, Zap, Crown, Award, Activity, Trash2, Briefcase, Layers, Save, ArrowUp, ArrowDown
 } from 'lucide-react';
@@ -46,6 +46,13 @@ const OrganizationManager = () => {
   const [companyStats, setCompanyStats] = useState(null);
   const [platformHealth, setPlatformHealth] = useState(null);
   const [plans, setPlans] = useState([]);
+
+  // Tenant-Specific Chat Access Control State
+  const [tenantChatAdmins, setTenantChatAdmins] = useState(true);
+  const [tenantChatUsers, setTenantChatUsers] = useState(true);
+  const [showTenantChatModal, setShowTenantChatModal] = useState(false);
+  const [pendingTenantChatToggleRole, setPendingTenantChatToggleRole] = useState(null);
+  const [savingTenantChat, setSavingTenantChat] = useState(false);
 
   // Company Settings Form State
   const [settingsData, setSettingsData] = useState({
@@ -108,8 +115,11 @@ const OrganizationManager = () => {
 
   // Delete Organization State
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteInputText, setDeleteInputText] = useState('');
+  const [companyToDelete, setCompanyToDelete] = useState(null);
+  const [companyToDeleteStats, setCompanyToDeleteStats] = useState(null);
+  const [deleteErrorData, setDeleteErrorData] = useState(null);
   const [deletingCompany, setDeletingCompany] = useState(false);
+  const [confirmDeleteText, setConfirmDeleteText] = useState('');
 
   // Multi-Admin Queuing State for Create Company Flow
   const [queuedAdmins, setQueuedAdmins] = useState([]);
@@ -192,25 +202,6 @@ const OrganizationManager = () => {
 
   const handleRemoveQueuedAdmin = (index) => {
     setQueuedAdmins((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const handleExecuteCompanyDelete = async () => {
-    if (!selectedCompany || deleteInputText.trim() !== 'DELETE') return;
-    try {
-      setDeletingCompany(true);
-      const res = await api.delete(`/organizations/${selectedCompany.id}`);
-      showAlert('success', res.data.message || `Company "${selectedCompany.name}" deleted successfully.`);
-      setDeleteConfirmOpen(false);
-      setDeleteInputText('');
-      setViewDrawerOpen(false);
-      fetchCompanies();
-      window.dispatchEvent(new Event('organization-updated'));
-    } catch (err) {
-      console.error('Failed to delete company:', err);
-      showAlert('error', err.response?.data?.message || 'Failed to delete company.');
-    } finally {
-      setDeletingCompany(false);
-    }
   };
 
   const fetchCompanies = async () => {
@@ -663,19 +654,66 @@ const OrganizationManager = () => {
     setSelectedCompanySettings(null);
     setCompanyStats(null);
     setDrawerTab('overview');
+    setTenantChatAdmins(true);
+    setTenantChatUsers(true);
     setViewDrawerOpen(true);
     try {
-      const [settingsRes, statsRes] = await Promise.all([
+      const [settingsRes, statsRes, brandingRes] = await Promise.all([
         api.get(`/organizations/${company.id}/settings`).catch(() => null),
-        api.get(`/organizations/${company.id}/stats`).catch(() => null)
+        api.get(`/organizations/${company.id}/stats`).catch(() => null),
+        api.get('/super-admin/branding', { params: { organizationId: company.id } }).catch(() => null)
       ]);
       if (settingsRes?.data) setSelectedCompanySettings(settingsRes.data);
       if (statsRes?.data?.stats) setCompanyStats(statsRes.data.stats);
+      if (brandingRes?.data) {
+        setTenantChatAdmins(brandingRes.data.chatEnabledForAdmins !== false);
+        setTenantChatUsers(brandingRes.data.chatEnabledForUsers !== false);
+      }
     } catch (err) {
       console.error('Error fetching drawer details:', err);
     }
   };
   const handleViewCompany = openViewDrawer;
+
+  const handleTenantChatToggleClick = (roleTarget) => {
+    setPendingTenantChatToggleRole(roleTarget);
+    setShowTenantChatModal(true);
+  };
+
+  const confirmTenantChatToggle = async () => {
+    if (!selectedCompany) return;
+    setSavingTenantChat(true);
+    try {
+      const newAdmins = pendingTenantChatToggleRole === 'ADMIN' ? !tenantChatAdmins : tenantChatAdmins;
+      const newUsers = pendingTenantChatToggleRole === 'USER' ? !tenantChatUsers : tenantChatUsers;
+
+      const formData = new FormData();
+      formData.append('organizationId', selectedCompany.id);
+      formData.append('chatEnabledForAdmins', String(newAdmins));
+      formData.append('chatEnabledForUsers', String(newUsers));
+
+      const res = await api.put('/super-admin/branding', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      if (res.data) {
+        setTenantChatAdmins(res.data.chatEnabledForAdmins !== false);
+        setTenantChatUsers(res.data.chatEnabledForUsers !== false);
+      } else {
+        setTenantChatAdmins(newAdmins);
+        setTenantChatUsers(newUsers);
+      }
+
+      showAlert('success', `Chat access settings updated for ${selectedCompany.name}`);
+    } catch (err) {
+      console.error('Failed to update tenant chat access:', err);
+      showAlert('error', 'Failed to update tenant chat access controls.');
+    } finally {
+      setSavingTenantChat(false);
+      setShowTenantChatModal(false);
+      setPendingTenantChatToggleRole(null);
+    }
+  };
 
   const openSettingsModal = async (company) => {
     setSelectedCompany(company);
@@ -934,6 +972,64 @@ const OrganizationManager = () => {
       fetchCompanies();
     } catch (err) {
       showAlert('error', err.response?.data?.message || 'Failed to toggle company status.');
+    }
+  };
+
+  const openDeleteCompanyModal = async (company) => {
+    const isInnoveity = company.slug === 'innoveity' || company.companyCode === 'INN001';
+    if (isInnoveity) {
+      showAlert('error', 'Default Innoveity Workspace cannot be deleted.');
+      return;
+    }
+    setCompanyToDelete(company);
+    setCompanyToDeleteStats(null);
+    setDeleteErrorData(null);
+    setConfirmDeleteText('');
+    setDeleteConfirmOpen(true);
+
+    try {
+      const res = await api.get(`/organizations/${company.id}/stats`);
+      if (res.data?.stats) {
+        setCompanyToDeleteStats(res.data.stats);
+      }
+    } catch (e) {}
+  };
+
+  const handleConfirmDeleteCompany = async () => {
+    if (!companyToDelete) return;
+    if (confirmDeleteText.trim() !== 'CONFIRM') {
+      showAlert('error', 'Type CONFIRM to continue.');
+      return;
+    }
+    try {
+      setDeletingCompany(true);
+      setDeleteErrorData(null);
+      const res = await api.delete(`/organizations/${companyToDelete.id}`, {
+        data: { confirmText: confirmDeleteText.trim() },
+        params: { confirmText: confirmDeleteText.trim() }
+      });
+      if (res.data?.success) {
+        showAlert('success', res.data?.message || 'Company deleted successfully.');
+        setDeleteConfirmOpen(false);
+        setViewDrawerOpen(false);
+        if (selectedCompany && selectedCompany.id === companyToDelete.id) {
+          setSelectedCompany(null);
+        }
+        setCompanyToDelete(null);
+        setCompanyToDeleteStats(null);
+        setConfirmDeleteText('');
+        fetchCompanies();
+        window.dispatchEvent(new Event('organization-updated'));
+      }
+    } catch (err) {
+      const resData = err.response?.data;
+      const errMsg = resData?.message || 'Company deletion failed.';
+      setDeleteErrorData({
+        message: errMsg
+      });
+      showAlert('error', errMsg);
+    } finally {
+      setDeletingCompany(false);
     }
   };
 
@@ -1326,6 +1422,15 @@ const OrganizationManager = () => {
                                 title={isInnoveity ? 'INNOVEITY tenant cannot be suspended' : 'Toggle Status'}
                               >
                                 {company.status === 'ACTIVE' ? 'Suspend' : 'Activate'}
+                              </button>
+
+                              <button
+                                disabled={isInnoveity}
+                                onClick={() => openDeleteCompanyModal(company)}
+                                className="p-2 rounded-xl border border-rose-500/30 text-rose-600 hover:bg-rose-500/10 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                title={isInnoveity ? 'INNOVEITY tenant cannot be deleted' : 'Delete Company'}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
                               </button>
                             </div>
                           </td>
@@ -2420,6 +2525,89 @@ const OrganizationManager = () => {
                   {/* Organization Usage & Health Overview Card */}
                   <OrganizationUsageCard stats={companyStats} company={selectedCompany} />
 
+                  {/* Tenant Chat Access Controls Card */}
+                  <div className="p-4 rounded-2xl bg-card border border-border/60 dark:border-slate-800/80 shadow-xs space-y-4">
+                    <div className="flex items-center justify-between border-b border-border/30 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="h-8 w-8 rounded-xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
+                          <MessageSquare className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-extrabold text-foreground">Chat Access Controls</h4>
+                          <p className="text-[10px] text-muted-foreground">Enable or disable Chat only for this company.</p>
+                        </div>
+                      </div>
+                      <span className="inline-flex items-center text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                        Tenant Only
+                      </span>
+                    </div>
+
+                    <div className="space-y-3">
+                      {/* Admin Chat Switch */}
+                      <div className="flex items-center justify-between p-3 rounded-xl border border-border/40 bg-muted/20">
+                        <div className="space-y-0.5 pr-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-foreground">Admin Chat</span>
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${tenantChatAdmins ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'}`}>
+                              {tenantChatAdmins ? 'Enabled' : 'Disabled'}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">Allow company admins to use Chat.</p>
+                        </div>
+
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={tenantChatAdmins}
+                          onClick={() => handleTenantChatToggleClick('ADMIN')}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            tenantChatAdmins ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-700'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                              tenantChatAdmins ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {/* User Chat Switch */}
+                      <div className="flex items-center justify-between p-3 rounded-xl border border-border/40 bg-muted/20">
+                        <div className="space-y-0.5 pr-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-foreground">User Chat</span>
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${tenantChatUsers ? 'bg-emerald-500/10 text-emerald-600' : 'bg-muted text-muted-foreground'}`}>
+                              {tenantChatUsers ? 'Enabled' : 'Disabled'}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">Allow Team Leaders, Employees &amp; Interns.</p>
+                        </div>
+
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={tenantChatUsers}
+                          onClick={() => handleTenantChatToggleClick('USER')}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            tenantChatUsers ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-700'
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                              tenantChatUsers ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-start gap-2 p-2.5 rounded-xl bg-muted/40 border border-border/30 text-[10px] text-muted-foreground">
+                      <Info className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                      <span>Tenant override only. Global platform settings still take priority.</span>
+                    </div>
+                  </div>
+
                   {/* Subscription Plan Switcher */}
                   <div className="p-3.5 rounded-2xl bg-muted/30 border border-border/40 space-y-2">
                     <div className="flex items-center justify-between text-xs font-bold text-foreground">
@@ -2532,10 +2720,7 @@ const OrganizationManager = () => {
                 <div className="pt-6 border-t border-border/60 flex items-center gap-3">
                   <button
                     disabled={selectedCompany.slug === 'innoveity' || selectedCompany.companyCode === 'INN001'}
-                    onClick={() => {
-                      setDeleteInputText('');
-                      setDeleteConfirmOpen(true);
-                    }}
+                    onClick={() => openDeleteCompanyModal(selectedCompany)}
                     className="px-4 py-2.5 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                     title={
                       (selectedCompany.slug === 'innoveity' || selectedCompany.companyCode === 'INN001')
@@ -2560,107 +2745,6 @@ const OrganizationManager = () => {
         )}
       </AnimatePresence>
 
-      {/* DELETE COMPANY CONFIRMATION MODAL */}
-      <AnimatePresence>
-        {deleteConfirmOpen && selectedCompany && (
-          <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-md rounded-3xl border border-rose-500/30 bg-card p-6 shadow-2xl space-y-4 text-left"
-            >
-              <div className="flex items-center justify-between border-b border-border/40 pb-3">
-                <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 font-extrabold text-base">
-                  <AlertTriangle className="h-5 w-5" />
-                  <span>Delete Company</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeleteConfirmOpen(false);
-                    setDeleteInputText('');
-                  }}
-                  className="p-1 text-muted-foreground hover:text-foreground rounded-lg"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="space-y-3 text-xs">
-                <div className="p-3 rounded-2xl bg-rose-500/10 border border-rose-500/20">
-                  <p className="font-extrabold text-rose-700 dark:text-rose-300 text-sm">
-                    {selectedCompany.name}
-                  </p>
-                  {selectedCompany.companyCode && (
-                    <p className="text-[11px] font-mono text-rose-600/80 dark:text-rose-400/80 mt-0.5">
-                      Code: {selectedCompany.companyCode}
-                    </p>
-                  )}
-                </div>
-
-                {companyStats && (
-                  <div className="grid grid-cols-2 gap-2 text-[11px] font-semibold text-muted-foreground bg-muted/30 p-3 rounded-2xl border border-border/40">
-                    <div>Users: <strong className="text-foreground">{companyStats.users || 0}</strong></div>
-                    <div>Projects: <strong className="text-foreground">{companyStats.projects || 0}</strong></div>
-                    <div>Attendance: <strong className="text-foreground">{companyStats.attendances || 0}</strong></div>
-                    <div>Work Logs: <strong className="text-foreground">{companyStats.workLogs || 0}</strong></div>
-                    <div>Chat Rooms: <strong className="text-foreground">{companyStats.chatRooms || 0}</strong></div>
-                  </div>
-                )}
-
-                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 leading-relaxed text-[11px]">
-                  <strong>Warning:</strong> This action permanently deletes this organization and all associated data.
-                </div>
-
-                <div className="space-y-1.5 pt-1">
-                  <label className="text-xs font-bold text-foreground block">
-                    Type <span className="font-mono text-rose-600 dark:text-rose-400 font-black">DELETE</span> to confirm:
-                  </label>
-                  <input
-                    type="text"
-                    value={deleteInputText}
-                    onChange={(e) => setDeleteInputText(e.target.value)}
-                    placeholder="DELETE"
-                    className="w-full rounded-xl border border-rose-500/40 bg-background px-3.5 py-2 text-xs font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-rose-500/40"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-3 border-t border-border/40 pt-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeleteConfirmOpen(false);
-                    setDeleteInputText('');
-                  }}
-                  className="px-4 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:bg-muted transition-all cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleExecuteCompanyDelete}
-                  disabled={deleteInputText.trim() !== 'DELETE' || deletingCompany}
-                  className="px-5 py-2 rounded-xl bg-rose-600 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                  {deletingCompany ? (
-                    <>
-                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                      <span>Deleting...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="h-3.5 w-3.5" />
-                      <span>Delete Organization</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* COMPANY PROVISION SUCCESS MODAL */}
       <CompanyProvisionSuccessModal
@@ -3413,6 +3497,220 @@ const OrganizationManager = () => {
                 </button>
               </div>
             </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE COMPANY CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {deleteConfirmOpen && companyToDelete && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-card border border-border/80 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-5 text-left"
+            >
+              {/* Modal Header */}
+              <div className="flex items-center gap-3 border-b border-border/60 pb-4">
+                <div className="p-3 rounded-2xl bg-rose-500/10 text-rose-600 border border-rose-500/20 shrink-0">
+                  <AlertTriangle className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-foreground">Delete {companyToDelete.name}?</h3>
+                  <p className="text-xs text-muted-foreground font-medium">This action cannot be undone.</p>
+                </div>
+              </div>
+
+              {/* Error Alert Box */}
+              {deleteErrorData && (
+                <div className="p-3.5 rounded-2xl bg-rose-500/10 text-rose-600 border border-rose-500/20 text-xs font-medium flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />
+                  <span className="font-bold text-rose-700 dark:text-rose-400 leading-snug">
+                    {deleteErrorData.message}
+                  </span>
+                </div>
+              )}
+
+              {/* Impact Summary Card */}
+              {(() => {
+                const memberCount = companyToDeleteStats?.users ?? companyToDelete?.usersCount ?? companyToDelete?._count?.users ?? companyStats?.users ?? 0;
+                const projectCount = companyToDeleteStats?.projects ?? companyToDelete?.projectsCount ?? companyToDelete?._count?.projects ?? companyStats?.projects ?? 0;
+                const taskCount = companyToDeleteStats?.tasks ?? companyToDelete?.tasksCount ?? companyToDelete?._count?.tasks ?? companyStats?.tasks ?? 0;
+                const deptCount = companyToDeleteStats?.departments ?? companyToDelete?.departmentsCount ?? companyToDelete?._count?.departments ?? 0;
+                const teamCount = companyToDeleteStats?.teams ?? companyToDelete?.teamsCount ?? companyToDelete?._count?.teams ?? 0;
+                const leaveCount = companyToDeleteStats?.leaveRequests ?? companyToDelete?.leaveRequestsCount ?? 0;
+                const attendanceCount = companyToDeleteStats?.attendances ?? companyToDelete?.attendancesCount ?? 0;
+                const workLogCount = companyToDeleteStats?.workLogs ?? companyToDelete?.workLogsCount ?? 0;
+                const ticketCount = companyToDeleteStats?.tickets ?? companyToDelete?.ticketsCount ?? 0;
+
+                const totalRecordsToDelete = memberCount + projectCount + taskCount + deptCount + teamCount + leaveCount + attendanceCount + workLogCount + ticketCount;
+
+                return (
+                  <div className="rounded-2xl border border-rose-500/20 bg-rose-500/5 dark:bg-rose-500/10 p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-rose-500/20 pb-2">
+                      <span className="text-xs font-extrabold text-foreground uppercase tracking-wider">
+                        Impact Summary
+                      </span>
+                      <span className="text-[11px] font-mono font-bold text-rose-600 dark:text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/20">
+                        {companyToDelete.companyCode || 'ORG'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Company Members</span>
+                        <span className="font-extrabold text-foreground font-mono">{memberCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Projects</span>
+                        <span className="font-extrabold text-foreground font-mono">{projectCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Tasks</span>
+                        <span className="font-extrabold text-foreground font-mono">{taskCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Departments</span>
+                        <span className="font-extrabold text-foreground font-mono">{deptCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Teams</span>
+                        <span className="font-extrabold text-foreground font-mono">{teamCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Leave Requests</span>
+                        <span className="font-extrabold text-foreground font-mono">{leaveCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Attendance</span>
+                        <span className="font-extrabold text-foreground font-mono">{attendanceCount}</span>
+                      </div>
+                      <div className="flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Work Logs</span>
+                        <span className="font-extrabold text-foreground font-mono">{workLogCount}</span>
+                      </div>
+                      <div className="col-span-2 flex items-center justify-between bg-background/80 dark:bg-background/40 px-3 py-1.5 rounded-xl border border-border/40">
+                        <span className="text-muted-foreground font-medium">Tickets</span>
+                        <span className="font-extrabold text-foreground font-mono">{ticketCount}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-rose-500/10 px-3.5 py-2 rounded-xl border border-rose-500/20 text-xs font-bold">
+                      <span className="text-rose-700 dark:text-rose-300">Total Records To Delete</span>
+                      <span className="font-mono text-sm text-rose-600 dark:text-rose-400 font-black">
+                        {totalRecordsToDelete}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Confirmation Input Section */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-foreground block">
+                  To permanently delete this company, type <span className="font-mono font-black text-rose-600 dark:text-rose-400">CONFIRM</span>
+                </label>
+                <input
+                  type="text"
+                  value={confirmDeleteText}
+                  onChange={(e) => setConfirmDeleteText(e.target.value)}
+                  placeholder="Type CONFIRM"
+                  className="w-full rounded-2xl border border-border/80 bg-background px-4 py-2.5 text-xs font-mono text-foreground focus:outline-none focus:ring-2 focus:ring-rose-500/30 focus:border-rose-500/50 transition-all placeholder:text-muted-foreground/60"
+                />
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-border/60">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteConfirmOpen(false);
+                    setCompanyToDelete(null);
+                    setCompanyToDeleteStats(null);
+                    setDeleteErrorData(null);
+                    setConfirmDeleteText('');
+                  }}
+                  className="px-4 py-2.5 rounded-2xl text-xs font-bold text-muted-foreground hover:bg-muted cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={confirmDeleteText.trim() !== 'CONFIRM' || deletingCompany}
+                  onClick={handleConfirmDeleteCompany}
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>{deletingCompany ? 'Deleting...' : 'Delete Company'}</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {/* Tenant Chat Confirmation Modal */}
+        {showTenantChatModal && selectedCompany && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+            <div className="bg-card dark:bg-slate-900 border border-border rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4 text-left">
+              <div className="flex items-center gap-3 text-primary">
+                <AlertCircle className="h-6 w-6 shrink-0" />
+                <h3 className="text-lg font-bold text-foreground">
+                  {pendingTenantChatToggleRole === 'ADMIN'
+                    ? (tenantChatAdmins ? `Disable Admin Chat?` : `Enable Admin Chat?`)
+                    : (tenantChatUsers ? `Disable User Chat?` : `Enable User Chat?`)}
+                </h3>
+              </div>
+
+              <div className="text-xs text-muted-foreground space-y-2 leading-relaxed">
+                <p>Company: <strong className="text-foreground">{selectedCompany.name}</strong></p>
+                <div className="p-3 rounded-xl bg-muted/40 border border-border/40 space-y-1.5">
+                  <div className="font-bold text-foreground text-[11px] uppercase tracking-wider">Effect:</div>
+                  <ul className="list-disc list-inside space-y-1 text-muted-foreground text-xs">
+                    {pendingTenantChatToggleRole === 'ADMIN' ? (
+                      tenantChatAdmins ? (
+                        <>
+                          <li>Chat disappears for company Admins.</li>
+                          <li>Admins will be blocked from sending messages or joining chat rooms.</li>
+                        </>
+                      ) : (
+                        <li>Company Admins regain full Chat access immediately.</li>
+                      )
+                    ) : (
+                      tenantChatUsers ? (
+                        <>
+                          <li>Chat disappears for Team Leaders, Employees, and Interns in this company.</li>
+                          <li>Users will be blocked from accessing <code className="bg-muted px-1 rounded">/chat</code>.</li>
+                        </>
+                      ) : (
+                        <li>User Chat access will be restored immediately for this company.</li>
+                      )
+                    )}
+                    <li>Existing message history and rooms remain safe.</li>
+                    <li>Other companies remain unaffected.</li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={savingTenantChat}
+                  onClick={() => { setShowTenantChatModal(false); setPendingTenantChatToggleRole(null); }}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold border border-border/80 hover:bg-muted text-foreground transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={savingTenantChat}
+                  onClick={confirmTenantChatToggle}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-primary text-white hover:bg-primary-hover shadow-md transition-all flex items-center gap-2"
+                >
+                  {savingTenantChat && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                  <span>Confirm Toggle</span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </AnimatePresence>

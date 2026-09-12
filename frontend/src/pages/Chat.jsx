@@ -15,6 +15,7 @@ import UserAvatar from '../components/common/UserAvatar';
 import useChatSocket from '../hooks/useChatSocket';
 import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import { useCompanyScope } from '../context/CompanyScopeContext';
+import { useTheme } from '../context/ThemeContext';
 
 const EMOJI_LIST = ['😊', '👍', '🔥', '🎉', '❤️', '🙌', '🚀', '✅', '😂', '💡', '👏', '🎯', '💯', '🙏', '✨', '⚡'];
 
@@ -303,9 +304,31 @@ const Chat = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user: authUser } = useAuth();
+  const { canUseChat } = useTheme();
+  console.log('[DEBUG Trace Step 5 - Chat.jsx]', { canUseChat });
   const isSuperAdmin = authUser?.role === 'SUPER_ADMIN';
   const { selectedOrgId, effectiveOrgId } = useCompanyScope();
   const targetOrg = isSuperAdmin ? selectedOrgId : (effectiveOrgId || authUser?.organizationId);
+
+  useEffect(() => {
+    if (canUseChat === false) {
+      navigate('/', { replace: true });
+    }
+  }, [canUseChat, navigate]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleChatDisabled = () => {
+      navigate('/', { replace: true });
+    };
+
+    socket.on('chat_disabled', handleChatDisabled);
+    return () => {
+      socket.off('chat_disabled', handleChatDisabled);
+    };
+  }, [navigate]);
 
   // Core State
   const [currentUser, setCurrentUser] = useState(authUser || null);
@@ -626,6 +649,10 @@ const Chat = () => {
 
   const fetchRoomsRef = useRef(null);
 
+  useEffect(() => {
+    fetchRoomsRef.current = fetchRooms;
+  });
+
   // Stable Socket Event Handlers
   const handleReceiveMessage = useCallback((msg) => {
     setMessages(prev => {
@@ -833,6 +860,28 @@ const Chat = () => {
     }
   };
 
+  // Helper to preserve current active room or fallback to first room
+  const preserveOrFallbackActiveRoom = (allRooms) => {
+    if (activeRoomRef.current) {
+      const existing = allRooms.find(r =>
+        r.id === activeRoomRef.current.id ||
+        (r.type === 'DIRECT' && (
+          (r.otherUser?.id && (r.otherUser.id === activeRoomRef.current.otherUser?.id || r.otherUser.id === activeRoomRef.current.targetUserId)) ||
+          (r.targetUserId && (r.targetUserId === activeRoomRef.current.otherUser?.id || r.targetUserId === activeRoomRef.current.targetUserId))
+        ))
+      );
+      if (existing) {
+        setActiveRoom(existing);
+        return;
+      }
+    }
+    if (allRooms.length > 0) {
+      setActiveRoom(allRooms[0]);
+    } else {
+      setActiveRoom(null);
+    }
+  };
+
   // Fetch unified WhatsApp-style chat list (Company Room ALWAYS #1)
   const fetchRooms = async (overrideOrgId) => {
     try {
@@ -850,8 +899,23 @@ const Chat = () => {
       const targetProjectId = params.get('projectId') || params.get('project') || params.get('proj');
 
       if (targetDmUserId) {
-        const dmRes = await api.post('/chat/rooms/direct', { targetUserId: targetDmUserId, organizationId: orgId });
-        setActiveRoom(dmRes.data);
+        const found = allRooms.find(r =>
+          r.type === 'DIRECT' && (r.otherUser?.id === targetDmUserId || r.targetUserId === targetDmUserId)
+        );
+        if (found) {
+          setActiveRoom(found);
+        } else {
+          try {
+            const dmRes = await api.post('/chat/rooms/direct', { targetUserId: targetDmUserId, organizationId: orgId });
+            if (dmRes.data) {
+              setActiveRoom(dmRes.data);
+            } else {
+              preserveOrFallbackActiveRoom(allRooms);
+            }
+          } catch (e) {
+            preserveOrFallbackActiveRoom(allRooms);
+          }
+        }
       } else if (targetRoomId) {
         const found = allRooms.find(r => r.id === targetRoomId);
         if (found) {
@@ -859,10 +923,13 @@ const Chat = () => {
         } else {
           try {
             const roomRes = await api.get(`/chat/rooms/${targetRoomId}`, { params: apiParams });
-            if (roomRes.data) setActiveRoom(roomRes.data);
+            if (roomRes.data) {
+              setActiveRoom(roomRes.data);
+            } else {
+              preserveOrFallbackActiveRoom(allRooms);
+            }
           } catch (e) {
-            if (allRooms.length > 0) setActiveRoom(allRooms[0]);
-            else setActiveRoom(null);
+            preserveOrFallbackActiveRoom(allRooms);
           }
         }
       } else if (targetProjectId) {
@@ -881,41 +948,42 @@ const Chat = () => {
             const projChatRes = await api.get(`/chat/rooms/project/${targetProjectId}`, { params: apiParams });
             if (projChatRes.data) {
               setActiveRoom(projChatRes.data);
-              const freshRoomsRes = await api.get('/chat/rooms', { params: apiParams });
-              const updatedRooms = freshRoomsRes.data || [];
-              setRooms(updatedRooms);
-              const reFound = updatedRooms.find(r => r.id === projChatRes.data.id || r.projectId === targetProjectId);
-              if (reFound) setActiveRoom(reFound);
+            } else {
+              preserveOrFallbackActiveRoom(allRooms);
             }
           } catch (projErr) {
             console.error('Failed to access project chat room:', projErr);
-            if (allRooms.length > 0) setActiveRoom(allRooms[0]);
-            else setActiveRoom(null);
+            preserveOrFallbackActiveRoom(allRooms);
           }
         }
-      } else if (allRooms.length > 0) {
-        setActiveRoom(allRooms[0]);
       } else {
-        setActiveRoom(null);
+        preserveOrFallbackActiveRoom(allRooms);
       }
     } catch (err) {
       console.error('Failed to fetch chat rooms:', err);
     }
   };
 
+  // Reset active room state on user/org scope change
   useEffect(() => {
     if (currentUser) {
       setActiveRoom(null);
       setMessages([]);
+    }
+  }, [currentUser?.id, targetOrg]);
+
+  // Fetch rooms list when user, org, or URL search params change
+  useEffect(() => {
+    if (currentUser) {
       fetchRooms(targetOrg);
     }
-  }, [currentUser, targetOrg, authUser?.organizationId, location.search]);
+  }, [currentUser?.id, targetOrg, location.search]);
 
   // Fetch messages when activeRoom changes
   useEffect(() => {
     if (!activeRoom) return;
 
-    if (!activeRoom.isVirtual && !activeRoom.id.startsWith('virtual_')) {
+    if (!activeRoom.isVirtual && activeRoom.id && !activeRoom.id.startsWith('virtual_')) {
       const socket = getSocket();
       if (socket) {
         socket.emit('join_chat_room', activeRoom.id);
@@ -941,6 +1009,7 @@ const Chat = () => {
       fetchMessages();
     } else {
       setMessages([]);
+      setMessagesLoading(false);
       setRoomDetails(null);
       setSharedFilesList([]);
     }
@@ -959,25 +1028,44 @@ const Chat = () => {
         socket.emit('leave_chat_room', activeRoom.id);
       }
     };
-  }, [activeRoom]);
+  }, [activeRoom?.id]);
 
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typingUsers]);
 
-  // Handle room selection (transparently creates DM if virtual)
+  // Handle room selection (transparently creates DM if virtual & syncs URL)
   const handleSelectRoomItem = async (roomItem) => {
+    if (!roomItem) return;
+    if (activeRoom && activeRoom.id === roomItem.id && !roomItem.isVirtual) return;
+
+    setMessages([]);
+    setMessagesLoading(true);
+
+    let selectedRoom = roomItem;
+
     if (roomItem.isVirtual || (roomItem.id && roomItem.id.startsWith('virtual_'))) {
       try {
         const res = await api.post('/chat/rooms/direct', { targetUserId: roomItem.targetUserId || roomItem.otherUser?.id });
-        setActiveRoom(res.data);
-        fetchRooms();
+        selectedRoom = res.data;
       } catch (err) {
         console.error('Failed to open direct conversation:', err);
+        setMessagesLoading(false);
+        return;
       }
-    } else {
-      setActiveRoom(roomItem);
+    }
+
+    setActiveRoom(selectedRoom);
+
+    // Synchronize browser URL search params for bookmarking, refresh, and back/forward navigation
+    if (selectedRoom.type === 'DIRECT' || selectedRoom.otherUser?.id) {
+      const dmTargetId = selectedRoom.otherUser?.id || selectedRoom.targetUserId;
+      if (dmTargetId) {
+        navigate(`/chat?dm=${dmTargetId}`, { replace: true });
+      }
+    } else if (selectedRoom.id) {
+      navigate(`/chat?room=${selectedRoom.id}`, { replace: true });
     }
   };
 

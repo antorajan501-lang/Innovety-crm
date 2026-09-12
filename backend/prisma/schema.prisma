@@ -715,12 +715,14 @@ model SystemSettings {
 }
 
 model PlatformSettings {
-  id            String   @id @default("PLATFORM")
-  companyName   String   @default("Innoviety Enterprise")
-  companyLogo   String?
-  selectedTheme String   @default("emerald")
-  themeMode     String   @default("light")
-  updatedAt     DateTime @updatedAt
+  id                   String   @id @default("PLATFORM")
+  companyName          String   @default("Innoviety Enterprise")
+  companyLogo          String?
+  selectedTheme        String   @default("emerald")
+  themeMode            String   @default("light")
+  chatEnabledForAdmins Boolean  @default(true)
+  chatEnabledForUsers  Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
 }
 
 model Subtask {
@@ -1604,6 +1606,8 @@ model OrganizationSettings {
   holidays           Json?
   wfhSettings        Json?
   leavePolicy        Json?
+  chatEnabledForAdmins Boolean    @default(true)
+  chatEnabledForUsers  Boolean    @default(true)
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 }

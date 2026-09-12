@@ -390,13 +390,9 @@ export const EmployeeDashboard = () => {
   } = useClockOutWithReminder(user, executeClockOut);
 
   // Real Database Leave Balances State
-  const [leaveBalances, setLeaveBalances] = useState({
-    casualRemaining: 12,
-    sickRemaining: 12,
-    emergencyRemaining: 6,
-    approvedCasual: 0,
-    approvedSick: 0,
-    approvedEmergency: 0,
+  const [leaveBalancesData, setLeaveBalancesData] = useState({
+    allocationMode: 'ANNUAL',
+    leaveTypes: [],
     pendingRequests: 0,
     approvedRequests: 0
   });
@@ -405,7 +401,12 @@ export const EmployeeDashboard = () => {
     try {
       const res = await api.get('/leaves/balances');
       if (res.data) {
-        setLeaveBalances(res.data);
+        setLeaveBalancesData({
+          allocationMode: res.data.allocationMode || 'ANNUAL',
+          leaveTypes: Array.isArray(res.data.leaveTypes) ? res.data.leaveTypes : [],
+          pendingRequests: res.data.pendingRequests ?? res.data.pendingRequestsCount ?? 0,
+          approvedRequests: res.data.approvedRequests ?? res.data.approvedRequestsCount ?? 0
+        });
       }
     } catch (err) {
       console.warn('Failed to fetch user leave balances:', err);
@@ -417,6 +418,20 @@ export const EmployeeDashboard = () => {
       fetchLeaveBalances();
     }
   }, [user?.id, leaves]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handlePolicyUpdate = (data) => {
+      if (!data?.organizationId || data.organizationId === user?.organizationId) {
+        fetchLeaveBalances();
+      }
+    };
+    socket.on('organization_leave_policy_updated', handlePolicyUpdate);
+    return () => {
+      socket.off('organization_leave_policy_updated', handlePolicyUpdate);
+    };
+  }, [user?.organizationId]);
 
   const handleApplyLeaveSubmit = async (e) => {
     e.preventDefault();
@@ -505,7 +520,7 @@ export const EmployeeDashboard = () => {
   // Leave Balances (12 Casual, 8 Sick, 3 Emergency default limits minus approved)
   const leaveStats = useMemo(() => {
     const approved = leaves.filter(l => l.status === 'APPROVED');
-    const pending = leaves.filter(l => l.status === 'PENDING').length;
+    const pending = leaves.filter(l => ['PENDING', 'PENDING_TL_APPROVAL', 'PENDING_ADMIN_APPROVAL'].includes(l.status)).length;
     
     let casualUsed = 0;
     let sickUsed = 0;
@@ -1236,7 +1251,12 @@ export const EmployeeDashboard = () => {
           {/* 5. Real Leave Balances & Apply Modal Trigger */}
           <motion.div variants={itemVariants} className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold text-foreground">Leave Balances</h3>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h3 className="text-xl sm:text-2xl font-semibold text-foreground tracking-tight">Leave Balances</h3>
+                <span className="inline-flex items-center rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+                  {(leaveBalancesData.allocationMode || '').toUpperCase() === 'MONTHLY' ? 'Monthly Credit' : 'Annual Allocation'}
+                </span>
+              </div>
               <button
                 onClick={() => setIsLeaveModalOpen(true)}
                 className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
@@ -1246,29 +1266,32 @@ export const EmployeeDashboard = () => {
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="p-3 rounded-2xl bg-muted/40 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">Casual</span>
-                <span className="text-xl font-black text-foreground block mt-1">{leaveBalances.casualRemaining ?? leaveStats.casualLeft}</span>
-                <span className="text-[9px] text-muted-foreground font-semibold">Days left</span>
-              </div>
-
-              <div className="p-3 rounded-2xl bg-muted/40 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">Sick</span>
-                <span className="text-xl font-black text-foreground block mt-1">{leaveBalances.sickRemaining ?? leaveStats.sickLeft}</span>
-                <span className="text-[9px] text-muted-foreground font-semibold">Days left</span>
-              </div>
-
-              <div className="p-3 rounded-2xl bg-muted/40 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">Emergency</span>
-                <span className="text-xl font-black text-foreground block mt-1">{leaveBalances.emergencyRemaining ?? leaveStats.emergencyLeft}</span>
-                <span className="text-[9px] text-muted-foreground font-semibold">Days left</span>
-              </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-x-4 gap-y-4 text-center">
+              {leaveBalancesData.leaveTypes.length === 0 ? (
+                <div className="col-span-full p-4 text-xs text-muted-foreground">Loading leave balances...</div>
+              ) : (
+                leaveBalancesData.leaveTypes.map((lt) => (
+                  <div
+                    key={lt.id || lt.code}
+                    className="p-3.5 rounded-2xl bg-muted/40 border border-border/40 flex flex-col items-center justify-center text-center min-h-[105px] transition-all hover:bg-muted/60 hover:border-border/70"
+                  >
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block text-center leading-tight w-full">
+                      {lt.name}
+                    </span>
+                    <span className="text-3xl font-bold text-foreground block text-center leading-none my-1">
+                      {lt.available}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground font-medium block text-center mt-0.5">
+                      Days Left
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
 
-            <div className="flex items-center justify-between text-xs font-bold pt-1">
-              <span className="text-muted-foreground">Pending Requests: <strong className="text-amber-500">{leaveBalances.pendingRequests ?? leaveStats.pendingRequests}</strong></span>
-              <span className="text-muted-foreground">Approved: <strong className="text-success">{leaveBalances.approvedRequests ?? leaveStats.approvedRequests}</strong></span>
+            <div className="flex items-center justify-between text-xs font-bold pt-2 border-t border-border/40">
+              <span className="text-muted-foreground">Pending Requests: <strong className="text-amber-500">{leaveBalancesData.pendingRequests}</strong></span>
+              <span className="text-muted-foreground">Approved: <strong className="text-success">{leaveBalancesData.approvedRequests}</strong></span>
             </div>
           </motion.div>
 

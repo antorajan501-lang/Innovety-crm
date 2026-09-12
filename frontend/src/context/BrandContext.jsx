@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
 import api, { getUploadUrl } from '../services/api';
+import { setPlatformBranding, setTenantBranding } from '../utils/branding';
 
 const BrandContext = createContext(null);
 
@@ -42,21 +43,18 @@ export const BrandProvider = ({ children }) => {
         .finally(() => setLoadingBranding(false));
     } else {
       setBranding(defaultBranding);
+      setPlatformBranding();
     }
   }, [user?.id, user?.organizationId]);
 
-  // Update dynamic browser favicon
+  // Update dynamic browser favicon & tab title
   useEffect(() => {
-    if (branding?.logo) {
-      let link = document.querySelector("link[rel*='icon']");
-      if (!link) {
-        link = document.createElement('link');
-        link.rel = 'shortcut icon';
-        document.getElementsByTagName('head')[0].appendChild(link);
-      }
-      link.href = branding.logo;
+    if (user && user.role !== 'SUPER_ADMIN' && user.organizationId) {
+      setTenantBranding(branding.companyName);
+    } else {
+      setPlatformBranding();
     }
-  }, [branding?.logo]);
+  }, [user?.id, user?.organizationId, branding?.companyName]);
 
   const updatePublicBranding = (publicData) => {
     if (!publicData) return;
@@ -72,6 +70,7 @@ export const BrandProvider = ({ children }) => {
 
   const resetBranding = () => {
     setBranding(defaultBranding);
+    setPlatformBranding();
   };
 
   return (

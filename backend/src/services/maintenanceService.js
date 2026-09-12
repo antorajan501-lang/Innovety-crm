@@ -32,7 +32,7 @@ async function rebuildOrganizationStatistics() {
       prisma.user.count({ where: { organizationId: org.id } }),
       prisma.project.count({ where: { organizationId: org.id } }),
       prisma.attendance.count({ where: { organizationId: org.id } }),
-      prisma.workLog.count({ where: { organizationId: org.id } })
+      prisma.workLog.count({ where: { user: { organizationId: org.id } } })
     ]);
 
     results.push({

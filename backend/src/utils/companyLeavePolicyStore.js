@@ -123,6 +123,25 @@ function addLeaveTypeToCompany(organizationId, leaveTypeId) {
 }
 
 /**
+ * Remove a leave type ID from an organizationId
+ */
+function removeLeaveTypeFromCompany(organizationId, leaveTypeId) {
+  if (!organizationId || !leaveTypeId) return;
+  if (!fs.existsSync(STORE_PATH)) return;
+
+  try {
+    const raw = fs.readFileSync(STORE_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    if (data.types && data.types[organizationId]) {
+      data.types[organizationId] = data.types[organizationId].filter((id) => id !== leaveTypeId);
+      fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), 'utf8');
+    }
+  } catch (err) {
+    console.error('Error removing leave type from company:', err);
+  }
+}
+
+/**
  * Filter leave types for a company with strict multi-tenant isolation
  */
 function filterLeaveTypesForCompany(allTypes, organizationId) {
@@ -133,6 +152,10 @@ function filterLeaveTypesForCompany(allTypes, organizationId) {
   const allAssignedTypeIds = getAllAssignedLeaveTypeIds();
 
   const filtered = allTypes.filter((lt) => {
+    // Core system leave types (WFH, CL, SL) are ALWAYS included for every company
+    const isSystemType = lt.isSystem || ['WFH', 'CL', 'SL'].includes((lt.code || '').toUpperCase());
+    if (isSystemType) return true;
+
     // If explicitly assigned to THIS company, include it
     if (companyTypeIds.includes(lt.id)) return true;
 
@@ -151,5 +174,6 @@ module.exports = {
   setCompanyLeavePolicy,
   getCompanyLeaveTypeIds,
   addLeaveTypeToCompany,
+  removeLeaveTypeFromCompany,
   filterLeaveTypesForCompany
 };

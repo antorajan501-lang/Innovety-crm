@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { setPlatformBranding } from '../utils/branding';
 import {
   User,
   Lock,
@@ -22,6 +23,10 @@ import {
 const Login = () => {
   const { user, login, requestPasswordReset, verifyResetOtp, resetPasswordWithToken } = useAuth();
   const { companyName, companyLogo } = useTheme();
+
+  useEffect(() => {
+    setPlatformBranding();
+  }, []);
 
   // Login form state
   const [userId, setUserId] = useState('');
@@ -265,8 +270,8 @@ const Login = () => {
     }
   };
 
-  const displayName = companyName || 'INNOVEITY';
-  const logoSrc = companyLogo || '/v-logo.png';
+  const displayName = 'INNOVEITY';
+  const logoSrc = '/v-logo.png';
 
   const formatTimer = (seconds) => {
     const m = Math.floor(seconds / 60);

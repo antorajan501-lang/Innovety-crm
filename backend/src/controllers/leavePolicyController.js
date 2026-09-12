@@ -1,10 +1,12 @@
 const prisma = require('../utils/db');
 const { getEffectiveOrgId } = require('../utils/organizationScope');
 const { logActivity } = require('../utils/activityLogger');
+const { broadcastLeavePolicyUpdate } = require('../socket');
 const {
   getCompanyLeavePolicy,
   setCompanyLeavePolicy,
   addLeaveTypeToCompany,
+  removeLeaveTypeFromCompany,
   filterLeaveTypesForCompany,
   getCompanyLeaveTypeIds
 } = require('../utils/companyLeavePolicyStore');
@@ -19,14 +21,203 @@ const generateLeaveCode = (name) => {
   return name.substring(0, 3).toUpperCase();
 };
 
+/**
+ * Recalculate User Leave Balances for all active users in an organization
+ * based on the authoritative Leave Policy and Leave Types.
+ * Preserves already used/pending leave days.
+ */
+const recalculateCompanyUserBalances = async (organizationId) => {
+  try {
+    let policy = null;
+    if (organizationId) {
+      const orgSettings = await prisma.organizationSettings.findUnique({
+        where: { organizationId }
+      });
+      policy = orgSettings?.leavePolicy || getCompanyLeavePolicy(organizationId);
+    }
+    if (!policy) {
+      policy = await prisma.leavePolicy.findFirst({ where: { isGlobal: true } });
+    }
+
+    const allocationMode = policy?.allocationType || 'ANNUAL';
+
+    const allLeaveTypes = await prisma.leaveType.findMany({
+      where: { isActive: true },
+      orderBy: { displayOrder: 'asc' }
+    });
+
+    const companyLeaveTypes = filterLeaveTypesForCompany(allLeaveTypes, organizationId);
+
+    const userWhere = organizationId ? { organizationId } : {};
+    const companyUsers = await prisma.user.findMany({
+      where: userWhere,
+      select: { id: true }
+    });
+
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+
+    for (const u of companyUsers) {
+      const userApprovedLeaves = await prisma.leaveRequest.findMany({
+        where: { userId: u.id, status: 'APPROVED' }
+      });
+
+      for (const lt of companyLeaveTypes) {
+        let usedThisYear = 0;
+        let usedThisMonth = 0;
+
+        for (const l of userApprovedLeaves) {
+          const lType = (l.leaveType || l.type || '').toUpperCase();
+          if (lType === lt.code.toUpperCase() || lType === lt.name.toUpperCase()) {
+            const start = new Date(l.startDate);
+            const days = l.totalDays !== undefined ? parseFloat(l.totalDays) : 1.0;
+            if (start.getFullYear() === currentYear) {
+              usedThisYear += days;
+              if (start.getMonth() === currentMonth) {
+                usedThisMonth += days;
+              }
+            }
+          }
+        }
+
+        const existing = await prisma.userLeaveBalance.findUnique({
+          where: {
+            userId_leaveTypeId: {
+              userId: u.id,
+              leaveTypeId: lt.id
+            }
+          }
+        });
+
+        const carryForward = existing?.carryForward || 0;
+        const annualDays = lt.annualDays !== undefined ? parseFloat(lt.annualDays) : 12.0;
+        const monthlyCreditDays = lt.monthlyCreditDays !== undefined ? parseFloat(lt.monthlyCreditDays) : 1.0;
+
+        let allocated = 0;
+        let used = 0;
+        let available = 0;
+
+        if (allocationMode === 'MONTHLY') {
+          allocated = monthlyCreditDays;
+          used = usedThisMonth;
+          available = Math.max(0, monthlyCreditDays + carryForward - usedThisMonth);
+        } else {
+          allocated = annualDays;
+          used = usedThisYear;
+          available = Math.max(0, annualDays + carryForward - usedThisYear);
+        }
+
+        await prisma.userLeaveBalance.upsert({
+          where: {
+            userId_leaveTypeId: {
+              userId: u.id,
+              leaveTypeId: lt.id
+            }
+          },
+          update: {
+            allocated,
+            used,
+            available,
+            lastCreditedAt: new Date()
+          },
+          create: {
+            userId: u.id,
+            leaveTypeId: lt.id,
+            allocated,
+            used,
+            pending: 0,
+            available,
+            carryForward: 0,
+            expired: 0,
+            lastCreditedAt: new Date()
+          }
+        });
+      }
+    }
+  } catch (err) {
+    console.error('Error recalculating company user balances:', err);
+  }
+};
+
+/**
+ * Auto-heal & backfill system default leave types across organizations.
+ * Ensures WFH, CL, and SL exist and are marked as system leave types (isSystem: true).
+ * Ensures EL and LOP are marked as non-system leave types (isSystem: false).
+ */
+const ensureSystemLeaveTypesSeeded = async (organizationId = null) => {
+  try {
+    let wfh = await prisma.leaveType.findFirst({ where: { code: 'WFH' } });
+    if (!wfh) {
+      wfh = await prisma.leaveType.create({
+        data: {
+          name: 'Work From Home',
+          code: 'WFH',
+          description: 'Remote work leave',
+          color: '#3B82F6',
+          icon: 'Home',
+          displayOrder: 1,
+          isPaid: true,
+          annualDays: 24.0,
+          monthlyCreditDays: 2.0,
+          allowCarryForward: false,
+          isSystem: true,
+          isActive: true
+        }
+      });
+    } else if (!wfh.isSystem || wfh.annualDays !== 24.0 || wfh.monthlyCreditDays !== 2.0) {
+      wfh = await prisma.leaveType.update({
+        where: { id: wfh.id },
+        data: {
+          isSystem: true,
+          annualDays: 24.0,
+          monthlyCreditDays: 2.0
+        }
+      });
+    }
+
+    await prisma.leaveType.updateMany({
+      where: { code: { in: ['CL', 'SL'] } },
+      data: { isSystem: true }
+    });
+
+    await prisma.leaveType.updateMany({
+      where: { code: { in: ['EL', 'LOP'] } },
+      data: { isSystem: false }
+    });
+
+    if (organizationId) {
+      const companyTypeIds = getCompanyLeaveTypeIds(organizationId);
+      if (companyTypeIds && !companyTypeIds.includes(wfh.id)) {
+        addLeaveTypeToCompany(organizationId, wfh.id);
+      }
+    } else {
+      const orgs = await prisma.organization.findMany({ select: { id: true } });
+      for (const org of orgs) {
+        const companyTypeIds = getCompanyLeaveTypeIds(org.id);
+        if (companyTypeIds && !companyTypeIds.includes(wfh.id)) {
+          addLeaveTypeToCompany(org.id, wfh.id);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error auto-healing system leave types:', err);
+  }
+};
+
 // 1. Get Leave Policy & Leave Types per Company Scope
 const getGlobalLeavePolicy = async (req, res) => {
   try {
     const organizationId = getEffectiveOrgId(req);
 
+    await ensureSystemLeaveTypesSeeded(organizationId);
+
     let policy;
     if (organizationId) {
-      policy = getCompanyLeavePolicy(organizationId);
+      const orgSettings = await prisma.organizationSettings.findUnique({
+        where: { organizationId }
+      });
+      policy = orgSettings?.leavePolicy || getCompanyLeavePolicy(organizationId);
     } else {
       policy = await prisma.leavePolicy.findFirst({ where: { isGlobal: true } });
       if (!policy) {
@@ -72,7 +263,7 @@ const getGlobalLeavePolicy = async (req, res) => {
 const updateGlobalLeavePolicy = async (req, res) => {
   try {
     const {
-      organizationId,
+      organizationId: bodyOrgId,
       allocationType,
       carryForwardEnabled,
       maxCarryForwardDays,
@@ -81,19 +272,29 @@ const updateGlobalLeavePolicy = async (req, res) => {
       autoApproval
     } = req.body;
 
-    const orgId = getEffectiveOrgId(req);
+    const orgId = getEffectiveOrgId(req) || bodyOrgId;
+
+    const policyData = {
+      allocationType: allocationType || 'ANNUAL',
+      carryForwardEnabled: carryForwardEnabled !== undefined ? carryForwardEnabled : true,
+      maxCarryForwardDays: maxCarryForwardDays !== undefined ? parseFloat(maxCarryForwardDays) : 5.0,
+      halfDayAllowed: halfDayAllowed !== undefined ? halfDayAllowed : true,
+      workingDaysOnly: workingDaysOnly !== undefined ? workingDaysOnly : true,
+      autoApproval: autoApproval !== undefined ? autoApproval : false,
+      updatedAt: new Date().toISOString()
+    };
 
     if (orgId) {
-      setCompanyLeavePolicy(orgId, {
-        allocationType: allocationType || 'ANNUAL',
-        carryForwardEnabled: carryForwardEnabled !== undefined ? carryForwardEnabled : true,
-        maxCarryForwardDays: maxCarryForwardDays !== undefined ? parseFloat(maxCarryForwardDays) : 5.0,
-        halfDayAllowed: halfDayAllowed !== undefined ? halfDayAllowed : true,
-        workingDaysOnly: workingDaysOnly !== undefined ? workingDaysOnly : true,
-        autoApproval: autoApproval !== undefined ? autoApproval : false
+      await prisma.organizationSettings.upsert({
+        where: { organizationId: orgId },
+        update: { leavePolicy: policyData },
+        create: { organizationId: orgId, leavePolicy: policyData }
       });
 
-      const updatedPolicy = getCompanyLeavePolicy(orgId);
+      setCompanyLeavePolicy(orgId, policyData);
+      await recalculateCompanyUserBalances(orgId);
+
+      const updatedPolicy = policyData;
 
       await logActivity({
         userId: req.user.id,
@@ -101,12 +302,15 @@ const updateGlobalLeavePolicy = async (req, res) => {
         details: `Updated leave policy settings for organization "${orgId}": Allocation=${updatedPolicy.allocationType}`
       });
 
+      broadcastLeavePolicyUpdate(orgId, { organizationId: orgId, policy: updatedPolicy });
+
       return res.json({
         message: 'Company leave policy updated successfully.',
         policy: updatedPolicy
       });
     }
 
+    // Global Fallback (Update all tenant settings & global model)
     let policy = await prisma.leavePolicy.findFirst({
       where: { isGlobal: true }
     });
@@ -137,6 +341,18 @@ const updateGlobalLeavePolicy = async (req, res) => {
       });
     }
 
+    const orgs = await prisma.organization.findMany({ select: { id: true } });
+    for (const org of orgs) {
+      await prisma.organizationSettings.upsert({
+        where: { organizationId: org.id },
+        update: { leavePolicy: policyData },
+        create: { organizationId: org.id, leavePolicy: policyData }
+      });
+      setCompanyLeavePolicy(org.id, policyData);
+      await recalculateCompanyUserBalances(org.id);
+      broadcastLeavePolicyUpdate(org.id, { organizationId: org.id, policy: policyData });
+    }
+
     await logActivity({
       userId: req.user.id,
       action: 'LEAVE_POLICY_UPDATED',
@@ -157,7 +373,7 @@ const updateGlobalLeavePolicy = async (req, res) => {
 const createLeaveType = async (req, res) => {
   try {
     const {
-      organizationId,
+      organizationId: bodyOrgId,
       name,
       code,
       description,
@@ -171,6 +387,8 @@ const createLeaveType = async (req, res) => {
       requireDoc,
       allowHalfDay
     } = req.body;
+
+    const organizationId = getEffectiveOrgId(req) || bodyOrgId;
 
     if (!name) {
       return res.status(400).json({ message: 'Leave Type Name is required.' });
@@ -223,31 +441,8 @@ const createLeaveType = async (req, res) => {
       addLeaveTypeToCompany(organizationId, leaveType.id);
     }
 
-    // Initialize UserLeaveBalance for users in this company
-    const userWhere = organizationId ? { organizationId } : {};
-    const companyUsers = await prisma.user.findMany({ where: userWhere, select: { id: true } });
-    for (const u of companyUsers) {
-      await prisma.userLeaveBalance.upsert({
-        where: {
-          userId_leaveTypeId: {
-            userId: u.id,
-            leaveTypeId: leaveType.id
-          }
-        },
-        update: {},
-        create: {
-          userId: u.id,
-          leaveTypeId: leaveType.id,
-          allocated: leaveType.annualDays,
-          used: 0,
-          pending: 0,
-          available: leaveType.annualDays,
-          carryForward: 0,
-          expired: 0,
-          lastCreditedAt: new Date()
-        }
-      });
-    }
+    await recalculateCompanyUserBalances(organizationId);
+    broadcastLeavePolicyUpdate(organizationId);
 
     await logActivity({
       userId: req.user.id,
@@ -288,6 +483,8 @@ const updateLeaveType = async (req, res) => {
       allowHalfDay
     } = req.body;
 
+    const orgId = getEffectiveOrgId(req);
+
     const existingLT = await prisma.leaveType.findUnique({ where: { id } });
     if (!existingLT) {
       return res.status(404).json({ message: 'Leave type not found.' });
@@ -311,6 +508,9 @@ const updateLeaveType = async (req, res) => {
       }
     });
 
+    await recalculateCompanyUserBalances(orgId);
+    broadcastLeavePolicyUpdate(orgId);
+
     await logActivity({
       userId: req.user.id,
       action: 'LEAVE_TYPE_EDITED',
@@ -331,6 +531,7 @@ const updateLeaveType = async (req, res) => {
 const toggleLeaveTypeStatus = async (req, res) => {
   try {
     const { id } = req.params;
+    const orgId = getEffectiveOrgId(req);
     const lt = await prisma.leaveType.findUnique({ where: { id } });
 
     if (!lt) {
@@ -341,6 +542,9 @@ const toggleLeaveTypeStatus = async (req, res) => {
       where: { id },
       data: { isActive: !lt.isActive }
     });
+
+    await recalculateCompanyUserBalances(orgId);
+    broadcastLeavePolicyUpdate(orgId);
 
     await logActivity({
       userId: req.user.id,
@@ -358,32 +562,57 @@ const toggleLeaveTypeStatus = async (req, res) => {
   }
 };
 
-// 6. Delete Leave Type (Custom types only, isSystem protected)
+// 6. Delete Leave Type (Custom & non-core types allowed, protected core types WFH, CL, SL rejected)
 const deleteLeaveType = async (req, res) => {
   try {
     const { id } = req.params;
+    const orgId = getEffectiveOrgId(req);
     const lt = await prisma.leaveType.findUnique({ where: { id } });
 
     if (!lt) {
-      return res.status(404).json({ message: 'Leave type not found.' });
+      return res.status(404).json({ success: false, message: 'Leave type not found.' });
     }
 
-    if (lt.isSystem) {
-      return res.status(400).json({ message: 'System default leave types cannot be deleted. You can disable them instead.' });
+    const isProtectedCode = ['WFH', 'CL', 'SL'].includes((lt.code || '').toUpperCase());
+    if (isProtectedCode) {
+      return res.status(403).json({
+        success: false,
+        message: 'System leave types cannot be deleted.'
+      });
     }
 
-    await prisma.leaveType.delete({ where: { id } });
+    if (orgId) {
+      removeLeaveTypeFromCompany(orgId, id);
+    }
+
+    // Clean up UserLeaveBalance records for this deleted leave type
+    await prisma.userLeaveBalance.deleteMany({
+      where: { leaveTypeId: id }
+    }).catch(() => {});
+
+    // Try deleting master record; if referenced in LeaveRequests, disable it globally
+    try {
+      await prisma.leaveType.delete({ where: { id } });
+    } catch (e) {
+      await prisma.leaveType.update({
+        where: { id },
+        data: { isActive: false }
+      }).catch(() => {});
+    }
+
+    await recalculateCompanyUserBalances(orgId);
+    broadcastLeavePolicyUpdate(orgId);
 
     await logActivity({
       userId: req.user.id,
       action: 'LEAVE_TYPE_DELETED',
-      details: `Deleted custom leave type ${lt.name} (${lt.code}).`
+      details: `Deleted leave type ${lt.name} (${lt.code}).`
     });
 
-    res.json({ message: `Leave type ${lt.name} deleted successfully.` });
+    res.json({ success: true, message: `Leave type ${lt.name} deleted successfully.` });
   } catch (error) {
     console.error('Delete leave type error:', error);
-    res.status(500).json({ message: 'Failed to delete leave type.' });
+    res.status(500).json({ success: false, message: 'Failed to delete leave type.' });
   }
 };
 
@@ -391,13 +620,38 @@ const deleteLeaveType = async (req, res) => {
 const getUserLeaveBalances = async (req, res) => {
   try {
     const targetUserId = req.params.userId || req.user.id;
-    const { organizationId } = req.query;
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, name: true, role: true, organizationId: true }
+    });
 
-    const userWhere = organizationId ? { user: { organizationId } } : {};
+    if (!targetUser) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
 
-    // Ensure all active LeaveTypes have a balance row for this user
-    const activeLeaveTypes = await prisma.leaveType.findMany({ where: { isActive: true } });
-    for (const lt of activeLeaveTypes) {
+    const orgId = req.query.organizationId || targetUser.organizationId;
+
+    let policy = null;
+    if (orgId) {
+      const orgSettings = await prisma.organizationSettings.findUnique({
+        where: { organizationId: orgId }
+      });
+      policy = orgSettings?.leavePolicy || getCompanyLeavePolicy(orgId);
+    }
+    if (!policy) {
+      policy = await prisma.leavePolicy.findFirst({ where: { isGlobal: true } });
+    }
+
+    const allocationMode = policy?.allocationType || 'ANNUAL';
+
+    const allLeaveTypes = await prisma.leaveType.findMany({
+      where: { isActive: true },
+      orderBy: { displayOrder: 'asc' }
+    });
+
+    const companyLeaveTypes = filterLeaveTypesForCompany(allLeaveTypes, orgId);
+
+    for (const lt of companyLeaveTypes) {
       await prisma.userLeaveBalance.upsert({
         where: {
           userId_leaveTypeId: {
@@ -423,15 +677,58 @@ const getUserLeaveBalances = async (req, res) => {
     const balances = await prisma.userLeaveBalance.findMany({
       where: {
         userId: targetUserId,
-        ...userWhere
+        leaveType: { isActive: true }
       },
-      include: {
-        leaveType: true
-      },
+      include: { leaveType: true },
       orderBy: { leaveType: { displayOrder: 'asc' } }
     });
 
-    res.json(balances);
+    const formattedTypes = balances.map((b) => {
+      const lt = b.leaveType;
+      const annualDays = lt.annualDays !== undefined ? parseFloat(lt.annualDays) : 12.0;
+      const monthlyCreditDays = lt.monthlyCreditDays !== undefined ? parseFloat(lt.monthlyCreditDays) : 1.0;
+
+      return {
+        id: lt.id,
+        name: lt.name,
+        code: lt.code,
+        shortCode: lt.code,
+        color: lt.color || '#3B82F6',
+        icon: lt.icon || 'Calendar',
+        annualDays,
+        monthlyCreditDays,
+        allocated: b.allocated,
+        used: b.used,
+        available: b.available,
+        monthlyCredit: monthlyCreditDays,
+        allowHalfDay: lt.allowHalfDay,
+        allowCarryForward: lt.allowCarryForward
+      };
+    });
+
+    const pendingRequestsCount = await prisma.leaveRequest.count({
+      where: {
+        userId: targetUserId,
+        status: { in: ['PENDING', 'PENDING_TL_APPROVAL', 'PENDING_ADMIN_APPROVAL'] }
+      }
+    });
+
+    const approvedRequestsCount = await prisma.leaveRequest.count({
+      where: {
+        userId: targetUserId,
+        status: 'APPROVED'
+      }
+    });
+
+    res.json({
+      organizationId: orgId,
+      allocationMode,
+      policy,
+      leaveTypes: formattedTypes,
+      balances,
+      pendingRequestsCount,
+      approvedRequestsCount
+    });
   } catch (error) {
     console.error('Get user leave balances error:', error);
     res.status(500).json({ message: 'Failed to fetch user leave balances.' });
@@ -452,7 +749,7 @@ const adjustUserLeaveBalance = async (req, res) => {
       where: {
         userId_leaveTypeId: { userId, leaveTypeId }
       },
-      include: { leaveType: true, user: select => ({ name: true, employeeId: true }) }
+      include: { leaveType: true, user: { select: { name: true, employeeId: true, organizationId: true } } }
     });
 
     if (!balance) {
@@ -470,6 +767,10 @@ const adjustUserLeaveBalance = async (req, res) => {
       },
       include: { leaveType: true }
     });
+
+    if (balance.user?.organizationId) {
+      broadcastLeavePolicyUpdate(balance.user.organizationId);
+    }
 
     await logActivity({
       userId: req.user.id,
@@ -532,6 +833,10 @@ const executeAnnualReset = async (req, res) => {
       resetCount++;
     }
 
+    if (orgId) {
+      broadcastLeavePolicyUpdate(orgId);
+    }
+
     await logActivity({
       userId: req.user.id,
       action: 'ANNUAL_LEAVE_RESET',
@@ -556,5 +861,6 @@ module.exports = {
   deleteLeaveType,
   getUserLeaveBalances,
   adjustUserLeaveBalance,
-  executeAnnualReset
+  executeAnnualReset,
+  recalculateCompanyUserBalances
 };

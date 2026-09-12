@@ -12,23 +12,32 @@ const getPlatformStats = async (req, res) => {
     const targetOrgId = organizationId || null;
 
     const now = new Date();
+    // Local start of day and end of day boundaries
+    const localStartOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const localEndOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    // UTC day boundaries
     const todayStr = now.toISOString().split('T')[0];
-    const todayDate = new Date(`${todayStr}T00:00:00.000Z`);
-    const tomorrowDate = new Date(todayDate.getTime() + 86400000);
+    const utcTodayStart = new Date(`${todayStr}T00:00:00.000Z`);
+    const utcTodayEnd = new Date(utcTodayStart.getTime() + 86400000);
+
     const currentMonth = now.getUTCMonth() + 1;
     const currentYear = now.getUTCFullYear();
 
     const userWhere = targetOrgId ? { organizationId: targetOrgId } : {};
     const activeUserWhere = targetOrgId ? { organizationId: targetOrgId, status: 'ACTIVE' } : { status: 'ACTIVE' };
     const teamWhere = targetOrgId ? { organizationId: targetOrgId } : {};
+
+    const activeProjectStatuses = ['ACTIVE', 'SCHEDULED', 'ON_HOLD', 'COMPLETED', 'DRAFT'];
     const projectWhere = targetOrgId ? {
-      status: 'ACTIVE',
+      status: { in: activeProjectStatuses },
       OR: [
+        { organizationId: targetOrgId },
         { creator: { organizationId: targetOrgId } },
         { leader: { organizationId: targetOrgId } },
         { team: { organizationId: targetOrgId } }
       ]
-    } : { status: 'ACTIVE' };
+    } : { status: { in: activeProjectStatuses } };
 
     const ticketWhere = targetOrgId
       ? { status: { in: ['OPEN', 'ASSIGNED', 'IN_PROGRESS'] }, creator: { organizationId: targetOrgId } }
@@ -41,17 +50,35 @@ const getPlatformStats = async (req, res) => {
     const payrollTotalWhere = targetOrgId ? { organizationId: targetOrgId } : {};
 
     const attendanceWhere = (status) => {
-      const base = { date: { gte: todayDate, lt: tomorrowDate }, status };
+      const dateCondition = {
+        OR: [
+          { date: { gte: localStartOfToday, lte: localEndOfToday } },
+          { date: { gte: utcTodayStart, lt: utcTodayEnd } }
+        ]
+      };
+
       if (targetOrgId) {
-        base.user = { organizationId: targetOrgId };
+        return {
+          status,
+          user: { organizationId: targetOrgId },
+          AND: [dateCondition]
+        };
       }
-      return base;
+
+      return {
+        status,
+        ...dateCondition
+      };
     };
 
     const taskWhere = (status) => {
       const base = { status };
       if (targetOrgId) {
-        base.creator = { organizationId: targetOrgId };
+        base.OR = [
+          { organizationId: targetOrgId },
+          { creator: { organizationId: targetOrgId } },
+          { project: { organizationId: targetOrgId } }
+        ];
       }
       return base;
     };
@@ -176,22 +203,18 @@ const getPlatformStats = async (req, res) => {
  * Helper to get or initialize PlatformSettings single instance
  */
 const getOrCreatePlatformSettings = async () => {
-  let settings = await prisma.platformSettings.findUnique({
-    where: { id: 'PLATFORM' }
+  return await prisma.platformSettings.upsert({
+    where: { id: 'PLATFORM' },
+    update: {},
+    create: {
+      id: 'PLATFORM',
+      companyName: 'Innoviety Enterprise',
+      selectedTheme: 'emerald',
+      themeMode: 'light',
+      chatEnabledForAdmins: true,
+      chatEnabledForUsers: true
+    }
   });
-
-  if (!settings) {
-    settings = await prisma.platformSettings.create({
-      data: {
-        id: 'PLATFORM',
-        companyName: 'Innoviety Enterprise',
-        selectedTheme: 'emerald',
-        themeMode: 'light'
-      }
-    });
-  }
-
-  return settings;
 };
 
 /**
@@ -200,25 +223,56 @@ const getOrCreatePlatformSettings = async () => {
 const getPlatformSettings = async (req, res) => {
   try {
     const { organizationId } = req.query;
+    const platform = await getOrCreatePlatformSettings();
+    const platformObj = {
+      chatEnabledForAdmins: platform.chatEnabledForAdmins,
+      chatEnabledForUsers: platform.chatEnabledForUsers
+    };
+
     if (organizationId) {
       const org = await prisma.organization.findUnique({
         where: { id: organizationId }
       });
       if (org) {
         const stored = getCompanyBranding(organizationId) || {};
+        let dbOrgSettings = null;
+        try {
+          dbOrgSettings = await prisma.organizationSettings.findUnique({
+            where: { organizationId }
+          });
+        } catch (e) {
+          console.warn('Failed to fetch OrganizationSettings from DB:', e);
+        }
+
+        const dbBranding = dbOrgSettings?.branding || {};
+        const dbTheme = dbOrgSettings?.theme || {};
+
+        const orgObj = {
+          organizationId: organizationId,
+          chatEnabledForAdmins: dbOrgSettings?.chatEnabledForAdmins ?? true,
+          chatEnabledForUsers: dbOrgSettings?.chatEnabledForUsers ?? true
+        };
+
         return res.json({
           id: organizationId,
           organizationId: organizationId,
-          companyName: stored.companyName || org.name,
-          companyLogo: stored.companyLogo || org.logo || null,
-          selectedTheme: stored.selectedTheme || 'emerald',
-          themeMode: stored.themeMode || 'light'
+          companyName: stored.companyName || dbBranding.companyName || org.name,
+          companyLogo: stored.companyLogo || dbBranding.companyLogo || org.logo || null,
+          selectedTheme: stored.selectedTheme || dbTheme.selectedTheme || dbBranding.selectedTheme || 'emerald',
+          themeMode: stored.themeMode || dbTheme.themeMode || dbBranding.themeMode || 'light',
+          chatEnabledForAdmins: orgObj.chatEnabledForAdmins,
+          chatEnabledForUsers: orgObj.chatEnabledForUsers,
+          platform: platformObj,
+          organization: orgObj
         });
       }
     }
 
-    const settings = await getOrCreatePlatformSettings();
-    res.json(settings);
+    res.json({
+      ...platform,
+      platform: platformObj,
+      organization: null
+    });
   } catch (error) {
     console.error('Get platform settings error:', error);
     res.status(500).json({ message: 'Failed to retrieve platform settings.' });
@@ -230,7 +284,24 @@ const getPlatformSettings = async (req, res) => {
  */
 const updatePlatformSettings = async (req, res) => {
   try {
-    const { companyName, companyLogo, selectedTheme, themeMode, removeLogo, organizationId } = req.body;
+    const {
+      companyName, companyLogo, selectedTheme, themeMode, removeLogo, organizationId,
+      chatEnabledForAdmins, chatEnabledForUsers
+    } = req.body;
+
+    const parseBool = (val, fallback) => {
+      if (val === 'true' || val === true) return true;
+      if (val === 'false' || val === false) return false;
+      return fallback;
+    };
+
+    console.log('[TRACE B1] Controller entered');
+    console.log('[TRACE B2] Raw req.body:', req.body);
+    console.log('[TRACE B3] organizationId:', organizationId || null);
+
+    const parsedAdmins = parseBool(chatEnabledForAdmins, undefined);
+    const parsedUsers = parseBool(chatEnabledForUsers, undefined);
+    console.log('[TRACE B4] Parsed booleans:', { chatEnabledForAdmins: parsedAdmins, chatEnabledForUsers: parsedUsers });
 
     if (organizationId) {
       const org = await prisma.organization.findUnique({
@@ -238,8 +309,27 @@ const updatePlatformSettings = async (req, res) => {
       });
 
       if (!org) {
-        return res.status(444).json({ message: 'Target company organization not found.' });
+        return res.status(404).json({ message: 'Target company organization not found.' });
       }
+
+      let dbOrgSettings = null;
+      try {
+        dbOrgSettings = await prisma.organizationSettings.findUnique({
+          where: { organizationId }
+        });
+      } catch (e) {}
+
+      console.log('[TRACE B5] DB before update:', dbOrgSettings ? {
+        organizationId: dbOrgSettings.organizationId,
+        chatEnabledForAdmins: dbOrgSettings.chatEnabledForAdmins,
+        chatEnabledForUsers: dbOrgSettings.chatEnabledForUsers
+      } : null);
+
+      const currentTenantAdmins = dbOrgSettings?.chatEnabledForAdmins ?? true;
+      const currentTenantUsers = dbOrgSettings?.chatEnabledForUsers ?? true;
+
+      const newTenantChatAdmins = parseBool(chatEnabledForAdmins, currentTenantAdmins);
+      const newTenantChatUsers = parseBool(chatEnabledForUsers, currentTenantUsers);
 
       const stored = getCompanyBranding(organizationId) || {};
 
@@ -260,7 +350,9 @@ const updatePlatformSettings = async (req, res) => {
         companyName: newName,
         companyLogo: newLogo,
         selectedTheme: newTheme,
-        themeMode: newMode
+        themeMode: newMode,
+        chatEnabledForAdmins: newTenantChatAdmins,
+        chatEnabledForUsers: newTenantChatUsers
       };
 
       setCompanyBranding(organizationId, brandingData);
@@ -273,6 +365,32 @@ const updatePlatformSettings = async (req, res) => {
             logo: newLogo
           }
         });
+
+        await prisma.organizationSettings.upsert({
+          where: { organizationId },
+          update: {
+            branding: brandingData,
+            theme: { selectedTheme: newTheme, themeMode: newMode },
+            chatEnabledForAdmins: newTenantChatAdmins,
+            chatEnabledForUsers: newTenantChatUsers
+          },
+          create: {
+            organizationId,
+            branding: brandingData,
+            theme: { selectedTheme: newTheme, themeMode: newMode },
+            chatEnabledForAdmins: newTenantChatAdmins,
+            chatEnabledForUsers: newTenantChatUsers
+          }
+        });
+
+        const dbAfterSave = await prisma.organizationSettings.findUnique({
+          where: { organizationId }
+        });
+        console.log('[TRACE B6] Prisma update result:', {
+          organizationId: dbAfterSave?.organizationId,
+          chatEnabledForAdmins: dbAfterSave?.chatEnabledForAdmins,
+          chatEnabledForUsers: dbAfterSave?.chatEnabledForUsers
+        });
       } catch (e) {
         console.warn('Failed to update Organization Prisma record:', e);
       }
@@ -280,14 +398,75 @@ const updatePlatformSettings = async (req, res) => {
       await logActivity({
         userId: req.user.id,
         action: 'SUPER_ADMIN_UPDATE_BRANDING',
-        details: `Updated company branding for org '${org.name}' (${organizationId}): Name='${newName}', Theme='${newTheme}', Mode='${newMode}'`,
+        details: `Updated company branding for org '${org.name}' (${organizationId}): Name='${newName}', Theme='${newTheme}', Mode='${newMode}', ChatAdmins=${newTenantChatAdmins}, ChatUsers=${newTenantChatUsers}`,
         ipAddress: req.ip || '127.0.0.1'
       });
 
-      return res.json({
+      const currentPlat = await getOrCreatePlatformSettings();
+
+      // Emit socket update
+      try {
+        const { getIo } = require('../socket');
+        const io = getIo();
+        if (io) {
+          io.emit('chat_settings_updated', {
+            platform: {
+              chatEnabledForAdmins: currentPlat.chatEnabledForAdmins,
+              chatEnabledForUsers: currentPlat.chatEnabledForUsers
+            },
+            organization: {
+              organizationId,
+              chatEnabledForAdmins: newTenantChatAdmins,
+              chatEnabledForUsers: newTenantChatUsers
+            }
+          });
+          console.log('[TRACE B7] Socket emit chat_settings_updated successful');
+        }
+      } catch (errSocket) {
+        console.warn('Failed to emit chat_settings_updated:', errSocket.message);
+      }
+
+      const responsePayload = {
         id: organizationId,
         organizationId: organizationId,
-        ...brandingData
+        ...brandingData,
+        chatEnabledForAdmins: newTenantChatAdmins,
+        chatEnabledForUsers: newTenantChatUsers,
+        platform: {
+          chatEnabledForAdmins: currentPlat.chatEnabledForAdmins,
+          chatEnabledForUsers: currentPlat.chatEnabledForUsers
+        },
+        organization: {
+          organizationId,
+          chatEnabledForAdmins: newTenantChatAdmins,
+          chatEnabledForUsers: newTenantChatUsers
+        }
+      };
+
+      console.log('[TRACE B8] Response sent:', responsePayload);
+      return res.json(responsePayload);
+    }
+
+    // Global PlatformSettings update (when organizationId is NOT provided)
+    const currentPlatform = await getOrCreatePlatformSettings();
+    const newChatForAdmins = parseBool(chatEnabledForAdmins, currentPlatform.chatEnabledForAdmins ?? true);
+    const newChatForUsers = parseBool(chatEnabledForUsers, currentPlatform.chatEnabledForUsers ?? true);
+
+    if (chatEnabledForAdmins !== undefined || chatEnabledForUsers !== undefined) {
+      await prisma.platformSettings.upsert({
+        where: { id: 'PLATFORM' },
+        update: {
+          chatEnabledForAdmins: newChatForAdmins,
+          chatEnabledForUsers: newChatForUsers
+        },
+        create: {
+          id: 'PLATFORM',
+          companyName: 'Innoviety Enterprise',
+          selectedTheme: 'emerald',
+          themeMode: 'light',
+          chatEnabledForAdmins: newChatForAdmins,
+          chatEnabledForUsers: newChatForUsers
+        }
       });
     }
 
@@ -302,24 +481,68 @@ const updatePlatformSettings = async (req, res) => {
       newLogo = companyLogo;
     }
 
-    const updated = await prisma.platformSettings.update({
+    const updated = await prisma.platformSettings.upsert({
       where: { id: 'PLATFORM' },
-      data: {
+      update: {
         companyName: companyName || currentSettings.companyName,
         companyLogo: newLogo,
         selectedTheme: selectedTheme || currentSettings.selectedTheme,
-        themeMode: themeMode || currentSettings.themeMode
+        themeMode: themeMode || currentSettings.themeMode,
+        chatEnabledForAdmins: newChatForAdmins,
+        chatEnabledForUsers: newChatForUsers
+      },
+      create: {
+        id: 'PLATFORM',
+        companyName: companyName || currentSettings.companyName || 'Innoviety Enterprise',
+        companyLogo: newLogo || null,
+        selectedTheme: selectedTheme || currentSettings.selectedTheme || 'emerald',
+        themeMode: themeMode || currentSettings.themeMode || 'light',
+        chatEnabledForAdmins: newChatForAdmins,
+        chatEnabledForUsers: newChatForUsers
       }
+    });
+
+    const dbAfterSaveGlobal = await prisma.platformSettings.findUnique({
+      where: { id: 'PLATFORM' }
+    });
+    console.log('[TRACE 5] Database after save', {
+      id: dbAfterSaveGlobal?.id,
+      chatEnabledForAdmins: dbAfterSaveGlobal?.chatEnabledForAdmins,
+      chatEnabledForUsers: dbAfterSaveGlobal?.chatEnabledForUsers
     });
 
     await logActivity({
       userId: req.user.id,
       action: 'SUPER_ADMIN_UPDATE_BRANDING',
-      details: `Updated platform branding: Name='${updated.companyName}', Theme='${updated.selectedTheme}', Mode='${updated.themeMode}'`,
+      details: `Updated platform settings: Name='${updated.companyName}', Theme='${updated.selectedTheme}', Mode='${updated.themeMode}', ChatAdmins=${updated.chatEnabledForAdmins}, ChatUsers=${updated.chatEnabledForUsers}`,
       ipAddress: req.ip || '127.0.0.1'
     });
 
-    res.json(updated);
+    // Emit socket update
+    try {
+      const { getIo } = require('../socket');
+      const io = getIo();
+      if (io) {
+        io.emit('chat_settings_updated', {
+          platform: {
+            chatEnabledForAdmins: updated.chatEnabledForAdmins,
+            chatEnabledForUsers: updated.chatEnabledForUsers
+          },
+          organization: null
+        });
+      }
+    } catch (errSocket) {
+      console.warn('Failed to emit chat_settings_updated:', errSocket.message);
+    }
+
+    res.json({
+      ...updated,
+      platform: {
+        chatEnabledForAdmins: updated.chatEnabledForAdmins,
+        chatEnabledForUsers: updated.chatEnabledForUsers
+      },
+      organization: null
+    });
   } catch (error) {
     console.error('Update platform settings error:', error);
     res.status(500).json({ message: 'Failed to update platform settings.' });

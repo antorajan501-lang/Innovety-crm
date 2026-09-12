@@ -6,7 +6,7 @@ import {
   ArrowUpRight, PlusCircle, Building2, Lock, CheckCircle2, RefreshCw, Award,
   Clock, Ticket, FileText, Server, AlertTriangle, Layers, TrendingUp, Check
 } from 'lucide-react';
-import api from '../../../services/api';
+import api, { getSocket } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { useCompanyScope } from '../../../context/CompanyScopeContext';
 
@@ -17,16 +17,20 @@ const SuperAdminDashboard = () => {
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchDashboardStats = async () => {
+  const fetchDashboardStats = async (isSilent = false) => {
     try {
-      setLoading(true);
+      if (!isSilent && !data) setLoading(true);
       const params = selectedOrgId ? { organizationId: selectedOrgId } : {};
       const [statsRes, posRes] = await Promise.all([
         api.get('/super-admin/stats', { params }),
         api.get('/positions', { params }).catch(() => ({ data: [] }))
       ]);
-      setData(statsRes.data);
-      setPositions(posRes.data || []);
+      if (statsRes?.data) {
+        setData(statsRes.data);
+      }
+      if (posRes?.data) {
+        setPositions(posRes.data || []);
+      }
     } catch (err) {
       console.error('Failed to load Super Admin dashboard stats:', err);
     } finally {
@@ -35,7 +39,53 @@ const SuperAdminDashboard = () => {
   };
 
   useEffect(() => {
-    fetchDashboardStats();
+    fetchDashboardStats(false);
+
+    // Setup live Socket.io real-time event listeners
+    const socket = getSocket();
+    const handleRealtimeUpdate = () => {
+      fetchDashboardStats(true);
+    };
+
+    if (socket) {
+      socket.on('attendance_clock_in', handleRealtimeUpdate);
+      socket.on('attendance_clock_out', handleRealtimeUpdate);
+      socket.on('attendance_updated', handleRealtimeUpdate);
+      socket.on('leave_submitted', handleRealtimeUpdate);
+      socket.on('leave_updated', handleRealtimeUpdate);
+      socket.on('project_created', handleRealtimeUpdate);
+      socket.on('project_updated', handleRealtimeUpdate);
+      socket.on('task_created', handleRealtimeUpdate);
+      socket.on('task_updated', handleRealtimeUpdate);
+      socket.on('user_created', handleRealtimeUpdate);
+      socket.on('user_updated', handleRealtimeUpdate);
+      socket.on('organization_updated', handleRealtimeUpdate);
+      socket.on('team_performance_updated', handleRealtimeUpdate);
+    }
+
+    // Safety net fallback: Silent polling every 30 seconds
+    const interval = setInterval(() => {
+      fetchDashboardStats(true);
+    }, 30000);
+
+    return () => {
+      clearInterval(interval);
+      if (socket) {
+        socket.off('attendance_clock_in', handleRealtimeUpdate);
+        socket.off('attendance_clock_out', handleRealtimeUpdate);
+        socket.off('attendance_updated', handleRealtimeUpdate);
+        socket.off('leave_submitted', handleRealtimeUpdate);
+        socket.off('leave_updated', handleRealtimeUpdate);
+        socket.off('project_created', handleRealtimeUpdate);
+        socket.off('project_updated', handleRealtimeUpdate);
+        socket.off('task_created', handleRealtimeUpdate);
+        socket.off('task_updated', handleRealtimeUpdate);
+        socket.off('user_created', handleRealtimeUpdate);
+        socket.off('user_updated', handleRealtimeUpdate);
+        socket.off('organization_updated', handleRealtimeUpdate);
+        socket.off('team_performance_updated', handleRealtimeUpdate);
+      }
+    };
   }, [selectedOrgId]);
 
   if (loading) {

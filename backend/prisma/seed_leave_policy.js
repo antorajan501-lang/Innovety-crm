@@ -27,12 +27,26 @@ async function seedLeavePolicy() {
   // 2. Default System Leave Types
   const defaultLeaveTypes = [
     {
+      name: 'Work From Home',
+      code: 'WFH',
+      description: 'Remote work leave',
+      color: '#3B82F6',
+      icon: 'Home',
+      displayOrder: 1,
+      isPaid: true,
+      annualDays: 24.0,
+      monthlyCreditDays: 2.0,
+      allowCarryForward: false,
+      isSystem: true,
+      isActive: true
+    },
+    {
       name: 'Casual Leave',
       code: 'CL',
       description: 'Paid casual leave for personal obligations',
       color: '#10B981',
       icon: 'Calendar',
-      displayOrder: 1,
+      displayOrder: 2,
       isPaid: true,
       annualDays: 12.0,
       monthlyCreditDays: 1.0,
@@ -46,7 +60,7 @@ async function seedLeavePolicy() {
       description: 'Paid medical and sick leave',
       color: '#EF4444',
       icon: 'Stethoscope',
-      displayOrder: 2,
+      displayOrder: 3,
       isPaid: true,
       annualDays: 10.0,
       monthlyCreditDays: 0.0,
@@ -60,12 +74,12 @@ async function seedLeavePolicy() {
       description: 'Urgent emergency leave',
       color: '#F59E0B',
       icon: 'AlertCircle',
-      displayOrder: 3,
+      displayOrder: 4,
       isPaid: true,
       annualDays: 5.0,
       monthlyCreditDays: 0.0,
       allowCarryForward: false,
-      isSystem: true,
+      isSystem: false,
       isActive: true
     },
     {
@@ -74,12 +88,12 @@ async function seedLeavePolicy() {
       description: 'Unpaid leave when balance is exhausted',
       color: '#6B7280',
       icon: 'Clock',
-      displayOrder: 4,
+      displayOrder: 5,
       isPaid: false,
       annualDays: 0.0,
       monthlyCreditDays: 0.0,
       allowCarryForward: false,
-      isSystem: true,
+      isSystem: false,
       isActive: true
     }
   ];
@@ -91,13 +105,15 @@ async function seedLeavePolicy() {
         name: lt.name,
         color: lt.color,
         icon: lt.icon,
-        isSystem: true,
-        displayOrder: lt.displayOrder
+        isSystem: lt.isSystem,
+        displayOrder: lt.displayOrder,
+        annualDays: lt.annualDays,
+        monthlyCreditDays: lt.monthlyCreditDays
       },
       create: lt
     });
   }
-  console.log('Seeded default Leave Types (Casual Leave, Sick Leave, Emergency Leave, Loss Of Pay).');
+  console.log('Seeded default Leave Types (Work From Home, Casual Leave, Sick Leave, Emergency Leave, Loss Of Pay).');
 
   // 3. Initialize User Leave Balances for all active users
   const allUsers = await prisma.user.findMany({ select: { id: true, name: true, role: true } });

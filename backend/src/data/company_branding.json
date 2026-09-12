@@ -1,16 +1,27 @@
 {
   "cmteaqlih0000sj52wckjbgci": {
-    "companyName": "INNOVEITY Workspace",
+    "companyName": "Innoveity Enterprise",
     "companyLogo": null,
     "selectedTheme": "emerald",
     "themeMode": "light",
-    "updatedAt": "2026-09-02T11:50:53.175Z"
+    "updatedAt": "2026-09-12T05:49:52.164Z",
+    "chatEnabledForAdmins": false,
+    "chatEnabledForUsers": false
   },
   "cmtgsp8710000bb94ztamcrue": {
-    "companyName": "C2C Global Portal",
+    "companyName": "Innoviety Enterprise",
     "companyLogo": "/uploads/company-logos/company_1788153962635_17c135ee.jpeg",
     "selectedTheme": "emerald",
     "themeMode": "light",
-    "updatedAt": "2026-09-02T11:52:12.967Z"
+    "updatedAt": "2026-09-12T05:53:43.405Z",
+    "chatEnabledForAdmins": true,
+    "chatEnabledForUsers": false
+  },
+  "cmtx6o51w00009eyuelhy1x0c": {
+    "companyName": "RENI Test Corp",
+    "companyLogo": null,
+    "selectedTheme": "emerald",
+    "themeMode": "light",
+    "updatedAt": "2026-09-11T16:42:54.942Z"
   }
 }

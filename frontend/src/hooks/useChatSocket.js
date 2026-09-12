@@ -150,6 +150,10 @@ export const useChatSocket = ({
       callbacksRef.current.onGroupDeleted?.(data);
     };
 
+    const handleChatDisabled = (data) => {
+      console.warn('[CHAT SOCKET] Chat disabled:', data);
+    };
+
     // Clean previous listeners before attaching
     socket.off('connect', handleConnect);
     socket.off('disconnect', handleDisconnect);
@@ -165,6 +169,7 @@ export const useChatSocket = ({
     socket.off('message_deleted', handleMessageDeleted);
     socket.off('group_deleted', handleGroupDeleted);
     socket.off('chat_room_deleted', handleGroupDeleted);
+    socket.off('chat_disabled', handleChatDisabled);
 
     // Attach listeners
     socket.on('connect', handleConnect);
@@ -181,6 +186,7 @@ export const useChatSocket = ({
     socket.on('message_deleted', handleMessageDeleted);
     socket.on('group_deleted', handleGroupDeleted);
     socket.on('chat_room_deleted', handleGroupDeleted);
+    socket.on('chat_disabled', handleChatDisabled);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -197,6 +203,7 @@ export const useChatSocket = ({
       socket.off('message_deleted', handleMessageDeleted);
       socket.off('group_deleted', handleGroupDeleted);
       socket.off('chat_room_deleted', handleGroupDeleted);
+      socket.off('chat_disabled', handleChatDisabled);
     };
   }, [currentUser?.id]);
 

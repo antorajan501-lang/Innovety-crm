@@ -169,15 +169,63 @@ app.use('/api/super-admin', superAdminRoutes);
 app.get('/api/platform/settings', async (req, res) => {
   try {
     const prisma = require('./utils/db');
-    let settings = await prisma.platformSettings.findUnique({ where: { id: 'PLATFORM' } });
-    if (!settings) {
-      settings = await prisma.platformSettings.create({
-        data: { id: 'PLATFORM', companyName: 'Innoviety Enterprise', selectedTheme: 'emerald', themeMode: 'light' }
+    const { organizationId } = req.query;
+
+    let platform = await prisma.platformSettings.findUnique({ where: { id: 'PLATFORM' } }).catch(() => null);
+    if (!platform) {
+      platform = await prisma.platformSettings.create({
+        data: { id: 'PLATFORM', companyName: 'Innoviety Enterprise', selectedTheme: 'emerald', themeMode: 'light', chatEnabledForAdmins: true, chatEnabledForUsers: true }
+      }).catch(() => null);
+    }
+
+    const platformObj = {
+      chatEnabledForAdmins: platform?.chatEnabledForAdmins ?? true,
+      chatEnabledForUsers: platform?.chatEnabledForUsers ?? true
+    };
+
+    if (organizationId) {
+      const orgSettings = await prisma.organizationSettings.findUnique({
+        where: { organizationId }
+      }).catch(() => null);
+
+      const themeObj = orgSettings?.theme || orgSettings?.branding || {};
+      const orgObj = {
+        organizationId,
+        chatEnabledForAdmins: orgSettings?.chatEnabledForAdmins ?? true,
+        chatEnabledForUsers: orgSettings?.chatEnabledForUsers ?? true
+      };
+
+      return res.json({
+        organizationId,
+        companyName: orgSettings?.branding?.companyName || platform?.companyName || 'Innoviety Enterprise',
+        selectedTheme: themeObj.selectedTheme || platform?.selectedTheme || 'emerald',
+        themeMode: themeObj.themeMode || platform?.themeMode || 'light',
+        companyLogo: orgSettings?.branding?.companyLogo || platform?.companyLogo || null,
+        chatEnabledForAdmins: orgObj.chatEnabledForAdmins,
+        chatEnabledForUsers: orgObj.chatEnabledForUsers,
+        platform: platformObj,
+        organization: orgObj
       });
     }
-    res.json(settings);
+
+    res.json({
+      ...platform,
+      chatEnabledForAdmins: platformObj.chatEnabledForAdmins,
+      chatEnabledForUsers: platformObj.chatEnabledForUsers,
+      platform: platformObj,
+      organization: null
+    });
   } catch (err) {
-    res.json({ companyName: 'Innoviety Enterprise', selectedTheme: 'emerald', themeMode: 'light', companyLogo: null });
+    res.json({
+      companyName: 'Innoviety Enterprise',
+      selectedTheme: 'emerald',
+      themeMode: 'light',
+      companyLogo: null,
+      chatEnabledForAdmins: true,
+      chatEnabledForUsers: true,
+      platform: { chatEnabledForAdmins: true, chatEnabledForUsers: true },
+      organization: null
+    });
   }
 });
 const organizationRoutes = require('./routes/organizationRoutes');

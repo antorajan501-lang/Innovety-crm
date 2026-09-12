@@ -182,10 +182,48 @@ const init = (server) => {
       socket.emit('online_users', getOnlineUsersPayload());
     });
 
+    const checkChatEnabledForSocket = async () => {
+      if (role === 'SUPER_ADMIN') return true;
+      try {
+        const prisma = require('./utils/db');
+        const platform = await prisma.platformSettings.findUnique({ where: { id: 'PLATFORM' } }).catch(() => null);
+        const platformAdmin = platform?.chatEnabledForAdmins ?? true;
+        const platformUser = platform?.chatEnabledForUsers ?? true;
+
+        let tenantAdmin = true;
+        let tenantUser = true;
+
+        if (organizationId) {
+          const orgSettings = await prisma.organizationSettings.findUnique({ where: { organizationId } }).catch(() => null);
+          if (orgSettings) {
+            tenantAdmin = orgSettings.chatEnabledForAdmins ?? true;
+            tenantUser = orgSettings.chatEnabledForUsers ?? true;
+          }
+        }
+
+        if (role === 'ADMIN') {
+          return platformAdmin && tenantAdmin;
+        }
+        return platformUser && tenantUser;
+      } catch (e) {
+        return false;
+      }
+    };
+
     // ─── CHAT MODULE EVENT HANDLERS ──────────────────────────────
     
     // Join specific chat room (Global, Team, or Direct)
-    socket.on('join_chat_room', (roomId) => {
+    socket.on('join_chat_room', async (roomId) => {
+      const isEnabled = await checkChatEnabledForSocket();
+      if (!isEnabled) {
+        if (roomId) socket.leave(`chat_room_${roomId}`);
+        socket.emit('chat_disabled', {
+          type: 'chat_disabled',
+          success: false,
+          message: 'Chat has been disabled.'
+        });
+        return;
+      }
       if (roomId) {
         socket.join(`chat_room_${roomId}`);
         console.log(`Socket ${socket.id} (user: ${strUserId}) joined chat_room_${roomId}`);
@@ -201,7 +239,17 @@ const init = (server) => {
     });
 
     // Real-time chat message dispatch
-    socket.on('send_chat_message', (messageData) => {
+    socket.on('send_chat_message', async (messageData) => {
+      const isEnabled = await checkChatEnabledForSocket();
+      if (!isEnabled) {
+        if (messageData?.roomId) socket.leave(`chat_room_${messageData.roomId}`);
+        socket.emit('chat_disabled', {
+          type: 'chat_disabled',
+          success: false,
+          message: 'Chat has been disabled.'
+        });
+        return;
+      }
       if (messageData && messageData.roomId) {
         console.log(`[MESSAGE SENT] From socket: ${socket.id} | Room: ${messageData.roomId} | MessageId: ${messageData.id}`);
         io.to(`chat_room_${messageData.roomId}`).emit('receive_chat_message', messageData);
@@ -214,7 +262,17 @@ const init = (server) => {
     });
 
     // Real-time typing indicators
-    socket.on('typing', ({ roomId, userId, userName }) => {
+    socket.on('typing', async ({ roomId, userId, userName }) => {
+      const isEnabled = await checkChatEnabledForSocket();
+      if (!isEnabled) {
+        if (roomId) socket.leave(`chat_room_${roomId}`);
+        socket.emit('chat_disabled', {
+          type: 'chat_disabled',
+          success: false,
+          message: 'Chat has been disabled.'
+        });
+        return;
+      }
       if (roomId) {
         socket.to(`chat_room_${roomId}`).emit('user_typing', { roomId, userId: userId || strUserId, userName: userName || name });
       }
@@ -362,6 +420,20 @@ const disconnectOrganizationSockets = (organizationId) => {
   }
 };
 
+// Broadcast leave policy update real-time event
+const broadcastLeavePolicyUpdate = (organizationId, data = {}) => {
+  if (!io) return;
+  const payload = {
+    organizationId,
+    updatedAt: new Date().toISOString(),
+    ...data
+  };
+  if (organizationId) {
+    io.to(`org_${organizationId}`).emit('organization_leave_policy_updated', payload);
+  }
+  io.emit('organization_leave_policy_updated', payload);
+};
+
 module.exports = {
   init,
   getIo,
@@ -373,5 +445,6 @@ module.exports = {
   disconnectUserSocket,
   disconnectOrganizationSockets,
   broadcastAttendanceEvent,
-  broadcastTeamPerformanceUpdate
+  broadcastTeamPerformanceUpdate,
+  broadcastLeavePolicyUpdate
 };

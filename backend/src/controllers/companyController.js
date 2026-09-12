@@ -323,7 +323,7 @@ const updateOrganizationStatus = async (req, res, next) => {
 
 /**
  * DELETE /api/organizations/:id
- * Protect INNOVEITY from deletion
+ * Permanent Cascade Deletion for Tenant and all associated records
  */
 const deleteOrganization = async (req, res, next) => {
   try {
@@ -345,56 +345,215 @@ const deleteOrganization = async (req, res, next) => {
     if (isInnoveity) {
       return res.status(400).json({
         success: false,
-        message: 'The default INNOVEITY organization cannot be deleted.'
+        message: 'Default Innoveity Workspace cannot be deleted.'
       });
     }
 
-    // Execute transactional cascade deletion for all child dependencies
+    const confirmText = req.body?.confirmText || req.query?.confirmText || req.body?.deleteInputText;
+    if (confirmText !== 'CONFIRM') {
+      return res.status(422).json({
+        success: false,
+        message: 'Type CONFIRM to continue.'
+      });
+    }
+
+    // Execute transactional permanent cascade deletion for all tenant records
     await prisma.$transaction(async (tx) => {
-      // 1. Delete organization settings & audit logs
-      await tx.organizationSettings.deleteMany({ where: { organizationId: id } });
-      await tx.organizationAuditLog.deleteMany({ where: { organizationId: id } });
+      const orgId = id;
 
-      // 2. Delete messages & chat rooms
-      await tx.chatMessage.deleteMany({ where: { organizationId: id } });
-      await tx.chatRoom.deleteMany({ where: { organizationId: id } });
+      // 1. Fetch all user IDs in the company
+      const orgUsers = await tx.user.findMany({
+        where: { organizationId: orgId },
+        select: { id: true }
+      });
+      const userIds = orgUsers.map((u) => u.id);
 
-      // 3. Delete work logs, leave requests & attendances
-      await tx.workLog.deleteMany({ where: { organizationId: id } });
-      await tx.leaveRequest.deleteMany({ where: { organizationId: id } });
-      await tx.attendance.deleteMany({ where: { organizationId: id } });
+      // 2. Notifications & Activity Logs
+      if (userIds.length > 0) {
+        await tx.notification.deleteMany({ where: { userId: { in: userIds } } });
+        await tx.activityLog.deleteMany({ where: { userId: { in: userIds } } });
+      }
+      await tx.activityLog.deleteMany({ where: { organizationId: orgId } });
 
-      // 4. Delete tasks & projects
-      await tx.task.deleteMany({ where: { organizationId: id } });
-      await tx.project.deleteMany({ where: { organizationId: id } });
+      // 3. Chat System (Messages, Read Receipts, Members, Rooms)
+      const orgChatRooms = await tx.chatRoom.findMany({
+        where: { organizationId: orgId },
+        select: { id: true }
+      });
+      const roomIds = orgChatRooms.map((r) => r.id);
 
-      // 5. Delete notifications
-      await tx.notification.deleteMany({ where: { organizationId: id } });
+      if (roomIds.length > 0) {
+        const chatMessages = await tx.chatMessage.findMany({
+          where: { roomId: { in: roomIds } },
+          select: { id: true }
+        });
+        const messageIds = chatMessages.map((m) => m.id);
 
-      // 6. Delete users associated with organization (except SUPER_ADMIN)
-      await tx.user.deleteMany({
-        where: {
-          organizationId: id,
-          role: { not: 'SUPER_ADMIN' }
+        if (messageIds.length > 0) {
+          await tx.messageRead.deleteMany({ where: { messageId: { in: messageIds } } });
         }
-      });
+        await tx.chatMessage.deleteMany({ where: { roomId: { in: roomIds } } });
+        await tx.chatRoomMember.deleteMany({ where: { roomId: { in: roomIds } } });
+        await tx.chatRoom.deleteMany({ where: { organizationId: orgId } });
+      }
+      if (userIds.length > 0) {
+        await tx.chatRoomMember.deleteMany({ where: { userId: { in: userIds } } });
+      }
 
-      // 7. Finally delete the Organization entity
-      await tx.organization.delete({
-        where: { id }
+      // 4. Work Logs & Attachments & AI Feedback
+      if (userIds.length > 0) {
+        const workLogs = await tx.workLog.findMany({
+          where: { userId: { in: userIds } },
+          select: { id: true }
+        });
+        const workLogIds = workLogs.map((w) => w.id);
+        if (workLogIds.length > 0) {
+          await tx.workLogAttachment.deleteMany({ where: { workLogId: { in: workLogIds } } });
+        }
+        await tx.workLog.deleteMany({ where: { userId: { in: userIds } } });
+        await tx.aIFeedback.deleteMany({ where: { userId: { in: userIds } } });
+      }
+
+      // 5. Attendance Records
+      if (userIds.length > 0) {
+        await tx.attendance.deleteMany({ where: { userId: { in: userIds } } });
+      }
+
+      // 6. Leave Requests & Balances & History
+      if (userIds.length > 0) {
+        await tx.leaveRequest.deleteMany({ where: { userId: { in: userIds } } });
+        await tx.userLeaveBalance.deleteMany({ where: { userId: { in: userIds } } });
+        await tx.leaveCreditHistory.deleteMany({ where: { userId: { in: userIds } } });
+      }
+
+      // 7. Tickets & Ticket Replies / Attachments
+      await tx.ticket.deleteMany({ where: { organizationId: orgId } });
+      if (userIds.length > 0) {
+        await tx.ticket.deleteMany({ where: { creatorId: { in: userIds } } });
+      }
+
+      // 8. Tasks (Subtasks, Comments, Submissions, History, Dependencies, Audit)
+      const orgTasks = await tx.task.findMany({
+        where: { organizationId: orgId },
+        select: { id: true }
       });
-    });
+      const taskIds = orgTasks.map((t) => t.id);
+
+      if (taskIds.length > 0) {
+        await tx.subtask.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.comment.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.taskSubmission.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.taskHistory.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.taskReviewHistory.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.taskDependency.deleteMany({
+          where: { OR: [{ taskId: { in: taskIds } }, { dependsOnTaskId: { in: taskIds } }] }
+        });
+        await tx.taskStageApprovalAudit.deleteMany({ where: { taskId: { in: taskIds } } });
+        await tx.task.deleteMany({ where: { id: { in: taskIds } } });
+      }
+      await tx.task.deleteMany({ where: { organizationId: orgId } });
+
+      // 9. Projects (Milestones, Documents, History, Members, Workflow Stages)
+      const orgProjects = await tx.project.findMany({
+        where: { organizationId: orgId },
+        select: { id: true }
+      });
+      const projectIds = orgProjects.map((p) => p.id);
+
+      if (projectIds.length > 0) {
+        await tx.projectMilestone.deleteMany({ where: { projectId: { in: projectIds } } });
+        await tx.projectDocument.deleteMany({ where: { projectId: { in: projectIds } } });
+        await tx.projectHistory.deleteMany({ where: { projectId: { in: projectIds } } });
+        await tx.projectMember.deleteMany({ where: { projectId: { in: projectIds } } });
+        await tx.projectWorkflowStage.deleteMany({ where: { projectId: { in: projectIds } } });
+        await tx.project.deleteMany({ where: { id: { in: projectIds } } });
+      }
+      await tx.project.deleteMany({ where: { organizationId: orgId } });
+
+      // 10. Teams & Team Members
+      const orgTeams = await tx.team.findMany({
+        where: { organizationId: orgId },
+        select: { id: true }
+      });
+      const teamIds = orgTeams.map((t) => t.id);
+
+      if (teamIds.length > 0) {
+        await tx.teamMember.deleteMany({ where: { teamId: { in: teamIds } } });
+        await tx.team.deleteMany({ where: { id: { in: teamIds } } });
+      }
+      await tx.team.deleteMany({ where: { organizationId: orgId } });
+
+      // 11. Assets & Asset Assignments
+      const orgAssets = await tx.asset.findMany({
+        where: { organizationId: orgId },
+        select: { id: true }
+      });
+      const assetIds = orgAssets.map((a) => a.id);
+
+      if (assetIds.length > 0) {
+        await tx.assetAssignment.deleteMany({ where: { assetId: { in: assetIds } } });
+        await tx.asset.deleteMany({ where: { id: { in: assetIds } } });
+      }
+      await tx.asset.deleteMany({ where: { organizationId: orgId } });
+
+      // 12. Departments & Positions & Position/Promotion History
+      if (userIds.length > 0) {
+        await tx.positionHistory.deleteMany({ where: { userId: { in: userIds } } });
+        await tx.promotionHistory.deleteMany({ where: { userId: { in: userIds } } });
+      }
+      await tx.position.deleteMany({ where: { organizationId: orgId } });
+      await tx.designationMaster.deleteMany({ where: { organizationId: orgId } });
+      await tx.departmentMaster.deleteMany({ where: { organizationId: orgId } });
+
+      // 13. Payroll, Salary Structures & Payslips
+      await tx.payslip.deleteMany({ where: { organizationId: orgId } });
+      await tx.payrollBatch.deleteMany({ where: { organizationId: orgId } });
+      await tx.salaryRevision.deleteMany({ where: { organizationId: orgId } });
+      await tx.salaryStructure.deleteMany({ where: { organizationId: orgId } });
+      await tx.salaryTemplate.deleteMany({ where: { organizationId: orgId } });
+      await tx.payrollSettings.deleteMany({ where: { organizationId: orgId } });
+
+      // 14. Calendars, Settings & Audit Logs
+      await tx.workCalendar.deleteMany({ where: { organizationId: orgId } });
+      await tx.holidayCalendar.deleteMany({ where: { organizationId: orgId } });
+      await tx.organizationSettings.deleteMany({ where: { organizationId: orgId } });
+      await tx.systemSettings.deleteMany({ where: { organizationId: orgId } });
+      await tx.organizationAuditLog.deleteMany({ where: { organizationId: orgId } });
+
+      // 15. Delete Users belonging to Organization
+      await tx.user.deleteMany({ where: { organizationId: orgId } });
+
+      // 16. Delete Organization
+      await tx.organization.delete({
+        where: { id: orgId }
+      });
+    }, { timeout: 30000 });
 
     // Disconnect active sockets for this organization
     disconnectOrganizationSockets(id);
 
-    res.json({
+    // Broadcast organization_deleted event to connected clients
+    try {
+      const { getIO } = require('../socket');
+      const io = getIO ? getIO() : null;
+      if (io) {
+        io.emit('organization_deleted', {
+          id,
+          name: organization.name
+        });
+      }
+    } catch (e) { }
+
+    return res.status(200).json({
       success: true,
-      message: `Organization "${organization.name}" deleted successfully.`
+      message: 'Company deleted successfully.'
     });
   } catch (error) {
-    console.error('[deleteOrganization] Transaction error:', error);
-    next(error);
+    console.error('[deleteOrganization] Permanent deletion failed:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Company deletion failed.'
+    });
   }
 };
 
@@ -485,12 +644,16 @@ const getOrganizationStats = async (req, res, next) => {
 
     const currentStorageMB = await updateOrganizationStorage(id);
 
-    const [users, projects, attendances, workLogs, leaveRequests, chatRooms] = await Promise.all([
+    const [users, projects, tasks, departments, teams, attendances, workLogs, leaveRequests, tickets, chatRooms] = await Promise.all([
       prisma.user.count({ where: { organizationId: id } }),
       prisma.project.count({ where: { organizationId: id } }),
-      prisma.attendance.count({ where: { organizationId: id } }),
-      prisma.workLog.count({ where: { organizationId: id } }),
-      prisma.leaveRequest.count({ where: { organizationId: id } }),
+      prisma.task.count({ where: { organizationId: id } }),
+      prisma.departmentMaster.count({ where: { organizationId: id } }),
+      prisma.team.count({ where: { organizationId: id } }),
+      prisma.attendance.count({ where: { user: { organizationId: id } } }),
+      prisma.workLog.count({ where: { user: { organizationId: id } } }),
+      prisma.leaveRequest.count({ where: { user: { organizationId: id } } }),
+      prisma.ticket.count({ where: { organizationId: id } }),
       prisma.chatRoom.count({ where: { organizationId: id } })
     ]);
 
@@ -499,9 +662,13 @@ const getOrganizationStats = async (req, res, next) => {
       stats: {
         users,
         projects,
+        tasks,
+        departments,
+        teams,
         attendances,
         workLogs,
         leaveRequests,
+        tickets,
         chatRooms,
         storageUsedMB: currentStorageMB,
         subscriptionPlan: organization.subscriptionPlan

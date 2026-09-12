@@ -139,7 +139,6 @@ const createWorkLog = async (req, res) => {
       workLog = await prisma.workLog.create({
         data: {
           userId: req.user.id,
-          organizationId: req.user?.organizationId || null,
           projectId: projectId || null,
           taskId: taskId || null,
           description: description || '',
@@ -533,7 +532,10 @@ const getAdminWorkLogs = async (req, res) => {
       };
     }
 
-    if (status && status !== 'ALL') {
+    // Admin role can ONLY view Submitted work logs. Super Admin can view all statuses based on filter.
+    if (req.user.role === 'ADMIN') {
+      where.isDraft = false;
+    } else if (status && status !== 'ALL') {
       if (status === 'SUBMITTED') {
         where.isDraft = false;
       } else if (status === 'DRAFT') {

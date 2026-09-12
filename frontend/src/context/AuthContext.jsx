@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import api, { disconnectSocket } from '../services/api';
+import { setPlatformBranding } from '../utils/branding';
 
 const AuthContext = createContext(null);
 
@@ -19,6 +20,7 @@ export const AuthProvider = ({ children }) => {
     setToken(null);
     setUser(null);
     setIsTempPassword(false);
+    setPlatformBranding();
   };
 
   useEffect(() => {
@@ -93,6 +95,13 @@ export const AuthProvider = ({ children }) => {
       setUser(userData);
       setIsTempPassword(isTempPassword);
       setLoading(false);
+
+      console.log('[DEBUG Trace Step 1 - AuthContext Login]', {
+        role: userData?.role,
+        organizationId: userData?.organizationId,
+        token: token ? `${token.substring(0, 15)}...` : null
+      });
+
       return { success: true, isTempPassword, user: userData };
     } catch (error) {
       logout();

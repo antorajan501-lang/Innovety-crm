@@ -42,14 +42,13 @@ import PayrollReportsPage from './pages/finance/PayrollReportsPage';
 import PayrollSettingsPage from './pages/finance/PayrollSettingsPage';
 import EmployeePayrollPage from './pages/finance/EmployeePayrollPage';
 
-import { ThemeProvider } from './context/ThemeContext';
+import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { BrandProvider } from './context/BrandContext';
 import SuperAdminDashboard from './pages/super-admin/dashboard/SuperAdminDashboard';
 import BrandingTheme from './pages/super-admin/branding/BrandingTheme';
 import UsersDirectory from './pages/super-admin/users/UsersDirectory';
 import TeamDirectory from './pages/super-admin/teams/TeamDirectory';
 import AdminManagement from './pages/super-admin/admins/AdminManagement';
-import PlatformBuilderDashboard from './pages/super-admin/builder/PlatformBuilderDashboard';
 import OrganizationManager from './pages/super-admin/organization/OrganizationManager';
 import PlatformOperationsDashboard from './pages/super-admin/operations/PlatformOperationsDashboard';
 import LeavePolicySettings from './pages/super-admin/LeavePolicySettings';
@@ -89,6 +88,16 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   );
 };
 
+// Chat Feature Protected Route wrapper
+const ChatProtectedRoute = ({ children }) => {
+  const { canUseChat } = useTheme();
+  console.log('[DEBUG Trace Step 5 - ChatProtectedRoute]', { canUseChat });
+  if (!canUseChat) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+};
+
 const RootDashboardRedirect = () => {
   const { user } = useAuth();
   if (user?.role === 'SUPER_ADMIN') {
@@ -106,373 +115,335 @@ const App = () => {
             <ThemeProvider>
               <SocketProvider>
                 <Routes>
-                {/* Public Auth Routes */}
-                <Route path="/login" element={<Login />} />
-                <Route path="/company/:slug" element={<CompanyLogin />} />
+                  {/* Public Auth Routes */}
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/company/:slug" element={<CompanyLogin />} />
 
-              {/* Super Admin Platform Control Center Routes */}
-              <Route
-                path="/super-admin"
-                element={<Navigate to="/super-admin/dashboard" replace />}
-              />
-              <Route
-                path="/super-admin/dashboard"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <SuperAdminDashboard />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/branding"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <BrandingTheme />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/users"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <UsersDirectory />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/teams"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <TeamDirectory />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/admins"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <AdminManagement />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/organization"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <OrganizationManager />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/leave-policy"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <LeavePolicySettings />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/platform-builder"
-                element={<Navigate to="/super-admin/platform-builder/forms" replace />}
-              />
-              <Route
-                path="/super-admin/platform-builder/dashboard"
-                element={<Navigate to="/super-admin/platform-builder/forms" replace />}
-              />
-              <Route
-                path="/super-admin/platform-builder/forms"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <PlatformBuilderDashboard defaultTab="forms" />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/platform-builder/menus"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <PlatformBuilderDashboard defaultTab="menus" />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/platform-builder/audit"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <PlatformBuilderDashboard defaultTab="audit" />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/super-admin/platform-builder/extensions"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <PlatformBuilderDashboard defaultTab="extensions" />
-                  </ProtectedRoute>
-                }
-              />
+                  {/* Super Admin Platform Control Center Routes */}
+                  <Route
+                    path="/super-admin"
+                    element={<Navigate to="/super-admin/dashboard" replace />}
+                  />
+                  <Route
+                    path="/super-admin/dashboard"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <SuperAdminDashboard />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/super-admin/branding"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <BrandingTheme />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/super-admin/users"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <UsersDirectory />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/super-admin/teams"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <TeamDirectory />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/super-admin/admins"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <AdminManagement />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/super-admin/organization"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <OrganizationManager />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/super-admin/leave-policy"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <LeavePolicySettings />
+                      </ProtectedRoute>
+                    }
+                  />
 
-              <Route
-                path="/super-admin/operations"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                    <PlatformOperationsDashboard />
-                  </ProtectedRoute>
-                }
-              />
+                  <Route
+                    path="/super-admin/operations"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <PlatformOperationsDashboard />
+                      </ProtectedRoute>
+                    }
+                  />
 
-              {/* Protected Role-Based Routes */}
-              <Route path="/integrations" element={<Navigate to="/" replace />} />
-              <Route
-                path="/"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN']}>
-                    <RootDashboardRedirect />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/interns"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <Interns />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/team-leaders"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <TeamLeaders />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/employees"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <Employees />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/projects"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
-                    <Projects />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/teams"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
-                    <Teams />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/tasks"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
-                    <Tasks />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/attendance"
-                element={
-                  <ProtectedRoute allowedRoles={['INTERN', 'TEAM_LEADER', 'EMPLOYEE']}>
-                    <Attendance />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/attendance-audit"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN']}>
-                    <AttendanceAudit />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/leave-management"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN', 'SUPER_ADMIN']}>
-                    <LeaveManagementPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route path="/leaves" element={<Navigate to="/leave-management" replace />} />
-              <Route path="/operations/leave" element={<Navigate to="/leave-management" replace />} />
-              <Route path="/work-calendar" element={<Navigate to="/operations/work-calendar" replace />} />
-              <Route
-                path="/operations/work-calendar"
-                element={
-                  <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN']}>
-                    <WorkCalendar />
-                  </ProtectedRoute>
-                }
-              />
+                  {/* Protected Role-Based Routes */}
+                  <Route path="/integrations" element={<Navigate to="/" replace />} />
+                  <Route
+                    path="/"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN']}>
+                        <RootDashboardRedirect />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/interns"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <Interns />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/team-leaders"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <TeamLeaders />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/employees"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <Employees />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/projects"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
+                        <Projects />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/teams"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
+                        <Teams />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/tasks"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
+                        <Tasks />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/attendance"
+                    element={
+                      <ProtectedRoute allowedRoles={['INTERN', 'TEAM_LEADER', 'EMPLOYEE']}>
+                        <Attendance />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/attendance-audit"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN']}>
+                        <AttendanceAudit />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/leave-management"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN', 'SUPER_ADMIN']}>
+                        <LeaveManagementPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route path="/leaves" element={<Navigate to="/leave-management" replace />} />
+                  <Route path="/operations/leave" element={<Navigate to="/leave-management" replace />} />
+                  <Route path="/work-calendar" element={<Navigate to="/operations/work-calendar" replace />} />
+                  <Route
+                    path="/operations/work-calendar"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'TEAM_LEADER', 'EMPLOYEE', 'INTERN']}>
+                        <WorkCalendar />
+                      </ProtectedRoute>
+                    }
+                  />
 
-              <Route
-                path="/tickets"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
-                    <Tickets />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/announcements"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
-                    <Announcements />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/chat"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
-                    <Chat />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/assets"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
-                    <AssetManagement />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/profile"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
-                    <Profile />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/reports"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN']}>
-                    <Reports />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/audit-logs"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <AuditLogs />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/settings"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <SiteSettings />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/worklogs"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN']}>
-                    <WorkLogs />
-                  </ProtectedRoute>
-                }
-              />
+                  <Route
+                    path="/tickets"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
+                        <Tickets />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/announcements"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
+                        <Announcements />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/chat"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
+                        <ChatProtectedRoute>
+                          <Chat />
+                        </ChatProtectedRoute>
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/assets"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
+                        <AssetManagement />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/profile"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE', 'SUPER_ADMIN']}>
+                        <Profile />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/reports"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN']}>
+                        <Reports />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/audit-logs"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <AuditLogs />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/settings"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <SiteSettings />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/worklogs"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN']}>
+                        <WorkLogs />
+                      </ProtectedRoute>
+                    }
+                  />
 
 
-              {/* Finance & Payroll Module Routes */}
-              <Route path="/payroll" element={<Navigate to="/payroll/dashboard" replace />} />
-              <Route
-                path="/payroll/dashboard"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <PayrollDashboardPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/payroll/templates"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <SalaryTemplatesPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/payroll/structures"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <SalaryStructuresPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/payroll/processing"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <PayrollProcessingPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/payroll/payslips"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <PayslipsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/payroll/holidays"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <HolidayCalendarPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/payroll/reports"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <PayrollReportsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/payroll/settings"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
-                    <PayrollSettingsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/my-payroll"
-                element={
-                  <ProtectedRoute allowedRoles={['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN']}>
-                    <EmployeePayrollPage />
-                  </ProtectedRoute>
-                }
-              />
+                  {/* Finance & Payroll Module Routes */}
+                  <Route path="/payroll" element={<Navigate to="/payroll/dashboard" replace />} />
+                  <Route
+                    path="/payroll/dashboard"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <PayrollDashboardPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/payroll/templates"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <SalaryTemplatesPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/payroll/structures"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <SalaryStructuresPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/payroll/processing"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <PayrollProcessingPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/payroll/payslips"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <PayslipsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/payroll/holidays"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <HolidayCalendarPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/payroll/reports"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <PayrollReportsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/payroll/settings"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>
+                        <PayrollSettingsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/my-payroll"
+                    element={
+                      <ProtectedRoute allowedRoles={['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN']}>
+                        <EmployeePayrollPage />
+                      </ProtectedRoute>
+                    }
+                  />
 
-              {/* Catch-all fallback */}
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </SocketProvider>
-        </ThemeProvider>
-      </BrandProvider>
-    </CompanyScopeProvider>
-  </AuthProvider>
-</Router>
+                  {/* Catch-all fallback */}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </SocketProvider>
+            </ThemeProvider>
+          </BrandProvider>
+        </CompanyScopeProvider>
+      </AuthProvider>
+    </Router>
   );
 };
 

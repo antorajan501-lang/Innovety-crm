@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   CalendarPlus,
@@ -12,9 +12,9 @@ import {
   CheckCircle2,
   HelpCircle
 } from 'lucide-react';
-import api from '../../services/api';
+import api, { getSocket } from '../../services/api';
 
-const LEAVE_TYPES = [
+const DEFAULT_LEAVE_TYPES = [
   { id: 'CASUAL', label: 'Casual Leave (CL)', desc: 'For planned personal matters or short breaks' },
   { id: 'SICK', label: 'Sick Leave (SL)', desc: 'For medical appointments or health recovery' },
   { id: 'EMERGENCY', label: 'Emergency Leave (EL)', desc: 'For unforeseen family or personal emergencies' },
@@ -64,6 +64,59 @@ const ApplyLeaveModal = ({
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState(null);
+  const [dynamicTypes, setDynamicTypes] = useState([]);
+
+  const fetchLeaveTypesAndBalances = async () => {
+    try {
+      const res = await api.get('/leaves/balances');
+      if (res.data && Array.isArray(res.data.leaveTypes)) {
+        setDynamicTypes(res.data.leaveTypes);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch dynamic leave types for modal:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchLeaveTypesAndBalances();
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handlePolicyUpdate = () => {
+      fetchLeaveTypesAndBalances();
+    };
+    socket.on('organization_leave_policy_updated', handlePolicyUpdate);
+    return () => {
+      socket.off('organization_leave_policy_updated', handlePolicyUpdate);
+    };
+  }, []);
+
+  const leaveTypeOptions = useMemo(() => {
+    if (dynamicTypes.length === 0) {
+      return DEFAULT_LEAVE_TYPES;
+    }
+
+    const list = dynamicTypes.map((lt) => ({
+      id: lt.code,
+      name: lt.name,
+      label: `${lt.name} — ${lt.available !== undefined ? lt.available : 0} days left`,
+      available: lt.available,
+      isPaid: true
+    }));
+
+    if (!list.some((o) => o.id === 'WFH')) {
+      list.push({ id: 'WFH', name: 'Work From Home', label: 'Work From Home (WFH)', available: Infinity, isPaid: false });
+    }
+    if (!list.some((o) => o.id === 'UNPAID' || o.id === 'LOP')) {
+      list.push({ id: 'UNPAID', name: 'Loss of Pay / Unpaid Leave', label: 'Loss of Pay / Unpaid Leave (LOP)', available: Infinity, isPaid: false });
+    }
+
+    return list;
+  }, [dynamicTypes]);
 
   // Initialize or reset form state
   useEffect(() => {
@@ -126,6 +179,14 @@ const ApplyLeaveModal = ({
     if (formData.startDate && formData.endDate && new Date(formData.startDate) > new Date(formData.endDate)) {
       errs.endDate = 'End date cannot be before start date.';
     }
+
+    const selectedOpt = leaveTypeOptions.find(o => o.id === formData.leaveType);
+    if (selectedOpt && selectedOpt.isPaid && selectedOpt.available !== undefined && selectedOpt.available !== Infinity) {
+      if (totalCalculatedDays > selectedOpt.available) {
+        errs.leaveType = `Requested duration (${totalCalculatedDays} day(s)) exceeds your remaining ${selectedOpt.name} balance (${selectedOpt.available} day(s) left).`;
+      }
+    }
+
     if (!formData.reason.trim()) {
       errs.reason = 'Please provide a clear reason for your leave request.';
     } else if (formData.reason.trim().length < 5) {
@@ -247,7 +308,7 @@ const ApplyLeaveModal = ({
                     errors.leaveType ? 'border-rose-500/80 focus:ring-rose-500/20' : 'border-border/70 focus:ring-primary/20'
                   } rounded-xl px-3.5 py-2 text-xs font-bold text-foreground cursor-pointer focus:outline-none focus:ring-2`}
                 >
-                  {LEAVE_TYPES.map((t) => (
+                  {leaveTypeOptions.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.label}
                     </option>

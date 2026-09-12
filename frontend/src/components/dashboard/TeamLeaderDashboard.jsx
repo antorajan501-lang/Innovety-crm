@@ -80,9 +80,13 @@ const itemVariants = {
   }
 };
 
+const WEEKDAYS_SHORT = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
 // 7-day rolling week calculation (Previous 3 days -> Today -> Next 3 days)
 const getRollingWeekDays = () => {
   const today = new Date();
+  today.setHours(12, 0, 0, 0);
+
   const days = [];
   for (let i = -3; i <= 3; i++) {
     const d = new Date(today);
@@ -92,9 +96,10 @@ const getRollingWeekDays = () => {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     const dateString = `${year}-${month}-${day}`;
+    const dayIndex = d.getDay();
 
     days.push({
-      dayName: d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(),
+      dayName: WEEKDAYS_SHORT[dayIndex] || d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(),
       dateNum: d.getDate(),
       isToday: i === 0,
       fullDate: d,
@@ -283,7 +288,11 @@ export const TeamLeaderDashboard = () => {
     try {
       const res = await api.get('/leaves/balances');
       if (res.data) {
-        setLeaveBalances(res.data);
+        setLeaveBalances({
+          ...res.data,
+          pendingRequests: res.data.pendingRequests ?? res.data.pendingRequestsCount ?? 0,
+          approvedRequests: res.data.approvedRequests ?? res.data.approvedRequestsCount ?? 0
+        });
       }
     } catch (err) {
       console.warn('Failed to fetch leave balances:', err);
@@ -295,6 +304,20 @@ export const TeamLeaderDashboard = () => {
       fetchLeaveBalances();
     }
   }, [user?.id, leaves]);
+
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handlePolicyUpdate = (data) => {
+      if (!data?.organizationId || data.organizationId === user?.organizationId) {
+        fetchLeaveBalances();
+      }
+    };
+    socket.on('organization_leave_policy_updated', handlePolicyUpdate);
+    return () => {
+      socket.off('organization_leave_policy_updated', handlePolicyUpdate);
+    };
+  }, [user?.organizationId]);
 
   const fetchTLDashboardData = async () => {
     try {
@@ -1321,14 +1344,14 @@ export const TeamLeaderDashboard = () => {
                     onClick={() => setSelectedDate(day.dateString)}
                     className={`py-2 px-1 rounded-2xl flex flex-col items-center justify-center transition-all cursor-pointer border ${
                       selected
-                        ? 'btn-primary font-bold shadow-sm scale-105'
+                        ? 'bg-primary text-white font-extrabold shadow-md shadow-primary/30 scale-105 border-primary ring-2 ring-primary ring-offset-2 dark:ring-offset-slate-900'
                         : day.isToday
-                        ? 'bg-primary/10 border-primary/30 text-primary font-bold'
-                        : 'bg-muted/30 border-border/40 hover:bg-muted text-muted-foreground'
+                        ? 'bg-primary/10 border-primary/30 text-primary font-extrabold hover:bg-primary/20'
+                        : 'bg-muted/30 border-border/40 hover:bg-muted text-foreground font-semibold'
                     }`}
                   >
-                    <span className="text-[9px] font-black uppercase">{day.dayName}</span>
-                    <span className="text-sm font-black mt-0.5">{day.dateNum}</span>
+                    <span className="text-[9px] font-black uppercase">{day.dayName || '—'}</span>
+                    <span className="text-sm font-black mt-0.5">{day.dateNum ?? '—'}</span>
                   </button>
                 );
               })}

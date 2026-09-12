@@ -176,10 +176,12 @@ const Tickets = () => {
           <h2 className="text-base font-bold text-foreground">CRM Support Desk</h2>
           <p className="text-xs text-muted-foreground mt-0.5 font-medium">Raise technical, operational, HR, software, or software licensing issues.</p>
         </div>
-        <button onClick={() => setCreateModalOpen(true)} className="flex items-center gap-1.5 rounded-xl bg-primary hover:bg-primary-hover text-white px-4 py-2 text-xs font-bold shadow-md shadow-primary/20 transition-all">
-          <Plus className="h-3.5 w-3.5" />
-          <span>Raise Ticket</span>
-        </button>
+        {user?.role !== 'ADMIN' && (
+          <button onClick={() => setCreateModalOpen(true)} className="flex items-center gap-1.5 rounded-xl bg-primary hover:bg-primary-hover text-white px-4 py-2 text-xs font-bold shadow-md shadow-primary/20 transition-all">
+            <Plus className="h-3.5 w-3.5" />
+            <span>Raise Ticket</span>
+          </button>
+        )}
       </div>
 
       {/* Tickets List */}
@@ -224,7 +226,7 @@ const Tickets = () => {
       </div>
 
       {/* Create Ticket Modal */}
-      {createModalOpen && (
+      {createModalOpen && user?.role !== 'ADMIN' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="w-full max-w-md rounded-2xl border border-border/40 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">

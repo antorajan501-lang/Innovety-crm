@@ -47,7 +47,14 @@ const LeaveOverviewCard = ({
   useEffect(() => {
     fetchLeaves();
     const interval = setInterval(fetchLeaves, 4000);
-    return () => clearInterval(interval);
+    const socket = getSocket();
+    if (socket) {
+      socket.on('organization_leave_policy_updated', fetchLeaves);
+    }
+    return () => {
+      clearInterval(interval);
+      if (socket) socket.off('organization_leave_policy_updated', fetchLeaves);
+    };
   }, []);
 
   // Role permissions

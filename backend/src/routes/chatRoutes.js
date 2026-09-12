@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { authenticate } = require('../middleware/auth');
+const { requireChatEnabled } = require('../middleware/requireChatEnabled');
 const chatController = require('../controllers/chatController');
 
 // Configure Multer storage for chat uploads
@@ -26,8 +27,9 @@ const upload = multer({
   limits: { fileSize: 50 * 1024 * 1024 } // 50MB max file size
 });
 
-// All chat routes require JWT Auth
+// All chat routes require JWT Auth & Role Feature Access
 router.use(authenticate);
+router.use(requireChatEnabled);
 
 // Rooms & Conversations
 router.get('/rooms', chatController.getRooms);

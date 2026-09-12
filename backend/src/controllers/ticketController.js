@@ -6,6 +6,13 @@ const { sendNewTicketNotificationEmail, sendTicketUpdateEmail } = require('../se
 
 const createTicket = async (req, res) => {
   try {
+    if (req.user.role === 'ADMIN') {
+      return res.status(403).json({
+        success: false,
+        message: 'Admins cannot create support tickets.'
+      });
+    }
+
     const { title, description, category, assetId } = req.body;
     const targetOrgId = getEffectiveOrgId(req);
 

@@ -5,12 +5,19 @@ import { Building2, Lock, Mail, AlertTriangle, ArrowRight, ShieldCheck, CheckCir
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useOrganizationBranding } from '../context/BrandContext';
+import { setPlatformBranding } from '../utils/branding';
 
 const CompanyLogin = () => {
   const { slug } = useParams();
   const navigate = useNavigate();
   const { user, login } = useAuth();
   const { updatePublicBranding } = useOrganizationBranding();
+
+  useEffect(() => {
+    return () => {
+      setPlatformBranding();
+    };
+  }, []);
 
   const [companyBranding, setCompanyBranding] = useState(null);
   const [loadingCompany, setLoadingCompany] = useState(true);

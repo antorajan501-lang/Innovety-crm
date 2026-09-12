@@ -23,7 +23,9 @@ import {
   Briefcase,
   Shield,
   Zap,
-  TrendingUp
+  TrendingUp,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 const Profile = () => {
@@ -34,20 +36,24 @@ const Profile = () => {
   const [profileForm, setProfileForm] = useState({
     name: user?.name || '',
     phone: user?.phone || '',
-    college: user?.college || '',
-    department: user?.department || ''
+    schoolName: user?.schoolName || '',
+    collegeName: user?.collegeName || '',
+    companyName: user?.companyName || ''
   });
   const [avatar, setAvatar] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [removingPic, setRemovingPic] = useState(false);
 
-  // Password change form
+  // Password change form & visibility toggles
   const [passwordForm, setPasswordForm] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
   });
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const [alert, setAlert] = useState({ type: '', text: '' });
   const [tempPassWarning, setTempPassWarning] = useState(false);
@@ -155,6 +161,9 @@ const Profile = () => {
     if (res.success) {
       setAlert({ type: 'success', text: res.message });
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setShowCurrent(false);
+      setShowNew(false);
+      setShowConfirm(false);
       setTempPassWarning(false);
     } else {
       setAlert({ type: 'error', text: res.message });
@@ -466,38 +475,71 @@ const Profile = () => {
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold text-muted-foreground">Current Password</label>
-              <input
-                type="password"
-                placeholder="Current password"
-                value={passwordForm.currentPassword}
-                onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
-                className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                required
-              />
+              <div className="relative">
+                <input
+                  type={showCurrent ? "text" : "password"}
+                  placeholder="Current password"
+                  value={passwordForm.currentPassword}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                  className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 pr-11 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrent(!showCurrent)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg cursor-pointer focus:outline-none"
+                  title={showCurrent ? "Hide current password" : "Show current password"}
+                  aria-label={showCurrent ? "Hide current password" : "Show current password"}
+                >
+                  {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold text-muted-foreground">New Secure Password</label>
-              <input
-                type="password"
-                placeholder="New password"
-                value={passwordForm.newPassword}
-                onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-                className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                required
-              />
+              <div className="relative">
+                <input
+                  type={showNew ? "text" : "password"}
+                  placeholder="New password"
+                  value={passwordForm.newPassword}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                  className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 pr-11 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNew(!showNew)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg cursor-pointer focus:outline-none"
+                  title={showNew ? "Hide new password" : "Show new password"}
+                  aria-label={showNew ? "Hide new password" : "Show new password"}
+                >
+                  {showNew ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-bold text-muted-foreground">Confirm New Password</label>
-              <input
-                type="password"
-                placeholder="Confirm password"
-                value={passwordForm.confirmPassword}
-                onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
-                className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                required
-              />
+              <div className="relative">
+                <input
+                  type={showConfirm ? "text" : "password"}
+                  placeholder="Confirm password"
+                  value={passwordForm.confirmPassword}
+                  onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                  className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 pr-11 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirm(!showConfirm)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1 rounded-lg cursor-pointer focus:outline-none"
+                  title={showConfirm ? "Hide confirm password" : "Show confirm password"}
+                  aria-label={showConfirm ? "Hide confirm password" : "Show confirm password"}
+                >
+                  {showConfirm ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
 
             <div className="pt-2">

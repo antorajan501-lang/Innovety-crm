@@ -27,7 +27,8 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  FileSearch
+  FileSearch,
+  RotateCcw
 } from 'lucide-react';
 import WorkLogAttachmentUploader from '../components/worklog/WorkLogAttachmentUploader';
 
@@ -50,6 +51,33 @@ const formatHoursMinutes = (decimalHours = 0) => {
   const mins = Math.round((decimalHours - hrs) * 60);
   if (mins === 0) return `${hrs}h`;
   return `${hrs}h ${mins}m`;
+};
+
+const calculateHoursFromTimes = (startStr, endStr) => {
+  if (!startStr || !endStr) return 0;
+  const [startH, startM] = startStr.split(':').map(Number);
+  const [endH, endM] = endStr.split(':').map(Number);
+  if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM)) return 0;
+
+  const startTotalMinutes = startH * 60 + startM;
+  const endTotalMinutes = endH * 60 + endM;
+
+  let diffMinutes = endTotalMinutes - startTotalMinutes;
+  if (diffMinutes < 0) {
+    diffMinutes += 24 * 60;
+  }
+
+  const hours = Math.round((diffMinutes / 60) * 100) / 100;
+  return hours >= 0 ? hours : 0;
+};
+
+const formatTimeHHMM = (dateObj) => {
+  if (!dateObj) return '';
+  const d = new Date(dateObj);
+  if (isNaN(d.getTime())) return '';
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
 };
 
 export const WorkLogs = () => {
@@ -103,6 +131,15 @@ export const WorkLogs = () => {
     sortOrder: 'desc'
   });
 
+  // Helper for today's local YYYY-MM-DD date string
+  const getTodayLocalDateStr = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   // Admin Review Filters
   const [adminLogs, setAdminLogs] = useState([]);
   const [departmentsList, setDepartmentsList] = useState([]);
@@ -111,9 +148,17 @@ export const WorkLogs = () => {
     search: '',
     departmentId: 'ALL',
     employeeId: 'ALL',
-    date: '',
-    status: 'ALL'
+    date: getTodayLocalDateStr()
   });
+
+  const handleResetAdminFilters = () => {
+    setAdminFilters({
+      search: '',
+      departmentId: 'ALL',
+      employeeId: 'ALL',
+      date: getTodayLocalDateStr()
+    });
+  };
 
   // Form Modal & View Modal
   const [formModalOpen, setFormModalOpen] = useState(false);
@@ -128,10 +173,23 @@ export const WorkLogs = () => {
     projectId: '',
     taskId: '',
     description: '',
-    hoursWorked: 0,
+    startTime: '09:00',
+    endTime: '18:00',
+    hoursWorked: 9,
     workDate: new Date().toISOString().split('T')[0],
     attachments: []
   });
+
+  const handleTimeChange = (field, value) => {
+    setFormData(prev => {
+      const updated = { ...prev, [field]: value };
+      const calcHours = calculateHoursFromTimes(updated.startTime, updated.endTime);
+      return {
+        ...updated,
+        hoursWorked: calcHours
+      };
+    });
+  };
 
   // Attachment Preview Modal
   const [previewAttachment, setPreviewAttachment] = useState(null);
@@ -214,7 +272,6 @@ export const WorkLogs = () => {
       if (adminFilters.departmentId !== 'ALL') params.append('departmentId', adminFilters.departmentId);
       if (adminFilters.employeeId !== 'ALL') params.append('employeeId', adminFilters.employeeId);
       if (adminFilters.date) params.append('date', adminFilters.date);
-      if (adminFilters.status !== 'ALL') params.append('status', adminFilters.status);
       if (targetOrg) params.append('organizationId', targetOrg);
 
       const res = await api.get(`/worklogs/admin?${params.toString()}`);
@@ -273,25 +330,56 @@ export const WorkLogs = () => {
   const openFormModal = (logToEdit = null) => {
     const target = logToEdit || todayStatus.workLog;
 
+    let defaultStart = '09:00';
+    let defaultEnd = '18:00';
+
+    if (todayStatus?.clockIn) {
+      const formattedClockIn = formatTimeHHMM(todayStatus.clockIn);
+      if (formattedClockIn) defaultStart = formattedClockIn;
+    }
+    if (todayStatus?.clockOut) {
+      const formattedClockOut = formatTimeHHMM(todayStatus.clockOut);
+      if (formattedClockOut) defaultEnd = formattedClockOut;
+    } else if (todayStatus?.isClockedIn) {
+      const formattedNow = formatTimeHHMM(new Date());
+      if (formattedNow) defaultEnd = formattedNow;
+    }
+
     if (target) {
       setIsEditing(true);
       setSelectedLogId(target.id);
+
+      const startT = target.startTime || defaultStart;
+      const endT = target.endTime || defaultEnd;
+      const initialHours = target.hoursWorked !== undefined && target.hoursWorked !== null && target.hoursWorked > 0
+        ? target.hoursWorked
+        : calculateHoursFromTimes(startT, endT);
+
       setFormData({
         projectId: target.projectId || '',
         taskId: target.taskId || '',
         description: target.description || '',
-        hoursWorked: target.hoursWorked || todayStatus.hoursWorked || 0,
+        startTime: startT,
+        endTime: endT,
+        hoursWorked: initialHours,
         workDate: new Date(target.workDate).toISOString().split('T')[0],
         attachments: target.attachments || []
       });
     } else {
       setIsEditing(false);
       setSelectedLogId(null);
+
+      const initialHours = todayStatus.hoursWorked > 0
+        ? todayStatus.hoursWorked
+        : calculateHoursFromTimes(defaultStart, defaultEnd);
+
       setFormData({
         projectId: '',
         taskId: '',
         description: '',
-        hoursWorked: todayStatus.hoursWorked || 0,
+        startTime: defaultStart,
+        endTime: defaultEnd,
+        hoursWorked: initialHours,
         workDate: new Date().toISOString().split('T')[0],
         attachments: []
       });
@@ -303,9 +391,28 @@ export const WorkLogs = () => {
   const handleFormSubmit = async (e, submitAsDraft = false) => {
     if (e) e.preventDefault();
     try {
+      if (!submitAsDraft && (!formData.description || formData.description.trim().length === 0)) {
+        setAlertMsg('Work summary is required when submitting a work log.');
+        setAlertType('error');
+        return;
+      }
+
+      const hours = parseFloat(formData.hoursWorked);
+      if (isNaN(hours) || hours <= 0) {
+        setAlertMsg('Hours worked must be greater than 0. Please select valid Start and End times.');
+        setAlertType('error');
+        return;
+      }
+
       const payload = {
-        ...formData,
-        hoursWorked: todayStatus.hoursWorked || formData.hoursWorked || 0,
+        projectId: formData.projectId || null,
+        taskId: formData.taskId || null,
+        description: formData.description || '',
+        startTime: formData.startTime,
+        endTime: formData.endTime,
+        hoursWorked: hours,
+        workDate: formData.workDate,
+        attachments: formData.attachments || [],
         isDraft: submitAsDraft
       };
 
@@ -320,7 +427,8 @@ export const WorkLogs = () => {
         ...prev,
         workLogSubmitted: !submitAsDraft,
         workLogDraft: submitAsDraft,
-        workLog: savedLog
+        workLog: savedLog,
+        hoursWorked: hours
       }));
 
       setAlertMsg(submitAsDraft ? 'Work log draft saved successfully.' : 'Work log submitted successfully!');
@@ -480,11 +588,22 @@ export const WorkLogs = () => {
         <div className="space-y-5">
           {/* Admin Filters */}
           <div className="glass-card p-4 rounded-2xl border border-border/60 shadow-xs space-y-3">
-            <div className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider">
-              <Filter className="w-4 h-4 text-primary" /> Review Filters
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-muted-foreground uppercase tracking-wider">
+                <Filter className="w-4 h-4 text-primary" /> Review Filters
+              </div>
+
+              <button
+                type="button"
+                onClick={handleResetAdminFilters}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border/80 bg-background hover:bg-muted text-muted-foreground hover:text-foreground text-xs font-bold transition-all cursor-pointer shadow-xs"
+                title="Reset all filters to Today's Submitted Logs"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Reset Filters
+              </button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 items-center">
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <input
@@ -492,7 +611,7 @@ export const WorkLogs = () => {
                   placeholder="Search employee or ID..."
                   value={adminFilters.search}
                   onChange={e => setAdminFilters({ ...adminFilters, search: e.target.value })}
-                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-background border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full pl-9 pr-3 py-2 rounded-xl bg-background border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 font-medium"
                 />
               </div>
 
@@ -500,7 +619,7 @@ export const WorkLogs = () => {
                 <select
                   value={adminFilters.departmentId}
                   onChange={e => setAdminFilters({ ...adminFilters, departmentId: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-background border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full px-3 py-2 rounded-xl bg-background border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 font-medium"
                 >
                   <option value="ALL">All Departments</option>
                   {departmentsList.map(d => (
@@ -513,7 +632,7 @@ export const WorkLogs = () => {
                 <select
                   value={adminFilters.employeeId}
                   onChange={e => setAdminFilters({ ...adminFilters, employeeId: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-background border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full px-3 py-2 rounded-xl bg-background border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40 font-medium"
                 >
                   <option value="ALL">All Employees</option>
                   {employeesList.map(e => (
@@ -522,25 +641,27 @@ export const WorkLogs = () => {
                 </select>
               </div>
 
-              <div>
+              <div className="relative">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-primary flex items-center pointer-events-none">
+                  <Calendar className="w-4 h-4" />
+                </div>
                 <input
                   type="date"
                   value={adminFilters.date}
                   onChange={e => setAdminFilters({ ...adminFilters, date: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-background border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="w-full pl-9 pr-7 py-2 rounded-xl bg-background border-2 border-primary/40 text-xs font-medium text-foreground focus:outline-none focus:ring-2 focus:ring-primary/60 shadow-xs"
+                  title="Date Filter (Primary)"
                 />
-              </div>
-
-              <div>
-                <select
-                  value={adminFilters.status}
-                  onChange={e => setAdminFilters({ ...adminFilters, status: e.target.value })}
-                  className="w-full px-3 py-2 rounded-xl bg-background border border-border/60 text-xs focus:outline-none focus:ring-2 focus:ring-primary/40"
-                >
-                  <option value="ALL">All Statuses</option>
-                  <option value="SUBMITTED">Submitted</option>
-                  <option value="DRAFT">Draft</option>
-                </select>
+                {adminFilters.date && (
+                  <button
+                    type="button"
+                    onClick={() => setAdminFilters({ ...adminFilters, date: '' })}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground text-xs"
+                    title="Clear Date Filter"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -555,7 +676,6 @@ export const WorkLogs = () => {
                     <th className="px-4 py-3.5">Date</th>
                     <th className="px-4 py-3.5">Project / Task</th>
                     <th className="px-4 py-3.5">Hours</th>
-                    <th className="px-4 py-3.5">Status</th>
                     <th className="px-4 py-3.5">Attachments</th>
                     <th className="px-4 py-3.5">Submitted Time</th>
                     <th className="px-4 py-3.5 text-right">Actions</th>
@@ -564,13 +684,13 @@ export const WorkLogs = () => {
                 <tbody className="divide-y divide-border/40">
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-12 text-muted-foreground font-bold animate-pulse">
+                      <td colSpan={7} className="text-center py-12 text-muted-foreground font-bold animate-pulse">
                         Loading reviewer logs...
                       </td>
                     </tr>
                   ) : adminLogs.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-12">
+                      <td colSpan={7} className="text-center py-12">
                         <FileSearch className="w-10 h-10 text-muted-foreground/40 mx-auto mb-2" />
                         <p className="font-bold text-foreground">No work logs found{selectedCompany?.name ? ` for ${selectedCompany.name}` : ''}</p>
                         <p className="text-[11px] text-muted-foreground">Try changing your filters or selecting another company scope.</p>
@@ -601,13 +721,6 @@ export const WorkLogs = () => {
                           )}
                         </td>
                         <td className="px-4 py-3 font-mono font-bold">{formatHoursMinutes(log.hoursWorked)}</td>
-                        <td className="px-4 py-3">
-                          {log.isDraft ? (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 font-bold text-[10px]">Draft</span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold text-[10px]">Submitted</span>
-                          )}
-                        </td>
                         <td className="px-4 py-3">
                           <span className="px-2 py-0.5 rounded-md bg-muted text-[10px] font-bold">
                             {log.attachments?.length || 0} Files
@@ -929,22 +1042,37 @@ export const WorkLogs = () => {
             </div>
 
             <form onSubmit={(e) => handleFormSubmit(e, false)} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 bg-muted/30 p-3.5 rounded-2xl border border-border/50">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-muted/30 p-3.5 rounded-2xl border border-border/50">
                 <div>
                   <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
-                    Today's Date
+                    Start Time
                   </label>
-                  <div className="px-3 py-2 rounded-xl bg-background border border-border/70 text-xs font-bold text-foreground">
-                    {formatDisplayDate(new Date())}
-                  </div>
+                  <input
+                    type="time"
+                    value={formData.startTime || '09:00'}
+                    onChange={e => handleTimeChange('startTime', e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-background border border-border/70 text-xs font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
                 </div>
 
                 <div>
                   <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
-                    Hours Worked (Auto-calculated)
+                    End Time
                   </label>
-                  <div className="px-3 py-2 rounded-xl bg-background border border-border/70 text-xs font-bold font-mono text-primary flex items-center justify-between">
-                    <span>{formatHoursMinutes(todayStatus.hoursWorked)}</span>
+                  <input
+                    type="time"
+                    value={formData.endTime || '18:00'}
+                    onChange={e => handleTimeChange('endTime', e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-background border border-border/70 text-xs font-bold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider block mb-1">
+                    Hours Worked
+                  </label>
+                  <div className="px-3 py-2 rounded-xl bg-background border border-border/70 text-xs font-bold font-mono text-primary flex items-center justify-between h-[38px]">
+                    <span>{formatHoursMinutes(formData.hoursWorked)} ({formData.hoursWorked}h)</span>
                     {todayStatus.isClockedIn && (
                       <span className="text-[10px] text-emerald-600 font-bold animate-pulse">● Live</span>
                     )}

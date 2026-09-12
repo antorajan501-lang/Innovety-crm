@@ -84,9 +84,26 @@ const itemVariants = {
   }
 };
 
+const WEEKDAYS_SHORT = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+const formatSelectedDateLabel = (dateStr, options) => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    const dt = new Date(y, m, d, 12, 0, 0);
+    return dt.toLocaleDateString('en-US', options);
+  }
+  return dateStr;
+};
+
 // Helper for 7-day rolling week calendar calculation (Previous 3 days -> Today -> Next 3 days)
 const getRollingWeekDays = () => {
   const today = new Date();
+  today.setHours(12, 0, 0, 0);
+
   const days = [];
   for (let i = -3; i <= 3; i++) {
     const d = new Date(today);
@@ -96,9 +113,10 @@ const getRollingWeekDays = () => {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     const dateString = `${year}-${month}-${day}`;
+    const dayIndex = d.getDay();
 
     days.push({
-      dayName: d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(),
+      dayName: WEEKDAYS_SHORT[dayIndex] || d.toLocaleDateString('en-US', { weekday: 'short' }).toUpperCase(),
       dateNum: d.getDate(),
       isToday: i === 0,
       fullDate: d,
@@ -943,30 +961,28 @@ const Dashboard = () => {
 
             {/* Mini 7-Day Rolling Strip Date Selector */}
             <div className="grid grid-cols-7 gap-1 text-center py-1 bg-card rounded-2xl p-1.5 border border-border/40">
-              {rollingWeekDays.map((wd, i) => {
+              {rollingWeekDays.map((wd) => {
                 const isSelected = wd.dateString === selectedDate;
                 const isToday = wd.isToday;
 
                 return (
                   <button
-                    key={i}
+                    key={wd.dateString}
                     type="button"
                     onClick={() => setSelectedDate(wd.dateString)}
                     className={`py-1.5 px-1 rounded-xl transition-all cursor-pointer flex flex-col items-center justify-center ${
-                      isToday
-                        ? isSelected
-                          ? 'bg-primary text-white font-extrabold shadow-md shadow-primary/30 scale-105 ring-2 ring-primary ring-offset-2 dark:ring-offset-slate-900'
-                          : 'bg-primary/90 text-white font-extrabold shadow-sm'
-                        : isSelected
-                        ? 'bg-primary/15 text-primary font-extrabold border-2 border-primary shadow-2xs'
-                        : 'hover:bg-muted text-muted-foreground font-semibold border border-transparent'
+                      isSelected
+                        ? 'bg-primary text-white font-extrabold shadow-md shadow-primary/30 scale-105 ring-2 ring-primary ring-offset-2 dark:ring-offset-slate-900'
+                        : isToday
+                        ? 'bg-primary/10 text-primary font-extrabold border border-primary/30 hover:bg-primary/20'
+                        : 'hover:bg-muted text-foreground font-semibold border border-transparent'
                     }`}
                   >
                     <span className="text-[10px] block uppercase font-mono tracking-wider">
-                      {wd.dayName}
+                      {wd.dayName || '—'}
                     </span>
                     <span className="text-xs sm:text-sm font-bold block mt-0.5 font-sans">
-                      {wd.dateNum}
+                      {wd.dateNum ?? '—'}
                     </span>
                   </button>
                 );
@@ -977,7 +993,7 @@ const Dashboard = () => {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground block">
-                  {isTodaySelected ? "Today's Queue" : `${new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })} Queue`}
+                  {isTodaySelected ? "Today's Queue" : `${formatSelectedDateLabel(selectedDate, { month: 'short', day: 'numeric', weekday: 'short' })} Queue`}
                 </span>
                 <span className="text-[10px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-full border border-primary/20">
                   {dayTasks.length} {dayTasks.length === 1 ? 'Task' : 'Tasks'}
@@ -1041,7 +1057,7 @@ const Dashboard = () => {
                     })
                 ) : (
                   <div className="p-3.5 text-center text-xs text-muted-foreground rounded-2xl bg-muted/20 border border-dashed border-border font-medium">
-                    No tasks scheduled for {isTodaySelected ? 'today' : new Date(selectedDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.
+                    No tasks scheduled for {isTodaySelected ? 'today' : formatSelectedDateLabel(selectedDate, { month: 'short', day: 'numeric' })}.
                   </div>
                 )}
 

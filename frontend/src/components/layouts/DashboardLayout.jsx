@@ -40,7 +40,6 @@ import {
   FolderOpen,
   Wrench,
   FileCode,
-  ListTree,
   Sparkles,
   Award,
   Building2,
@@ -105,9 +104,7 @@ const QUICK_NAV_ITEMS = [
   { label: 'Users Directory', path: '/super-admin/users', keywords: ['users directory', 'all users', 'superadmin users', 'senior', 'junior', 'lead', 'manager'], category: 'Platform Control', icon: Users, roles: ['SUPER_ADMIN'] },
   { label: 'Team Directory', path: '/super-admin/teams', keywords: ['team directory', 'superadmin teams'], category: 'Platform Control', icon: Briefcase, roles: ['SUPER_ADMIN'] },
   { label: 'Admin Management', path: '/super-admin/admins', keywords: ['admin management', 'admins', 'admin list'], category: 'Platform Control', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
-  { label: 'Branding & Theme', path: '/super-admin/branding', keywords: ['branding', 'theme', 'logo', 'colors'], category: 'Platform Control', icon: Sparkles, roles: ['SUPER_ADMIN'] },
-  { label: 'Form Builder', path: '/super-admin/platform-builder/forms', keywords: ['form builder', 'builder', 'forms'], category: 'Platform Control', icon: FileCode, roles: ['SUPER_ADMIN'] },
-  { label: 'Menu Builder', path: '/super-admin/platform-builder/menus', keywords: ['menu builder', 'menus', 'navigation builder'], category: 'Platform Control', icon: ListTree, roles: ['SUPER_ADMIN'] }
+  { label: 'Branding & Theme', path: '/super-admin/branding', keywords: ['branding', 'theme', 'logo', 'colors'], category: 'Platform Control', icon: Sparkles, roles: ['SUPER_ADMIN'] }
 ];
 
 const DashboardLayout = ({ children }) => {
@@ -117,7 +114,12 @@ const DashboardLayout = ({ children }) => {
 
   const { user, logout } = useAuth();
   const { notifications, unreadCount, markRead, markAllAsRead, deleteNotification, clearAllNotifications } = useSocket();
-  const { companyName, companyLogo, themeMode, updateThemeSettings } = useTheme();
+  const { companyName, companyLogo, themeMode, updateThemeSettings, canUseChat } = useTheme();
+
+  console.log('[DEBUG Trace Step 4 - DashboardLayout]', {
+    role: user?.role,
+    canUseChat
+  });
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isPinned, setIsPinned] = useState(() => localStorage.getItem('sidebar_pinned') === 'true');
@@ -174,6 +176,9 @@ const DashboardLayout = ({ children }) => {
     if (!q) return [];
 
     return QUICK_NAV_ITEMS.filter((item) => {
+      // 0. Chat Feature Toggle check
+      if (item.path === '/chat' && !canUseChat) return false;
+
       // 1. Role Permission check
       const hasPermission = item.roles.includes(userRoleUpper);
       if (!hasPermission) return false;
@@ -186,7 +191,7 @@ const DashboardLayout = ({ children }) => {
 
       return labelMatch || categoryMatch || pathMatch || keywordMatch;
     });
-  }, [searchQuery, userRoleUpper]);
+  }, [searchQuery, userRoleUpper, canUseChat]);
 
   // Handle outside click for Search Dropdown
   useEffect(() => {
@@ -289,15 +294,6 @@ const DashboardLayout = ({ children }) => {
         { label: 'Admin Management', path: '/super-admin/admins', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
         { label: 'Organization Manager', path: '/super-admin/organization', icon: Award, roles: ['SUPER_ADMIN'] },
         { label: 'Leave Policy', path: '/super-admin/leave-policy', icon: Calendar, roles: ['SUPER_ADMIN'] }
-      ]
-    },
-    {
-      title: 'Platform Builder Hub',
-      items: [
-        { label: 'Form Builder', path: '/super-admin/platform-builder/forms', icon: FileCode, roles: ['SUPER_ADMIN'] },
-        { label: 'Menu Builder', path: '/super-admin/platform-builder/menus', icon: ListTree, roles: ['SUPER_ADMIN'] },
-        { label: 'Metrics & Audit', path: '/super-admin/platform-builder/audit', icon: BarChart3, roles: ['SUPER_ADMIN'] },
-        { label: 'Future Extensions', path: '/super-admin/platform-builder/extensions', icon: Layers, roles: ['SUPER_ADMIN'] }
       ]
     },
     {
@@ -497,7 +493,10 @@ const DashboardLayout = ({ children }) => {
           {/* Navigation Items grouped into floating capsule containers */}
           <nav className="flex-1 space-y-4 overflow-y-auto px-2 py-2 scrollbar-none [&::-webkit-scrollbar]:hidden [ms-overflow-style:none] [scrollbar-width:none] font-sans max-h-[calc(100vh-4rem)]">
             {categories.map((cat) => {
-              const filteredItems = cat.items.filter(item => item.roles.includes(user?.role));
+              const filteredItems = cat.items.filter(item => {
+                if (item.path === '/chat' && !canUseChat) return false;
+                return item.roles.includes(user?.role);
+              });
               if (filteredItems.length === 0) return null;
 
               return (
@@ -517,7 +516,7 @@ const DashboardLayout = ({ children }) => {
                     {filteredItems.map((item) => {
                       const Icon = item.icon;
                       const itemPathBase = item.path.split('?')[0];
-                      const isActive = location.pathname === item.path || currentFull === item.path || (itemPathBase === '/tasks' && location.pathname === '/tasks' && !location.search && item.label === 'Active Board') || (item.path.endsWith('/dashboard') && location.pathname === '/super-admin/platform-builder');
+                      const isActive = location.pathname === item.path || currentFull === item.path || (itemPathBase === '/tasks' && location.pathname === '/tasks' && !location.search && item.label === 'Active Board');
 
                       return (
                         <Link
