@@ -73,12 +73,10 @@ async function main() {
       await prisma.organizationSettings.create({
         data: {
           organizationId: innoveityRecord.id,
-          companyName: innoveityRecord.name || 'INNOVEITY',
-          primaryColor: '#10B981',
-          timezone: 'Asia/Kolkata',
-          clockInTime: '09:00',
-          clockOutTime: '18:00',
-          autoClockOutEnabled: true
+          branding: { companyName: innoveityRecord.name || 'INNOVEITY Workspace', primaryColor: '#10B981' },
+          theme: { selectedTheme: 'emerald', themeMode: 'light' },
+          chatEnabledForAdmins: true,
+          chatEnabledForUsers: true
         }
       });
       console.log('Default OrganizationSettings created for INNOVEITY.');

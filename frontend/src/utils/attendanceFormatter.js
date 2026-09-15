@@ -73,8 +73,19 @@ export const formatTime12Hour = (time) => {
 /**
  * Formats start and end time into a clean working hours range ("09:00 AM – 06:00 PM").
  */
-export const formatWorkingHoursRange = (startTime = '09:00', endTime = '18:00') => {
-  const formattedStart = formatTime12Hour(startTime || '09:00');
-  const formattedEnd = formatTime12Hour(endTime || '18:00');
+export const formatWorkingHoursRange = (arg1 = '09:00', arg2 = '18:00') => {
+  let start = '09:00';
+  let end = '18:00';
+
+  if (arg1 && typeof arg1 === 'object') {
+    start = arg1.startTime || arg1.clockInTime || arg1.clockIn || '09:00';
+    end = arg1.endTime || arg1.clockOutTime || arg1.clockOut || '18:00';
+  } else {
+    start = arg1 || '09:00';
+    end = arg2 || '18:00';
+  }
+
+  const formattedStart = formatTime12Hour(start);
+  const formattedEnd = formatTime12Hour(end);
   return `${formattedStart} – ${formattedEnd}`;
 };

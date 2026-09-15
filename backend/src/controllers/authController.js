@@ -115,9 +115,16 @@ const login = async (req, res) => {
       const companyCodeDefault = user.organization?.companyCode ? `${user.organization.companyCode}@2026` : null;
       let dobTemp = null;
       if (user.dob) {
-        const dobFormatted = user.dob.toISOString().split('T')[0]; // YYYY-MM-DD
-        const parts = dobFormatted.split('-');
-        dobTemp = `${parts[2]}${parts[1]}${parts[0]}`; // DDMMYYYY
+        try {
+          const d = new Date(user.dob);
+          if (!isNaN(d.getTime())) {
+            const dobFormatted = d.toISOString().split('T')[0];
+            const parts = dobFormatted.split('-');
+            if (parts.length === 3) dobTemp = `${parts[2]}${parts[1]}${parts[0]}`;
+          }
+        } catch (e) {
+          console.warn('[Auth] DOB formatting warning:', e.message);
+        }
       }
 
       if (
@@ -162,10 +169,17 @@ const login = async (req, res) => {
     // Check temporary password (DOB)
     let isTempPassword = false;
     if (user.dob) {
-      const dobFormatted = user.dob.toISOString().split('T')[0];
-      const parts = dobFormatted.split('-');
-      const dobTemp = `${parts[2]}${parts[1]}${parts[0]}`;
-      isTempPassword = (password === dobTemp);
+      try {
+        const d = new Date(user.dob);
+        if (!isNaN(d.getTime())) {
+          const dobFormatted = d.toISOString().split('T')[0];
+          const parts = dobFormatted.split('-');
+          if (parts.length === 3) {
+            const dobTemp = `${parts[2]}${parts[1]}${parts[0]}`;
+            isTempPassword = (password === dobTemp);
+          }
+        }
+      } catch (e) {}
     }
 
     // Activity log

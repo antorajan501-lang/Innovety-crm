@@ -1152,8 +1152,8 @@ const Dashboard = () => {
             {activities.length === 0 ? (
               <p className="text-xs text-muted-foreground py-4">No recent activity logs.</p>
             ) : (
-              activities.map((act) => (
-                <div key={act._id} className="flex items-start justify-between gap-3 text-xs border-b border-border/30 pb-2.5 last:border-0">
+              activities.map((act, index) => (
+                <div key={act.id || act._id || `act-${index}`} className="flex items-start justify-between gap-3 text-xs border-b border-border/30 pb-2.5 last:border-0">
                   <div>
                     <span className="font-bold text-foreground">{act.userName || 'System'}</span>
                     {act.userCode && <span className="text-[10px] text-muted-foreground font-mono ml-1 font-semibold">({act.userCode})</span>}
