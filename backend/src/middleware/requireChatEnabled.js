@@ -10,7 +10,7 @@ const prisma = require('../utils/db');
 const requireChatEnabled = async (req, res, next) => {
   try {
     const role = req.user?.role;
-    const organizationId = req.user?.organizationId || req.user?.organization?.id;
+    const organizationId = req.query?.organizationId || req.user?.organizationId || req.user?.organization?.id;
 
     if (role === 'SUPER_ADMIN') {
       return next();
