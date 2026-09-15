@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Building2, Lock, Mail, AlertTriangle, ArrowRight, ShieldCheck, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Building2, Lock, Mail, AlertTriangle, ArrowRight, ShieldCheck, CheckCircle2, RefreshCw, Clock } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useOrganizationBranding } from '../context/BrandContext';
@@ -10,6 +10,7 @@ import { setPlatformBranding } from '../utils/branding';
 const CompanyLogin = () => {
   const { slug } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, login } = useAuth();
   const { updatePublicBranding } = useOrganizationBranding();
 
@@ -28,7 +29,18 @@ const CompanyLogin = () => {
   const [loginInput, setLoginInput] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const [formError, setFormError] = useState('');
+  const [serverError, setServerError] = useState('');
+
+  // Detect session expired parameter on mount / URL change
+  useEffect(() => {
+    if (searchParams.get('expired') === 'true') {
+      setSessionExpired(true);
+    } else {
+      setSessionExpired(false);
+    }
+  }, [searchParams]);
 
   // 1. Cross-Tenant Protection (Phase 6.6): If authenticated user opens another company's login, redirect
   useEffect(() => {
@@ -73,6 +85,16 @@ const CompanyLogin = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setFormError('');
+    setServerError('');
+    setSessionExpired(false);
+
+    // Cleanly remove expired parameter from URL if present
+    if (searchParams.get('expired')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('expired');
+      setSearchParams(nextParams, { replace: true });
+    }
+
     if (!loginInput.trim() || !password) {
       setFormError('Please enter your email/ID and password.');
       return;
@@ -82,12 +104,21 @@ const CompanyLogin = () => {
       setSubmitting(true);
       const res = await login(loginInput.trim(), password, { organizationSlug: slug });
       if (res && res.success) {
-        navigate('/dashboard');
+        navigate('/dashboard', { replace: true });
       } else {
-        setFormError(res?.message || 'Invalid login credentials.');
+        if (res?.isServerError) {
+          setServerError(res?.message || 'Login failed. Please try again later.');
+        } else {
+          setFormError(res?.message || 'Invalid login credentials.');
+        }
       }
     } catch (err) {
-      setFormError(err.response?.data?.message || err.message || 'Login failed. Please try again.');
+      const isServer = !err.response || err.response.status >= 500;
+      if (isServer) {
+        setServerError('Login failed. Please try again later.');
+      } else {
+        setFormError(err.response?.data?.message || err.message || 'Login failed. Please try again.');
+      }
     } finally {
       setSubmitting(false);
     }
@@ -172,10 +203,27 @@ const CompanyLogin = () => {
           </div>
         </div>
 
+        {/* State 1: Session Expired (Amber neutral banner) */}
+        {sessionExpired && !formError && !serverError && (
+          <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in duration-200">
+            <Clock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>Your session has expired. Please log in again.</span>
+          </div>
+        )}
+
+        {/* State 2: Invalid Credentials (Red banner) */}
         {formError && (
-          <div className="p-3.5 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive text-xs font-bold flex items-center gap-2">
+          <div className="p-3.5 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive text-xs font-bold flex items-center gap-2 animate-in fade-in duration-200">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             <span>{formError}</span>
+          </div>
+        )}
+
+        {/* State 3: Server Exception Error (Red banner) */}
+        {serverError && (
+          <div className="p-3.5 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive text-xs font-bold flex items-center gap-2 animate-in fade-in duration-200">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>{serverError}</span>
           </div>
         )}
 

@@ -19,6 +19,8 @@ const getAllOrganizations = async (req, res, next) => {
       whereClause.status = 'ACTIVE';
     } else if (status && status !== 'ALL') {
       whereClause.status = status.toUpperCase();
+    } else {
+      whereClause.status = { notIn: ['DELETED', 'ARCHIVED'] };
     }
 
     if (search && search.trim()) {

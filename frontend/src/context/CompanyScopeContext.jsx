@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import api from '../services/api';
+import api, { getSocket } from '../services/api';
 import { useAuth } from './AuthContext';
 
 const CompanyScopeContext = createContext(null);
@@ -47,22 +47,28 @@ export const CompanyScopeProvider = ({ children }) => {
 
       if (isSuperAdmin) {
         if (comps.length > 0) {
-          const savedId = localStorage.getItem('mrf_selected_company_id');
-          const savedExists = savedId && (savedId === 'all' || comps.some((c) => (c.id || c._id) === savedId));
+          const targetId = selectedOrgIdState || localStorage.getItem('mrf_selected_company_id');
+          const isValidTarget = targetId && (targetId === 'all' || comps.some((c) => (c.id || c._id) === targetId));
 
-          if (savedExists) {
-            setSelectedOrgIdState(savedId);
-            return savedId;
+          if (isValidTarget) {
+            setSelectedOrgIdState(targetId);
+            return targetId;
           }
 
+          // If target company was deleted or invalid, fallback to userOrg or innoveity or comps[0]
           const userOrg = comps.find((c) => (c.id || c._id) === userOrgId);
           const defaultOrg = userOrg || comps.find((c) => c.slug === 'innoveity' || c.companyCode === 'INN001') || comps[0];
 
           if (defaultOrg) {
             const defId = defaultOrg.id || defaultOrg._id;
+            console.log('[CompanyScopeContext] Selected organization no longer exists. Switching to default:', defId);
             setSelectedOrgIdState(defId);
             localStorage.setItem('mrf_selected_company_id', defId);
             return defId;
+          } else {
+            setSelectedOrgIdState('all');
+            localStorage.setItem('mrf_selected_company_id', 'all');
+            return 'all';
           }
         }
       } else {
@@ -77,10 +83,40 @@ export const CompanyScopeProvider = ({ children }) => {
       setLoading(false);
     }
     return selectedOrgId;
-  }, [userOrgId, isSuperAdmin, selectedOrgId]);
+  }, [userOrgId, isSuperAdmin, selectedOrgIdState, selectedOrgId]);
 
   useEffect(() => {
     fetchCompanies();
+  }, [fetchCompanies]);
+
+  // Real-time synchronization for deleted/created/updated companies
+  useEffect(() => {
+    const handleOrgUpdate = () => {
+      console.log('[CompanyScopeContext] Organization update detected. Refreshing organization list...');
+      fetchCompanies();
+    };
+
+    window.addEventListener('organization-updated', handleOrgUpdate);
+
+    const socket = getSocket();
+    if (socket) {
+      socket.off('organization_deleted', handleOrgUpdate);
+      socket.off('organization_created', handleOrgUpdate);
+      socket.off('organization_updated', handleOrgUpdate);
+
+      socket.on('organization_deleted', handleOrgUpdate);
+      socket.on('organization_created', handleOrgUpdate);
+      socket.on('organization_updated', handleOrgUpdate);
+    }
+
+    return () => {
+      window.removeEventListener('organization-updated', handleOrgUpdate);
+      if (socket) {
+        socket.off('organization_deleted', handleOrgUpdate);
+        socket.off('organization_created', handleOrgUpdate);
+        socket.off('organization_updated', handleOrgUpdate);
+      }
+    };
   }, [fetchCompanies]);
 
   useEffect(() => {

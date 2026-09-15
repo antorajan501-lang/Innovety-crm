@@ -17,7 +17,6 @@ const reportRoutes = require('./routes/reportRoutes');
 const logRoutes = require('./routes/logRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
-const repositoryRoutes = require('./routes/repositoryRoutes');
 const leaveRoutes = require('./routes/leaveRoutes');
 const assetRoutes = require('./routes/assetRoutes');
 const chatRoutes = require('./routes/chatRoutes');
@@ -263,7 +262,6 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/logs', logRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
-app.use('/api/repositories', repositoryRoutes);
 const leavePolicyRoutes = require('./routes/leavePolicyRoutes');
 
 app.use('/api/leave-policy', leavePolicyRoutes);

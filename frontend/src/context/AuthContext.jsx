@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import api, { disconnectSocket } from '../services/api';
+import api, { disconnectSocket, setManualLogoutFlag } from '../services/api';
 import { setPlatformBranding } from '../utils/branding';
 
 const AuthContext = createContext(null);
@@ -10,7 +10,10 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isTempPassword, setIsTempPassword] = useState(false);
 
-  const logout = () => {
+  const logout = (isManual = false) => {
+    if (isManual) {
+      setManualLogoutFlag(true);
+    }
     disconnectSocket();
     if (api.defaults.headers.common) {
       delete api.defaults.headers.common['Authorization'];
@@ -64,6 +67,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (userId, password, options = {}) => {
+    setManualLogoutFlag(false);
     setLoading(true);
     try {
       // Clear any stale cached data and tokens from prior session
@@ -106,8 +110,9 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       logout();
       setLoading(false);
-      const msg = error.response?.data?.message || 'Login failed. Please check your credentials.';
-      return { success: false, message: msg };
+      const isServerError = !error.response || error.response.status >= 500;
+      const msg = error.response?.data?.message || (isServerError ? 'Login failed. Please try again later.' : 'Invalid email or password.');
+      return { success: false, message: msg, isServerError, status: error.response?.status };
     }
   };
 

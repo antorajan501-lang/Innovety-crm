@@ -63,7 +63,6 @@ const QUICK_NAV_ITEMS = [
   { label: 'Active Board', path: '/tasks?tab=Board', keywords: ['active board', 'board', 'kanban', 'active project', 'sprint', 'active'], category: 'Workspaces', icon: Layers, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'My Tasks / Task Board', path: '/tasks', keywords: ['tasks', 'task', 'task board', 'my tasks', 'todo'], category: 'Workspaces', icon: FileText, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
   { label: 'Roadmap', path: '/tasks?tab=Timeline', keywords: ['roadmap', 'timeline', 'schedule', 'gantt'], category: 'Workspaces', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
-  { label: 'Repositories', path: '/tasks?tab=Code', keywords: ['repositories', 'repo', 'git', 'code', 'github'], category: 'Workspaces', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
 
   // Communication
   { label: 'Chat Room', path: '/chat', keywords: ['chat', 'messages', 'chat room', 'messaging', 'dm', 'discussion'], category: 'Communication', icon: MessageSquare, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN'] },
@@ -308,8 +307,7 @@ const DashboardLayout = ({ children }) => {
       items: [
         { label: 'Projects', path: '/projects', icon: FolderOpen, roles: ['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN'] },
         { label: 'Active Board', path: '/tasks?tab=Board', icon: Layers, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
-        { label: 'Roadmap', path: '/tasks?tab=Timeline', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
-        { label: 'Repositories', path: '/tasks?tab=Code', icon: Code, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] }
+        { label: 'Roadmap', path: '/tasks?tab=Timeline', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] }
       ]
     },
     {
@@ -368,8 +366,8 @@ const DashboardLayout = ({ children }) => {
   ];
 
   const handleLogout = () => {
-    logout();
-    navigate('/login');
+    logout(true);
+    navigate('/login', { replace: true });
   };
 
   const handleNotificationClick = (notif) => {
@@ -804,7 +802,7 @@ const DashboardLayout = ({ children }) => {
                       type="button"
                       onClick={() => {
                         setProfileOpen(false);
-                        logout();
+                        handleLogout();
                       }}
                       className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs text-danger hover:bg-danger/5 font-bold transition-colors text-left"
                     >

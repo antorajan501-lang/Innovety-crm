@@ -25,7 +25,6 @@ import {
   FolderOpen,
   Filter,
   FileText,
-  Code as CodeIcon,
   Sun,
   Moon,
   Search,
@@ -172,11 +171,6 @@ const Tasks = () => {
   // Subtask input state
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
 
-  // Git Repositories states
-  const [repositories, setRepositories] = useState([]);
-  const [newRepoForm, setNewRepoForm] = useState({ name: '', url: '', lang: 'React/JS' });
-  const [showAddRepo, setShowAddRepo] = useState(false);
-  
   // Custom Confirmation Modal state
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
@@ -230,94 +224,6 @@ const Tasks = () => {
     }
   };
 
-  const fetchRepositories = async (orgId = effectiveOrgId) => {
-    const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
-    try {
-      const params = targetOrg ? { organizationId: targetOrg } : {};
-      const res = await api.get('/repositories', { params });
-      setRepositories(res.data || []);
-    } catch (err) {
-      console.error('Failed to load repositories:', err);
-    }
-  };
-
-  const handleRegisterRepo = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await api.post('/repositories', {
-        ...newRepoForm,
-        organizationId: effectiveOrgId || user?.organizationId
-      });
-      setRepositories([...repositories, res.data]);
-      setNewRepoForm({ name: '', url: '', lang: 'React/JS' });
-      setShowAddRepo(false);
-      setAlertMsg('Git repository registered successfully.');
-      fetchRepositories(effectiveOrgId);
-    } catch (err) {
-      setAlertMsg(err.response?.data?.message || 'Failed to register repository.');
-    }
-  };
-
-  const handleDeleteRepo = (repoId) => {
-    setConfirmModal({
-      isOpen: true,
-      title: 'Remove Repository Link',
-      message: 'Are you sure you want to delete this repository link?',
-      onConfirm: async () => {
-        try {
-          await api.delete(`/repositories/${repoId}`);
-          setRepositories(repositories.filter(r => r.id !== repoId));
-          setAlertMsg('Repository link removed successfully.');
-        } catch (err) {
-          setAlertMsg('Failed to delete repository.');
-        }
-      }
-    });
-  };
-
-  const handleCreateBranch = async (repoId, name) => {
-    try {
-      const res = await api.post(`/repositories/${repoId}/branches`, { name });
-      setRepositories(repositories.map(r => {
-        if (r.id === repoId) {
-          return {
-            ...r,
-            branches: [...(r.branches || []), res.data]
-          };
-        }
-        return r;
-      }));
-      setAlertMsg(`Branch '${name}' registered successfully.`);
-    } catch (err) {
-      setAlertMsg(err.response?.data?.message || 'Failed to create branch.');
-    }
-  };
-
-  const handleDeleteBranch = (repoId, branchId) => {
-    setConfirmModal({
-      isOpen: true,
-      title: 'Delete Branch',
-      message: 'Are you sure you want to delete this branch?',
-      onConfirm: async () => {
-        try {
-          await api.delete(`/repositories/${repoId}/branches/${branchId}`);
-          setRepositories(repositories.map(r => {
-            if (r.id === repoId) {
-              return {
-                ...r,
-                branches: r.branches.filter(b => b.id !== branchId)
-              };
-            }
-            return r;
-          }));
-          setAlertMsg('Branch removed successfully.');
-        } catch (err) {
-          setAlertMsg('Failed to delete branch.');
-        }
-      }
-    });
-  };
-
   const fetchTeamMembers = async (orgId = effectiveOrgId) => {
     const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
@@ -369,7 +275,6 @@ const Tasks = () => {
 
   useEffect(() => {
     fetchTasks(effectiveOrgId);
-    fetchRepositories(effectiveOrgId);
     fetchProjects(effectiveOrgId);
     fetchTeamMembers(effectiveOrgId);
     fetchTeams(effectiveOrgId);
@@ -410,7 +315,7 @@ const Tasks = () => {
     const params = new URLSearchParams(location.search);
     const tabParam = params.get('tab');
     if (tabParam) {
-      const validTabs = ['Summary', 'Board', 'Code', 'Timeline', 'Docs', 'Forms'];
+      const validTabs = ['Summary', 'Board', 'Timeline', 'Docs', 'Forms'];
       const match = validTabs.find(t => t.toLowerCase() === tabParam.toLowerCase());
       if (match) {
         setActiveSubTab(match);
@@ -1082,224 +987,6 @@ const Tasks = () => {
     );
   };
 
-  const getDynamicCommits = () => {
-    const activeTasks = tasks.filter(t => t.status === 'APPROVED' || t.status === 'IN_PROGRESS');
-    if (activeTasks.length === 0) {
-      return [
-        { hash: 'a1b2c3d', message: 'Initial commit and repository setup', author: user.name, time: '2 days ago' }
-      ];
-    }
-    return activeTasks.map((t, idx) => {
-      const hashes = ['a8d7f6e', 'b9c8d7e', 'c0b9a8f', 'd1e2f3a', 'e4d3c2b', 'f5e6d7c'];
-      const hash = hashes[idx % hashes.length] || 'a1b2c3d';
-      const action = t.status === 'APPROVED' ? 'feat' : 'work';
-      const author = t.assignee?.name || user.name;
-      const time = `${idx + 1} day${idx > 0 ? 's' : ''} ago`;
-      return {
-        hash,
-        message: `${action}: ${t.title.toLowerCase().replace(/\./g, '')}`,
-        author: `${author} (${t.assignee?.employeeId || 'System'})`,
-        time
-      };
-    });
-  };
-
-  const renderCodeTab = () => {
-    const commits = getDynamicCommits();
-
-    return (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300 text-left">
-        {/* Left side: Repositories & Commit stream */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="rounded-xl border border-border/40 bg-card p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between border-b pb-2 mb-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Active Workspace Repositories</h4>
-              {['ADMIN', 'TEAM_LEADER'].includes(user.role) && (
-                <button 
-                  onClick={() => setShowAddRepo(!showAddRepo)}
-                  className="text-[10px] bg-primary text-primary-foreground hover:bg-primary-hover font-bold px-2.5 py-1 rounded shadow-sm"
-                >
-                  {showAddRepo ? 'Cancel' : '+ Register Link'}
-                </button>
-              )}
-            </div>
-
-            {showAddRepo && (
-              <form onSubmit={handleRegisterRepo} className="bg-muted/30 border border-border/30 rounded-xl p-3.5 space-y-3 animate-in slide-in-from-top-2 duration-200">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="flex flex-col gap-1 text-[10px]">
-                    <label className="font-bold text-muted-foreground uppercase">Repo Name *</label>
-                    <input 
-                      type="text" 
-                      required
-                      placeholder="e.g. mrf-crm-frontend"
-                      value={newRepoForm.name}
-                      onChange={(e) => setNewRepoForm({ ...newRepoForm, name: e.target.value })}
-                      className="text-xs border bg-card px-2 py-1 rounded"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1 text-[10px]">
-                    <label className="font-bold text-muted-foreground uppercase">Git URL (GitHub/GitLab)</label>
-                    <input 
-                      type="url"
-                      placeholder="e.g. https://github.com/org/repo"
-                      value={newRepoForm.url}
-                      onChange={(e) => setNewRepoForm({ ...newRepoForm, url: e.target.value })}
-                      className="text-xs border bg-card px-2 py-1 rounded"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1 text-[10px]">
-                    <label className="font-bold text-muted-foreground uppercase">Primary Tech stack</label>
-                    <select
-                      value={newRepoForm.lang}
-                      onChange={(e) => setNewRepoForm({ ...newRepoForm, lang: e.target.value })}
-                      className="text-xs border bg-card px-2 py-1 rounded"
-                    >
-                      <option value="React/JS">React (JS/Vite)</option>
-                      <option value="Node/Express">Node/Express/Prisma</option>
-                      <option value="Flutter/Dart">Flutter/Dart (Mobile)</option>
-                      <option value="Python/FastAPI">Python/FastAPI</option>
-                    </select>
-                  </div>
-                </div>
-                <button type="submit" className="bg-primary hover:bg-primary-hover text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shadow w-full">
-                  Link Repository
-                </button>
-              </form>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {repositories.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4 col-span-2">No repositories linked yet.</p>
-              ) : (
-                repositories.map((repo) => (
-                  <div key={repo.id} className="border border-border/30 bg-muted/20 p-4 rounded-xl space-y-3.5 relative group flex flex-col justify-between">
-                    <div>
-                      {['ADMIN', 'TEAM_LEADER'].includes(user.role) && (
-                        <button 
-                          onClick={() => handleDeleteRepo(repo.id)}
-                          className="absolute top-2 right-2 text-muted-foreground hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove link"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-foreground font-mono truncate mr-4">{repo.name}</span>
-                        <span className="text-[9px] bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded font-bold uppercase shrink-0">Build {repo.status}</span>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Framework: {repo.lang}</p>
-                    </div>
-
-                    {/* Branches List Section */}
-                    <div className="pt-2 border-t border-border/10 space-y-1.5 text-left">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[9px] font-bold text-muted-foreground uppercase">Active Branches ({repo.branches?.length || 0})</span>
-                        {['ADMIN', 'TEAM_LEADER', 'INTERN'].includes(user.role) && (
-                          <button
-                            onClick={() => {
-                              setPromptModal({
-                                isOpen: true,
-                                title: 'Create Git Branch',
-                                placeholder: 'e.g. feat/attendance-map',
-                                value: '',
-                                onConfirm: (name) => handleCreateBranch(repo.id, name)
-                              });
-                            }}
-                            className="text-[9px] text-primary font-bold hover:underline"
-                          >
-                            + Add Branch
-                          </button>
-                        )}
-                      </div>
-                      <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                        {repo.branches && repo.branches.length > 0 ? (
-                          repo.branches.map((br) => (
-                            <div key={br.id} className="flex items-center justify-between text-[10px] bg-background/50 border border-border/10 px-2 py-1 rounded">
-                              <div className="flex items-center gap-1.5 truncate mr-2">
-                                <span className="font-mono text-foreground truncate">{br.name}</span>
-                                {br.isDefault && <span className="text-[8px] bg-primary/10 text-primary px-1 rounded font-bold shrink-0">Default</span>}
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <a 
-                                  href={br.url || (repo.url ? `${repo.url}/tree/${br.name}` : '#')} 
-                                  target="_blank" 
-                                  rel="noopener noreferrer" 
-                                  className="text-primary hover:underline font-semibold"
-                                >
-                                  View
-                                </a>
-                                {!br.isDefault && (
-                                  <button 
-                                    onClick={() => handleDeleteBranch(repo.id, br.id)} 
-                                    className="text-red-500 hover:text-red-600 font-bold px-0.5"
-                                    title="Delete Branch"
-                                  >
-                                    ✕
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          ))
-                        ) : (
-                          <span className="text-[9px] text-muted-foreground">No branches found.</span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex justify-between items-center text-[10px] pt-1.5 border-t border-border/10">
-                      <span>Commits logged: <b>{repo.commitsCount}</b></span>
-                      <a href={repo.url || '#'} target="_blank" rel="noopener noreferrer" className="text-primary font-bold hover:underline">
-                        Explore →
-                      </a>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-border/40 bg-card p-5 shadow-sm space-y-4">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground border-b pb-2 mb-3">Recent Commit Stream (Linked to task activity)</h4>
-            <div className="space-y-3">
-              {commits.map((c, i) => (
-                <div key={i} className="flex items-start gap-3 border-l-2 border-primary/20 pl-3.5">
-                  <div className="flex-1">
-                    <p className="text-xs font-bold text-foreground leading-normal">{c.message}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5 font-sans">Committed by {c.author} • {c.time}</p>
-                  </div>
-                  <span className="text-[9px] font-mono font-bold bg-muted border px-2 py-0.5 rounded shrink-0">{c.hash}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-border/40 bg-card p-5 shadow-sm space-y-4">
-          <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground border-b pb-2 mb-3">Pull Requests Status</h4>
-          <div className="space-y-3">
-            {[
-              { id: '#42', title: 'feat/attendance-geocoding', state: 'Review Required', color: 'bg-purple-500/10 text-purple-600' },
-              { id: '#41', title: 'fix/intern-routes-403', state: 'Approved / Merge ready', color: 'bg-emerald-500/10 text-emerald-600' },
-              { id: '#40', title: 'style/admin-dashboard-redesign', state: 'Merged', color: 'bg-slate-500/10 text-slate-500' }
-            ].map((pr, i) => (
-              <div key={i} className="border border-border/20 p-3 rounded-xl space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold font-mono text-primary">{pr.id} {pr.title}</span>
-                </div>
-                <span className={`inline-block rounded-full px-2 py-0.5 text-[8px] font-bold uppercase mt-1 ${pr.color}`}>
-                  {pr.state}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-
-
   const renderDocsTab = () => {
     const documents = [
       { title: 'Innoveity Intern Onboarding Guide', desc: 'Step-by-step checklist for system configurations and access setup.', author: 'Admin', date: 'Jul 15, 2026' },
@@ -1440,7 +1127,6 @@ const Tasks = () => {
         {/* Shared Company Selector Bar */}
         <CompanyScopeSelector onScopeChange={(newId) => {
           fetchTasks(newId);
-          fetchRepositories(newId);
           fetchProjects(newId);
           fetchTeamMembers(newId);
           fetchTeams(newId);

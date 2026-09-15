@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { X, ChevronRight, ChevronLeft, UserCheck, CheckCircle2, AlertCircle, UploadCloud, FileText, Trash2, Building2 } from 'lucide-react';
 import api from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import { extractCompanyList } from '../../context/CompanyScopeContext';
 
 const CANDIDATE_TYPES = [
   { id: 'Student', title: 'Student', desc: 'Currently enrolled in college / university' },
@@ -126,11 +127,11 @@ const UserWizardModal = ({
     const fetchOrgs = async () => {
       try {
         const res = await api.get('/organizations');
-        const list = res.data.organizations || res.data || [];
+        const list = extractCompanyList(res.data);
         setOrganizations(list);
         if (list.length > 0) {
           setForm(prev => {
-            if (!prev.organizationId) {
+            if (!prev.organizationId || !list.some(o => o.id === prev.organizationId)) {
               const innoveity = list.find(o => o.slug === 'innoveity');
               return { ...prev, organizationId: innoveity?.id || list[0]?.id || '' };
             }
@@ -142,6 +143,9 @@ const UserWizardModal = ({
       }
     };
     fetchOrgs();
+
+    window.addEventListener('organization-updated', fetchOrgs);
+    return () => window.removeEventListener('organization-updated', fetchOrgs);
   }, [isOpen]);
 
   // Fetch dynamic org tree & reporting managers

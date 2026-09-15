@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Calendar, ArrowRight, Clock, Check, X, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import api from '../../services/api';
+import api, { getSocket } from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
 import UserAvatar from '../common/UserAvatar';
 

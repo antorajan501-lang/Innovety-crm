@@ -33,11 +33,27 @@ api.interceptors.request.use(
   }
 );
 
+let isRedirecting = false;
+let isManualLogoutInProgress = false;
+
+export const setManualLogoutFlag = (val = true) => {
+  isManualLogoutInProgress = val;
+};
+
+export const isManualLogout = () => {
+  return isManualLogoutInProgress;
+};
+
 // Intercept 401 Unauthorized responses to attempt silent token renewal
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+
+    // Do not trigger session expired redirect if user explicitly initiated manual logout
+    if (isManualLogoutInProgress) {
+      return Promise.reject(error);
+    }
 
     // Only attempt refresh if 401 Unauthorized, request has not already retried, and is not an auth request itself
     if (
@@ -78,11 +94,18 @@ api.interceptors.response.use(
       }
 
       // If token renewal failed or no token exists, log out user
-      console.log('Session expired or unauthorized. Logging out...');
-      localStorage.clear();
-      sessionStorage.clear();
-      if (!window.location.pathname.includes('/login')) {
-        window.location.href = '/login?expired=true';
+      if (!isManualLogoutInProgress) {
+        console.log('Session expired or unauthorized. Logging out...');
+        localStorage.clear();
+        sessionStorage.clear();
+        if (!isRedirecting && !window.location.search.includes('expired=true')) {
+          isRedirecting = true;
+          if (window.location.pathname.includes('/login')) {
+            window.location.search = '?expired=true';
+          } else {
+            window.location.href = '/login?expired=true';
+          }
+        }
       }
     }
     return Promise.reject(error);

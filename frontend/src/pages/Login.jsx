@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { setPlatformBranding } from '../utils/branding';
@@ -17,12 +17,15 @@ import {
   ShieldCheck,
   CheckCircle2,
   X,
-  RotateCcw
+  RotateCcw,
+  Clock,
+  AlertTriangle
 } from 'lucide-react';
 
 const Login = () => {
   const { user, login, requestPasswordReset, verifyResetOtp, resetPasswordWithToken } = useAuth();
   const { companyName, companyLogo } = useTheme();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     setPlatformBranding();
@@ -34,7 +37,18 @@ const Login = () => {
   const [rememberMe, setRememberMe] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [credentialError, setCredentialError] = useState('');
+  const [serverError, setServerError] = useState('');
+
+  // Detect session expired parameter on mount / URL change
+  useEffect(() => {
+    if (searchParams.get('expired') === 'true') {
+      setSessionExpired(true);
+    } else {
+      setSessionExpired(false);
+    }
+  }, [searchParams]);
 
   // Forgot Password Overlay Modal State
   const [forgotModalOpen, setForgotModalOpen] = useState(false);
@@ -95,22 +109,38 @@ const Login = () => {
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     if (!userId || !password) {
-      setError('Please enter both your User ID and password.');
+      setCredentialError('Please enter both your User ID and password.');
+      setServerError('');
+      setSessionExpired(false);
       return;
     }
-    setError('');
+    setCredentialError('');
+    setServerError('');
+    setSessionExpired(false);
+
+    // Cleanly remove expired parameter from URL if present
+    if (searchParams.get('expired')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('expired');
+      setSearchParams(nextParams, { replace: true });
+    }
+
     setLoading(true);
     const res = await login(userId, password);
     setLoading(false);
     if (res.success) {
       const loggedUserRole = res.user?.role || user?.role;
       if (loggedUserRole === 'SUPER_ADMIN') {
-        navigate('/super-admin/dashboard');
+        navigate('/super-admin/dashboard', { replace: true });
       } else {
-        navigate('/');
+        navigate('/', { replace: true });
       }
     } else {
-      setError(res.message);
+      if (res.isServerError) {
+        setServerError(res.message || 'Login failed. Please try again later.');
+      } else {
+        setCredentialError(res.message || 'Invalid email or password.');
+      }
     }
   };
 
@@ -422,11 +452,27 @@ const Login = () => {
               </p>
             </div>
 
-            {/* Error Alert */}
-            {error && (
-              <div className="mb-4 flex items-start gap-2 rounded-2xl bg-danger/10 border border-danger/20 p-3.5 text-xs text-danger font-semibold">
-                <span className="shrink-0 mt-0.5">⚠️</span>
-                <span>{error}</span>
+            {/* Banner State 1: Session Expired (Amber/Blue neutral info) */}
+            {sessionExpired && !credentialError && !serverError && (
+              <div className="mb-4 flex items-center gap-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 p-3.5 text-xs text-amber-700 dark:text-amber-400 font-semibold animate-in fade-in duration-200">
+                <Clock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                <span>Your session has expired. Please log in again.</span>
+              </div>
+            )}
+
+            {/* Banner State 2: Invalid Credentials Error (Red) */}
+            {credentialError && (
+              <div className="mb-4 flex items-start gap-2.5 rounded-2xl bg-danger/10 border border-danger/20 p-3.5 text-xs text-danger font-semibold animate-in fade-in duration-200">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-danger" />
+                <span>{credentialError}</span>
+              </div>
+            )}
+
+            {/* Banner State 3: Server Exception Error (Red) */}
+            {serverError && (
+              <div className="mb-4 flex items-start gap-2.5 rounded-2xl bg-danger/10 border border-danger/20 p-3.5 text-xs text-danger font-semibold animate-in fade-in duration-200">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-danger" />
+                <span>{serverError}</span>
               </div>
             )}
 

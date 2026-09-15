@@ -4,14 +4,14 @@ import {
   UserCheck, Plus, Search, Edit3, Trash2, ShieldCheck, Key,
   X, CheckCircle2, AlertCircle, RefreshCw, Lock, UserX, Building2
 } from 'lucide-react';
-import api from '../../../services/api';
+import api, { getSocket } from '../../../services/api';
 import UserAvatar from '../../../components/common/UserAvatar';
 import CompanyScopeSelector from '../../../components/common/CompanyScopeSelector';
-import { useCompanyScope } from '../../../context/CompanyScopeContext';
+import { useCompanyScope, extractCompanyList } from '../../../context/CompanyScopeContext';
 
 const AdminManagement = () => {
   const [searchParams] = useSearchParams();
-  const { selectedOrgId, selectedCompany } = useCompanyScope();
+  const { selectedOrgId, selectedCompany, companies: scopeCompanies, refetchCompanies } = useCompanyScope();
   const [admins, setAdmins] = useState([]);
   const [organizations, setOrganizations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -55,7 +55,7 @@ const AdminManagement = () => {
   const fetchOrganizations = async () => {
     try {
       const res = await api.get('/organizations');
-      const list = res.data?.data || res.data || [];
+      const list = extractCompanyList(res.data);
       setOrganizations(Array.isArray(list) ? list : []);
     } catch (err) {
       console.error('Failed to fetch organizations:', err);
@@ -70,17 +70,51 @@ const AdminManagement = () => {
     }
   }, [selectedOrgId, searchParams]);
 
+  useEffect(() => {
+    if (Array.isArray(scopeCompanies) && scopeCompanies.length > 0) {
+      setOrganizations(scopeCompanies);
+    }
+  }, [scopeCompanies]);
+
+  useEffect(() => {
+    const handleOrgUpdate = () => {
+      fetchOrganizations();
+      fetchAdmins();
+      if (refetchCompanies) refetchCompanies();
+    };
+    window.addEventListener('organization-updated', handleOrgUpdate);
+    const socket = getSocket();
+    if (socket) {
+      socket.on('organization_deleted', handleOrgUpdate);
+      socket.on('organization_created', handleOrgUpdate);
+      socket.on('organization_updated', handleOrgUpdate);
+    }
+    return () => {
+      window.removeEventListener('organization-updated', handleOrgUpdate);
+      if (socket) {
+        socket.off('organization_deleted', handleOrgUpdate);
+        socket.off('organization_created', handleOrgUpdate);
+        socket.off('organization_updated', handleOrgUpdate);
+      }
+    };
+  }, [refetchCompanies]);
+
   const showToast = (type, text) => {
     setToast({ type, text });
     setTimeout(() => setToast({ type: '', text: '' }), 3500);
   };
 
   const handleOpenCreateModal = () => {
+    const validOrgs = (organizations.length > 0 ? organizations : scopeCompanies) || [];
+    const defaultOrgId = (selectedOrgId && selectedOrgId !== 'all' && validOrgs.some(o => o.id === selectedOrgId))
+      ? selectedOrgId
+      : (validOrgs[0]?.id || '');
+
     setFormData({
       name: '',
       email: '',
       phone: '',
-      organizationId: selectedOrgId || '',
+      organizationId: defaultOrgId,
       password: 'AdminPassword@123',
       department: 'Administration',
       designation: 'System Administrator',

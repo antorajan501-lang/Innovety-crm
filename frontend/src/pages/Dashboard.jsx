@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api, { getSocket } from '../services/api';
@@ -504,6 +504,23 @@ const Dashboard = () => {
       return null;
     }
     const isClockedIn = Boolean(clockedRecord && !clockedRecord.clockOut);
+    const isClockedOutToday = Boolean(
+      (clockedRecord && clockedRecord.clockIn && clockedRecord.clockOut) ||
+      (clockInStatus && clockInStatus.canClockIn === false && !isClockedIn && clockedRecord)
+    );
+
+    const getWorkedDurationText = (record) => {
+      if (!record?.clockIn || !record?.clockOut) return null;
+      const start = new Date(record.clockIn).getTime();
+      const end = new Date(record.clockOut).getTime();
+      const diff = end - start;
+      if (isNaN(diff) || diff <= 0) return null;
+      const mins = Math.floor(diff / (1000 * 60));
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return `${h}h ${m}m`;
+    };
+
     const windowState = clockInStatus?.windowState || 'CLOSED';
 
     let windowStatusBadgeText = 'Window Closed';
@@ -549,47 +566,83 @@ const Dashboard = () => {
         <div className="flex items-center justify-between pt-1">
           <div className="text-xs space-y-0.5">
             <p className="font-semibold text-foreground">
-              Status: <span className={isClockedIn ? 'text-emerald-500 font-bold' : 'text-muted-foreground'}>{isClockedIn ? 'CLOCKED IN' : 'NOT CLOCKED IN'}</span>
+              Status: <span className={isClockedOutToday ? 'text-emerald-500 font-bold' : isClockedIn ? 'text-emerald-500 font-bold' : 'text-muted-foreground'}>{isClockedOutToday ? 'COMPLETED TODAY' : isClockedIn ? 'CLOCKED IN' : 'NOT CLOCKED IN'}</span>
             </p>
             {clockedRecord?.clockIn && (
               <p className="text-muted-foreground">
                 Clocked in at {new Date(clockedRecord.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                {clockedRecord?.clockOut ? ` • Clocked out at ${new Date(clockedRecord.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
               </p>
             )}
           </div>
 
-          {!isClockedIn ? (
-            clockLoading ? (
-              <button
-                disabled
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600/70 text-white font-bold text-xs shadow-md cursor-not-allowed"
-              >
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Clocking In...</span>
-              </button>
-            ) : (
-              <button
-                onClick={handleClockIn}
-                disabled={clockInStatus?.canClockIn === false}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
-              >
-                <Play className="w-4 h-4 fill-current" />
-                <span>Clock In Now</span>
-              </button>
-            )
-          ) : (
-            <button
-              onClick={() => {
-              console.log("[CLOCKOUT] Button clicked");
-              handleClockOut();
-            }}
-              disabled={clockLoading}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
-            >
-              <Square className="w-4 h-4 fill-current" />
-              <span>Clock Out</span>
-            </button>
-          )}
+          <div className="min-h-[40px] flex items-center">
+            <AnimatePresence mode="wait">
+              {isClockedOutToday ? (
+                <motion.div
+                  key="dash-card-attendance-completed"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.25, ease: 'easeInOut' }}
+                  className="inline-flex items-center justify-center px-4 py-1.5 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 shadow-xs"
+                >
+                  <span className="text-xs font-mono font-extrabold text-emerald-800 dark:text-emerald-200">
+                    Worked Today: {getWorkedDurationText(clockedRecord) || '0h 0m'}
+                  </span>
+                </motion.div>
+              ) : !isClockedIn ? (
+                <motion.button
+                  key="dash-btn-clock-in"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.2 }}
+                  onClick={handleClockIn}
+                  disabled={clockLoading || clockInStatus?.canClockIn === false}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  {clockLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Clocking In...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 fill-current" />
+                      <span>Clock In Now</span>
+                    </>
+                  )}
+                </motion.button>
+              ) : (
+                <motion.button
+                  key="dash-btn-clock-out"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.2 }}
+                  onClick={() => {
+                    console.log("[CLOCKOUT] Button clicked");
+                    handleClockOut();
+                  }}
+                  disabled={clockLoading}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+                >
+                  {clockLoading ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Clocking Out...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Square className="w-4 h-4 fill-current" />
+                      <span>Clock Out</span>
+                    </>
+                  )}
+                </motion.button>
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </motion.div>
     );
