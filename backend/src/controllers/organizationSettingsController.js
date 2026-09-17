@@ -38,27 +38,35 @@ const getOrganizationSettings = async (req, res) => {
       settings = await prisma.organizationSettings.create({
         data: {
           organizationId,
-          companyName: org.name,
-          logo: org.logo || null,
-          primaryColor: '#10B981',
-          timezone: org.timezone || 'Asia/Kolkata',
-          clockInTime: '09:00',
-          clockOutTime: '18:00',
-          autoClockOutEnabled: true
+          branding: {
+            companyName: org.name,
+            companyLogo: org.logo || null,
+            primaryColor: '#10B981',
+            selectedTheme: 'emerald',
+            themeMode: 'light'
+          },
+          theme: {
+            selectedTheme: 'emerald',
+            themeMode: 'light'
+          },
+          chatEnabledForAdmins: true,
+          chatEnabledForUsers: true
         }
       });
     }
 
+    const brandingObj = (settings?.branding && typeof settings.branding === 'object') ? settings.branding : {};
+
     return res.json({
       id: settings.id,
       organizationId: settings.organizationId,
-      companyName: settings.companyName,
-      logo: settings.logo,
-      primaryColor: settings.primaryColor,
-      timezone: settings.timezone,
-      clockInTime: settings.clockInTime,
-      clockOutTime: settings.clockOutTime,
-      autoClockOutEnabled: settings.autoClockOutEnabled,
+      companyName: brandingObj.companyName || org.name,
+      logo: brandingObj.companyLogo || org.logo || null,
+      primaryColor: brandingObj.primaryColor || '#10B981',
+      timezone: org.timezone || 'Asia/Kolkata',
+      clockInTime: '09:00',
+      clockOutTime: '18:00',
+      autoClockOutEnabled: true,
       createdAt: settings.createdAt,
       updatedAt: settings.updatedAt
     });
@@ -130,39 +138,40 @@ const updateOrganizationSettings = async (req, res) => {
       logoUrl = req.body.logo;
     }
 
-    const updateData = {};
-    if (companyName !== undefined) updateData.companyName = String(companyName).trim();
-    if (primaryColor !== undefined) updateData.primaryColor = String(primaryColor).trim();
-    if (timezone !== undefined) updateData.timezone = String(timezone).trim();
-    if (clockInTime !== undefined) updateData.clockInTime = String(clockInTime).trim();
-    if (clockOutTime !== undefined) updateData.clockOutTime = String(clockOutTime).trim();
-    if (autoClockOutEnabled !== undefined) {
-      updateData.autoClockOutEnabled = autoClockOutEnabled === true || autoClockOutEnabled === 'true';
-    }
-    if (logoUrl !== undefined) updateData.logo = logoUrl;
+    let existingSettings = await prisma.organizationSettings.findUnique({
+      where: { organizationId }
+    });
+
+    const currentBranding = (existingSettings?.branding && typeof existingSettings.branding === 'object') ? existingSettings.branding : {};
+    const updatedBranding = {
+      ...currentBranding,
+      ...(companyName !== undefined ? { companyName: String(companyName).trim() } : {}),
+      ...(primaryColor !== undefined ? { primaryColor: String(primaryColor).trim() } : {}),
+      ...(logoUrl !== undefined ? { companyLogo: logoUrl } : {})
+    };
 
     const settings = await prisma.organizationSettings.upsert({
       where: { organizationId },
-      update: updateData,
+      update: {
+        branding: updatedBranding
+      },
       create: {
         organizationId,
-        companyName: companyName ? String(companyName).trim() : org.name,
-        logo: logoUrl || org.logo || null,
-        primaryColor: primaryColor ? String(primaryColor).trim() : '#10B981',
-        timezone: timezone ? String(timezone).trim() : 'Asia/Kolkata',
-        clockInTime: clockInTime ? String(clockInTime).trim() : '09:00',
-        clockOutTime: clockOutTime ? String(clockOutTime).trim() : '18:00',
-        autoClockOutEnabled: autoClockOutEnabled === undefined ? true : (autoClockOutEnabled === true || autoClockOutEnabled === 'true')
+        branding: updatedBranding,
+        theme: { selectedTheme: 'emerald', themeMode: 'light' },
+        chatEnabledForAdmins: true,
+        chatEnabledForUsers: true
       }
     });
 
-    // Also update parent organization company name & logo if changed
-    if (companyName || logoUrl) {
+    // Also update parent organization name, logo & timezone if changed
+    if (companyName || logoUrl || timezone) {
       await prisma.organization.update({
         where: { id: organizationId },
         data: {
           ...(companyName ? { name: String(companyName).trim() } : {}),
-          ...(logoUrl ? { logo: logoUrl } : {})
+          ...(logoUrl ? { logo: logoUrl } : {}),
+          ...(timezone ? { timezone: String(timezone).trim() } : {})
         }
       }).catch(() => {});
     }

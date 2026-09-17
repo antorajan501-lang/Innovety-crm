@@ -166,13 +166,14 @@ const updateSettings = async (req, res) => {
       // Synchronize OrganizationSettings if present for this org
       const existingOrgSet = await prisma.organizationSettings.findUnique({ where: { organizationId: targetOrgId } }).catch(() => null);
       if (existingOrgSet) {
+        const currentBranding = (existingOrgSet.branding && typeof existingOrgSet.branding === 'object') ? existingOrgSet.branding : {};
         await prisma.organizationSettings.update({
           where: { organizationId: targetOrgId },
           data: {
-            companyName: dataPayload.companyName,
-            clockInTime: effectiveClockIn,
-            clockOutTime: effectiveClockOut,
-            autoClockOutEnabled: autoClockOutBool !== undefined ? autoClockOutBool : true
+            branding: {
+              ...currentBranding,
+              ...(dataPayload.companyName ? { companyName: dataPayload.companyName } : {})
+            }
           }
         }).catch(e => console.warn('Sync OrganizationSettings error:', e));
       }

@@ -146,13 +146,19 @@ const provisionOrganizationWorkspace = async ({
       const settings = await tx.organizationSettings.create({
         data: {
           organizationId: organization.id,
-          companyName: cleanName,
-          logo: logoPath,
-          primaryColor: '#10B981',
-          timezone: timezone || 'Asia/Kolkata',
-          clockInTime: '09:00',
-          clockOutTime: '18:00',
-          autoClockOutEnabled: true
+          branding: {
+            companyName: cleanName,
+            companyLogo: logoPath || null,
+            primaryColor: '#10B981',
+            selectedTheme: 'emerald',
+            themeMode: 'light'
+          },
+          theme: {
+            selectedTheme: 'emerald',
+            themeMode: 'light'
+          },
+          chatEnabledForAdmins: true,
+          chatEnabledForUsers: true
         }
       });
 

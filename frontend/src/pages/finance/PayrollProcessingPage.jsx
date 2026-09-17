@@ -488,7 +488,7 @@ export default function PayrollProcessingPage() {
                       <th className="p-3.5">Employee</th>
                       <th className="p-3.5">Basic</th>
                       <th className="p-3.5">HRA / Allowances</th>
-                      <th className="p-3.5">Present / Paid Leave</th>
+                      <th className="p-3.5">Paid Leave / Unpaid Leave</th>
                       <th className="p-3.5">Overtime / Holiday Pay</th>
                       <th className="p-3.5">Deductions</th>
                       <th className="p-3.5 text-right">Net Salary</th>
@@ -514,8 +514,9 @@ export default function PayrollProcessingPage() {
                           <td className="p-3.5 text-muted-foreground">
                             {isAssigned ? formatINR(ps.hra + (ps.allowancesJson?.specialAllowance || 0)) : <span className="text-muted-foreground">—</span>}
                           </td>
-                          <td className="p-3.5 text-foreground">
-                            <span className="font-semibold">{ps.presentDays}d present</span> / <span className="text-muted-foreground">{ps.paidLeaveDays}d leave</span>
+                          <td className="p-3.5 text-foreground leading-tight">
+                            <div className="font-semibold">Paid: {ps.paidLeaveDays || 0}d</div>
+                            <div className="text-muted-foreground">Unpaid: {ps.unpaidAbsentDays || 0}d</div>
                           </td>
                           <td className="p-3.5 text-primary font-semibold">
                             {isAssigned ? (

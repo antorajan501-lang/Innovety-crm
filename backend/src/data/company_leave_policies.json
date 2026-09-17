@@ -7,7 +7,7 @@
       "halfDayAllowed": true,
       "workingDaysOnly": true,
       "autoApproval": false,
-      "updatedAt": "2026-09-11T18:18:29.570Z"
+      "updatedAt": "2026-09-17T03:00:30.838Z"
     },
     "cmtgsp8710000bb94ztamcrue": {
       "allocationType": "ANNUAL",
@@ -16,6 +16,15 @@
       "halfDayAllowed": true,
       "workingDaysOnly": true,
       "autoApproval": false
+    },
+    "cmu4y8qcz00022otrscuactq1": {
+      "allocationType": "MONTHLY",
+      "carryForwardEnabled": true,
+      "maxCarryForwardDays": 5,
+      "halfDayAllowed": true,
+      "workingDaysOnly": true,
+      "autoApproval": false,
+      "updatedAt": "2026-09-17T03:09:20.921Z"
     }
   },
   "types": {
@@ -35,6 +44,21 @@
     ],
     "cmtil10ie0001sg5eo2jfx4ew": [
       "6cc242ff-e7ce-43bc-b8b7-17a40e423313"
+    ],
+    "cmu4xeq2k0003qgwhbrvxszgk": [
+      "eaf391d8-80f6-4107-b620-fd767ba013b2",
+      "6cc242ff-e7ce-43bc-b8b7-17a40e423313",
+      "516e8c6d-7c28-4aa2-b433-f13784c1413f",
+      "73ef9bda-b65b-4e23-9db5-88b47b9fc40e",
+      "0948619d-7411-4bb5-86d3-c4189a8bdb03"
+    ],
+    "cmu4y8qcz00022otrscuactq1": [
+      "6cc242ff-e7ce-43bc-b8b7-17a40e423313",
+      "eaf391d8-80f6-4107-b620-fd767ba013b2",
+      "516e8c6d-7c28-4aa2-b433-f13784c1413f",
+      "73ef9bda-b65b-4e23-9db5-88b47b9fc40e",
+      "0948619d-7411-4bb5-86d3-c4189a8bdb03",
+      "1dbeb453-3a15-4bb2-99ed-7946cd40c743"
     ]
   }
 }

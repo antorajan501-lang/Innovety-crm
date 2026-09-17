@@ -4,7 +4,7 @@
     "companyLogo": null,
     "selectedTheme": "emerald",
     "themeMode": "light",
-    "updatedAt": "2026-09-15T08:53:16.610Z",
+    "updatedAt": "2026-09-17T03:02:59.597Z",
     "chatEnabledForAdmins": false,
     "chatEnabledForUsers": false
   },
@@ -23,5 +23,23 @@
     "selectedTheme": "emerald",
     "themeMode": "light",
     "updatedAt": "2026-09-11T16:42:54.942Z"
+  },
+  "cmu4xeq2k0003qgwhbrvxszgk": {
+    "companyName": "Reni",
+    "companyLogo": null,
+    "selectedTheme": "emerald",
+    "themeMode": "light",
+    "chatEnabledForAdmins": true,
+    "chatEnabledForUsers": true,
+    "updatedAt": "2026-09-17T02:50:19.866Z"
+  },
+  "cmu4y8qcz00022otrscuactq1": {
+    "companyName": "Reni",
+    "companyLogo": null,
+    "selectedTheme": "blue",
+    "themeMode": "light",
+    "chatEnabledForAdmins": true,
+    "chatEnabledForUsers": true,
+    "updatedAt": "2026-09-17T03:10:45.508Z"
   }
 }

@@ -58,12 +58,13 @@ const getEffectiveSettings = async (organizationId) => {
     return defaultGlobal;
   }
 
-  const effectiveClockIn = orgSettings?.clockInTime || sysSettingsForOrg?.clockInTime || defaultGlobal.clockInTime || '09:00';
-  const effectiveClockOut = orgSettings?.clockOutTime || sysSettingsForOrg?.clockOutTime || defaultGlobal.clockOutTime || '18:00';
+  const brandingObj = (orgSettings?.branding && typeof orgSettings.branding === 'object') ? orgSettings.branding : {};
+  const effectiveClockIn = sysSettingsForOrg?.clockInTime || defaultGlobal.clockInTime || '09:00';
+  const effectiveClockOut = sysSettingsForOrg?.clockOutTime || defaultGlobal.clockOutTime || '18:00';
 
-  const effectiveAutoClockOut = orgSettings?.autoClockOutEnabled !== undefined
-    ? orgSettings.autoClockOutEnabled
-    : (sysSettingsForOrg?.autoClockOutEnabled !== undefined ? sysSettingsForOrg.autoClockOutEnabled : defaultGlobal.autoClockOutEnabled !== false);
+  const effectiveAutoClockOut = sysSettingsForOrg?.autoClockOutEnabled !== undefined
+    ? sysSettingsForOrg.autoClockOutEnabled
+    : (defaultGlobal.autoClockOutEnabled !== false);
 
   return {
     ...defaultGlobal,
@@ -71,7 +72,7 @@ const getEffectiveSettings = async (organizationId) => {
     ...(orgSettings || {}),
     id: orgSettings?.id || sysSettingsForOrg?.id || defaultGlobal.id,
     organizationId,
-    companyName: orgSettings?.companyName || sysSettingsForOrg?.companyName || defaultGlobal.companyName,
+    companyName: brandingObj.companyName || sysSettingsForOrg?.companyName || defaultGlobal.companyName,
     clockInTime: effectiveClockIn,
     clockOutTime: effectiveClockOut,
     internShiftStart: effectiveClockIn,
