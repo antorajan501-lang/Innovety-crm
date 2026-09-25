@@ -10,11 +10,24 @@ const {
   getAssetReport,
   getWorkLogReport
 } = require('../controllers/reportController');
+const {
+  getDailyAttendanceReport,
+  getWeeklyAttendanceReport,
+  getMonthlyAttendanceReport,
+  exportAttendanceReport
+} = require('../controllers/attendanceReportController');
 const { authenticate, requireRole } = require('../middleware/auth');
 
-// Reports are restricted to Admin, Team Leader, and Super Admin roles
+// Reports base authentication
 router.use(authenticate, requireRole(['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN']));
 
+// Attendance Reports (Phase 4 & Phase 7: Strictly Admin & Super Admin ONLY)
+router.get('/attendance/daily', requireRole(['SUPER_ADMIN', 'ADMIN']), getDailyAttendanceReport);
+router.get('/attendance/weekly', requireRole(['SUPER_ADMIN', 'ADMIN']), getWeeklyAttendanceReport);
+router.get('/attendance/monthly', requireRole(['SUPER_ADMIN', 'ADMIN']), getMonthlyAttendanceReport);
+router.get('/attendance/export', requireRole(['SUPER_ADMIN', 'ADMIN']), exportAttendanceReport);
+
+// General Legacy Reports
 router.get('/attendance', getAttendanceReport);
 router.get('/tasks', getTaskReport);
 router.get('/teams', getTeamReport);

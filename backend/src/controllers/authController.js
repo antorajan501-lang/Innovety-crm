@@ -4,6 +4,8 @@ const crypto = require('crypto');
 const prisma = require('../utils/db');
 const { logActivity } = require('../utils/activityLogger');
 const { sendPasswordResetOtpEmail } = require('../services/email');
+const { revokeToken, validatePasswordStrength } = require('../services/securityService');
+const shiftService = require('../services/shiftService');
 
 const login = async (req, res) => {
   try {
@@ -212,10 +214,17 @@ const login = async (req, res) => {
 
 const getProfile = async (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
       include: {
         organization: true,
+        shiftAssignment: {
+          include: { shift: true }
+        },
         teamMembers: {
           include: { team: { include: { leader: true } } }
         },
@@ -226,10 +235,28 @@ const getProfile = async (req, res) => {
       }
     });
 
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    // Resolve user's latest shift schedule dynamically
+    const assignedShift = await shiftService.getEmployeeShiftWithSchedule(user.id);
+
     const { password: _, ...userWithoutPassword } = user;
     res.json({
       ...userWithoutPassword,
-      profilePhoto: userWithoutPassword.profilePic || null
+      profilePhoto: userWithoutPassword.profilePic || null,
+      shift: assignedShift ? {
+        id: assignedShift.id,
+        name: assignedShift.name,
+        shiftName: assignedShift.name,
+        startTime: assignedShift.startTime,
+        endTime: assignedShift.endTime,
+        workingDays: assignedShift.workingDays,
+        isDefault: assignedShift.name === 'Company Default',
+        formattedStart: shiftService.formatTime12h(assignedShift.startTime),
+        formattedEnd: shiftService.formatTime12h(assignedShift.endTime)
+      } : null
     });
   } catch (error) {
     console.error('Get profile error:', error);
@@ -318,6 +345,11 @@ const changePassword = async (req, res) => {
 
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ message: 'Current and new passwords are required.' });
+    }
+
+    const strength = validatePasswordStrength(newPassword);
+    if (!strength.isValid) {
+      return res.status(400).json({ message: strength.errors[0], errors: strength.errors });
     }
 
     const user = await prisma.user.findUnique({ where: { id: req.user.id } });
@@ -784,8 +816,26 @@ const refreshToken = async (req, res) => {
   }
 };
 
+const logout = async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      revokeToken(token, 86400 * 30, {
+        reason: 'User logout',
+        userId: req.user?.id,
+        ip: req.ip
+      });
+    }
+    return res.json({ success: true, message: 'Logged out successfully. Token invalidated.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to logout.' });
+  }
+};
+
 module.exports = {
   login,
+  logout,
   getProfile,
   updateProfile,
   changePassword,

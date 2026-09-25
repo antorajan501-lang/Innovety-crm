@@ -16,6 +16,7 @@ import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import { useCompanyScope } from '../context/CompanyScopeContext';
 import LeaveOverviewCard from '../components/dashboard/LeaveOverviewCard';
 import TeamPerformanceRankings from '../components/dashboard/TeamPerformanceRankings';
+import { useTheme } from '../context/ThemeContext';
 import {
   Users,
   Briefcase,
@@ -130,6 +131,7 @@ const Dashboard = () => {
   const { user } = useAuth();
   const isSuperAdmin = user?.role === 'SUPER_ADMIN';
   const { selectedOrgId, effectiveOrgId } = useCompanyScope();
+  const { adminChatEnabled, canUseChat } = useTheme();
 
   if (user?.role === 'EMPLOYEE' || user?.role === 'INTERN') {
     return <EmployeeDashboard />;
@@ -233,7 +235,7 @@ const Dashboard = () => {
         api.get('/tasks', { params }),
         api.get('/tickets', { params }),
         api.get('/announcements', { params }),
-        api.get('/chat/rooms', { params }),
+        canUseChat ? api.get('/chat/rooms', { params }).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
         api.get('/leaves', { params }),
         api.get('/dashboard/overview', { params })
       ];
@@ -521,13 +523,21 @@ const Dashboard = () => {
       return `${h}h ${m}m`;
     };
 
-    const windowState = clockInStatus?.windowState || 'CLOSED';
+    const isHolidayToday = clockInStatus?.reason === 'HOLIDAY' || clockInStatus?.shift?.todayStatus === 'Holiday' || clockInStatus?.state === 'HOLIDAY';
+    const isWfhToday = clockInStatus?.shift?.todayStatus === 'WFH' || clockInStatus?.state === 'APPROVED_WFH';
+    const windowState = clockInStatus?.windowState || clockInStatus?.state || 'CLOSED';
 
     let windowStatusBadgeText = 'Window Closed';
     let windowStatusBadgeClass = 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20';
 
-    if (windowState === 'OPEN_EARLY') {
-      windowStatusBadgeText = 'Early Window Open';
+    if (isHolidayToday) {
+      windowStatusBadgeText = 'Holiday';
+      windowStatusBadgeClass = 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/20';
+    } else if (isWfhToday) {
+      windowStatusBadgeText = 'Work From Home';
+      windowStatusBadgeClass = 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/20';
+    } else if (windowState === 'OPEN_EARLY' || windowState === 'BEFORE_WINDOW') {
+      windowStatusBadgeText = windowState === 'OPEN_EARLY' ? 'Early Window Open' : 'Before Shift';
       windowStatusBadgeClass = 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/20';
     } else if (windowState === 'OPEN_ON_TIME') {
       windowStatusBadgeText = 'Shift Check-in Open';
@@ -556,7 +566,39 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {attendanceAlert && (
+        {/* Assigned Shift Banner (Phase 5 Employee Preview) */}
+        {clockInStatus?.shift && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between px-3.5 py-2.5 rounded-xl bg-muted/40 border border-border/50 text-xs gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Clock className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="font-bold text-foreground">Shift: {clockInStatus.shift.name}</span>
+              <span className="text-muted-foreground text-[11px]">({clockInStatus.shift.startTime} – {clockInStatus.shift.endTime})</span>
+              {clockInStatus.shift.nextWorkingDay && (
+                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                  Next: {clockInStatus.shift.nextWorkingDay.formattedText}
+                </span>
+              )}
+            </div>
+            <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border shrink-0 self-start sm:self-auto ${
+              clockInStatus.shift.todayStatus === 'Holiday'
+                ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                : clockInStatus.shift.todayStatus === 'WFH'
+                  ? 'bg-purple-500/10 text-purple-600 border-purple-500/20'
+                  : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+            }`}>
+              {clockInStatus.shift.todayStatus || 'Working'}
+            </span>
+          </div>
+        )}
+
+        {isHolidayToday && !isClockedIn && (
+          <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-300 text-xs font-semibold flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
+            <span>Today is a Holiday. Clock-in is not required.</span>
+          </div>
+        )}
+
+        {attendanceAlert && !isHolidayToday && (
           <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-medium flex items-center gap-2">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{attendanceAlert}</span>
@@ -585,9 +627,17 @@ const Dashboard = () => {
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ duration: 0.25, ease: 'easeInOut' }}
-                  className="inline-flex items-center justify-center px-4 py-1.5 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 shadow-xs"
+                  className="inline-flex items-center justify-center px-4 py-1.5 rounded-xl border shadow-xs"
+                  style={{
+                    backgroundColor: 'var(--brand-primary-light)',
+                    borderColor: 'var(--brand-primary)',
+                    color: 'var(--brand-primary)'
+                  }}
                 >
-                  <span className="text-xs font-mono font-extrabold text-emerald-800 dark:text-emerald-200">
+                  <span
+                    className="text-xs font-mono font-extrabold"
+                    style={{ color: 'var(--brand-primary)' }}
+                  >
                     Worked Today: {getWorkedDurationText(clockedRecord) || '0h 0m'}
                   </span>
                 </motion.div>
@@ -942,56 +992,58 @@ const Dashboard = () => {
         {/* Right Column: Common Chat Mini Widget + Schedule & Deliverables Card */}
         <div className="space-y-6">
           {/* 1. Common Chat Widget */}
-          <div className="clean-card text-left space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
-                  <MessageSquare className="h-4.5 w-4.5" />
+          {adminChatEnabled && (
+            <div className="clean-card text-left space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
+                    <MessageSquare className="h-4.5 w-4.5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-foreground">Common Chat</h3>
+                    <p className="text-[10px] text-muted-foreground font-semibold">Real-time team messaging</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-extrabold text-foreground">Common Chat</h3>
-                  <p className="text-[10px] text-muted-foreground font-semibold">Real-time team messaging</p>
-                </div>
+                <Link
+                  to="/chat"
+                  className="text-xs font-bold text-primary flex items-center gap-1 bg-primary/10 px-3 py-1.5 rounded-full border border-primary/20 transition-all hover:bg-primary/20"
+                >
+                  <span>Open Chat</span>
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                </Link>
               </div>
-              <Link
-                to="/chat"
-                className="text-xs font-bold text-primary flex items-center gap-1 bg-primary/10 px-3 py-1.5 rounded-full border border-primary/20 transition-all hover:bg-primary/20"
-              >
-                <span>Open Chat</span>
-                <ArrowUpRight className="h-3.5 w-3.5" />
-              </Link>
-            </div>
 
-            {/* Quick Room Snippets */}
-            <div className="space-y-2 pt-1">
-              {recentChatRooms.length === 0 ? (
-                <p className="text-xs text-muted-foreground font-semibold py-2">No active chat rooms.</p>
-              ) : (
-                recentChatRooms.slice(0, 3).map(r => (
-                  <Link
-                    key={r.id}
-                    to={`/chat?room=${r.id}`}
-                    className="flex items-center justify-between p-2.5 rounded-xl bg-card border border-border/30 hover:border-primary/40 transition-all"
-                  >
-                    <div className="flex items-center gap-2.5 truncate">
-                      <div className="h-7 w-7 rounded-lg bg-primary text-white font-bold flex items-center justify-center text-[10px]">
-                        {r.name?.charAt(0) || 'C'}
+              {/* Quick Room Snippets */}
+              <div className="space-y-2 pt-1">
+                {recentChatRooms.length === 0 ? (
+                  <p className="text-xs text-muted-foreground font-semibold py-2">No active chat rooms.</p>
+                ) : (
+                  recentChatRooms.slice(0, 3).map(r => (
+                    <Link
+                      key={r.id}
+                      to={`/chat?room=${r.id}`}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-card border border-border/30 hover:border-primary/40 transition-all"
+                    >
+                      <div className="flex items-center gap-2.5 truncate">
+                        <div className="h-7 w-7 rounded-lg bg-primary text-white font-bold flex items-center justify-center text-[10px]">
+                          {r.name?.charAt(0) || 'C'}
+                        </div>
+                        <div className="truncate text-left">
+                          <p className="text-xs font-bold text-foreground truncate">{r.name}</p>
+                          <p className="text-[10px] text-muted-foreground truncate font-medium">{r.lastMessage ? r.lastMessage.text : 'Click to chat'}</p>
+                        </div>
                       </div>
-                      <div className="truncate text-left">
-                        <p className="text-xs font-bold text-foreground truncate">{r.name}</p>
-                        <p className="text-[10px] text-muted-foreground truncate font-medium">{r.lastMessage ? r.lastMessage.text : 'Click to chat'}</p>
-                      </div>
-                    </div>
-                    {r.unreadCount > 0 && (
-                      <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black shrink-0">
-                        {r.unreadCount}
-                      </span>
-                    )}
-                  </Link>
-                ))
-              )}
+                      {r.unreadCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black shrink-0">
+                          {r.unreadCount}
+                        </span>
+                      )}
+                    </Link>
+                  ))
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* 2. Schedule & Deliverables Card (7-Day Rolling Window) */}
           <div className="clean-card text-left space-y-4">

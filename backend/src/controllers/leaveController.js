@@ -5,15 +5,51 @@ const { getOrganizationWhere } = require('../utils/organizationScope');
 const { broadcastLeavePolicyUpdate } = require('../socket');
 const {
   getCompanyLeavePolicy,
-  filterLeaveTypesForCompany
+  filterLeaveTypesForCompany,
+  normalizeRole
 } = require('../utils/companyLeavePolicyStore');
+const shiftService = require('../services/shiftService');
 
-// Helper to calculate working days count between 2 dates (inclusive)
-const calculateTotalDays = (startDate, endDate) => {
+// Helper to calculate working days count between 2 dates (Safeguard 3: evaluates each date, skips Sundays and shift holidays)
+const calculateTotalDays = async (startDate, endDate, userId = null, organizationId = null) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
-  const diffTime = Math.abs(end - start);
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+  
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+    return 0;
+  }
+
+  // Fetch employee's assigned shift
+  const userShift = userId ? await shiftService.getEmployeeShift(userId) : null;
+
+  // Fetch company holidays in date range
+  const holidays = await prisma.holidayCalendar.findMany({
+    where: {
+      date: { gte: start, lte: end },
+      ...(organizationId ? { organizationId } : {})
+    }
+  });
+  const holidayDatesStr = new Set(holidays.map(h => new Date(h.date).toISOString().split('T')[0]));
+
+  let count = 0;
+  let curr = new Date(start);
+  while (curr <= end) {
+    const dateStr = curr.toISOString().split('T')[0];
+    const dayName = shiftService.getDayName(curr);
+    const isSunday = curr.getUTCDay() === 0 || dayName === 'SUNDAY';
+    const isCompanyHoliday = holidayDatesStr.has(dateStr);
+    const shiftStatus = shiftService.getShiftDayStatus(userShift, dayName, curr);
+    const isShiftHoliday = shiftStatus === 'Holiday';
+
+    // Safeguard 3: Skip Sundays and shift holidays
+    if (!isSunday && !isCompanyHoliday && !isShiftHoliday) {
+      count += 1;
+    }
+
+    curr.setDate(curr.getDate() + 1);
+  }
+
+  return count;
 };
 
 // 1. Get Leaves (Role Scoped + Advanced Date & Filter Queries)
@@ -214,19 +250,52 @@ const getLeaveBalances = async (req, res) => {
     }
 
     const orgId = req.query.organizationId || targetUser.organizationId;
+    const normalizedRole = normalizeRole(targetUser.role);
 
     let policy = null;
+    let companyAllocationMode = 'ANNUAL';
     if (orgId) {
       const orgSettings = await prisma.organizationSettings.findUnique({
         where: { organizationId: orgId }
       });
-      policy = orgSettings?.leavePolicy || getCompanyLeavePolicy(orgId);
+      const storePolicy = getCompanyLeavePolicy(orgId, normalizedRole);
+      const companyLeavePolicy = orgSettings?.leavePolicy || storePolicy || {};
+
+      // The company's active leave policy determines the allocation mode for all roles
+      companyAllocationMode = companyLeavePolicy.allocationType || storePolicy?.allocationType || 'ANNUAL';
+
+      policy = {
+        allocationType: companyAllocationMode,
+        carryForwardEnabled: companyLeavePolicy.carryForwardEnabled !== undefined ? companyLeavePolicy.carryForwardEnabled : true,
+        maxCarryForwardDays: companyLeavePolicy.maxCarryForwardDays !== undefined ? parseFloat(companyLeavePolicy.maxCarryForwardDays) : 5.0,
+        halfDayAllowed: companyLeavePolicy.halfDayAllowed !== undefined ? companyLeavePolicy.halfDayAllowed : true,
+        workingDaysOnly: companyLeavePolicy.workingDaysOnly !== undefined ? companyLeavePolicy.workingDaysOnly : true,
+        autoApproval: companyLeavePolicy.autoApproval !== undefined ? companyLeavePolicy.autoApproval : false,
+        ...storePolicy,
+        ...companyLeavePolicy,
+        // Crucial: Company's active allocationType takes precedence over any stale role override
+        allocationType: companyAllocationMode,
+        allowances: {
+          ...(storePolicy?.allowances || {}),
+          ...(companyLeavePolicy.allowances || {})
+        }
+      };
+
+      // Merge role-specific allowances if configured in company leave policy
+      const roleConfig = companyLeavePolicy.roles?.[normalizedRole] || storePolicy?.roles?.[normalizedRole];
+      if (roleConfig?.allowances) {
+        policy.allowances = {
+          ...policy.allowances,
+          ...roleConfig.allowances
+        };
+      }
     }
     if (!policy) {
       policy = await prisma.leavePolicy.findFirst({ where: { isGlobal: true } });
     }
 
-    const allocationMode = policy?.allocationType || 'ANNUAL';
+    const allocationMode = policy?.allocationType || companyAllocationMode || 'ANNUAL';
+    const roleAllowances = policy?.allowances || {};
 
     const allLeaveTypes = await prisma.leaveType.findMany({
       where: { isActive: true },
@@ -235,8 +304,26 @@ const getLeaveBalances = async (req, res) => {
 
     const companyLeaveTypes = filterLeaveTypesForCompany(allLeaveTypes, orgId);
 
+    // Filter out stale / inactive / deleted leave types from role allowances
+    const activeLeaveCodes = new Set(
+      companyLeaveTypes.map((lt) => (lt.code || '').toUpperCase())
+    );
+    const cleanedRoleAllowances = {};
+    for (const [code, allowance] of Object.entries(roleAllowances)) {
+      if (activeLeaveCodes.has(code.toUpperCase())) {
+        cleanedRoleAllowances[code] = allowance;
+      }
+    }
+
     const userApprovedLeaves = await prisma.leaveRequest.findMany({
       where: { userId: targetUserId, status: 'APPROVED' }
+    });
+
+    const userPendingLeaves = await prisma.leaveRequest.findMany({
+      where: {
+        userId: targetUserId,
+        status: { in: ['PENDING', 'PENDING_TL_APPROVAL', 'PENDING_ADMIN_APPROVAL'] }
+      }
     });
 
     const now = new Date();
@@ -261,6 +348,23 @@ const getLeaveBalances = async (req, res) => {
         }
       }
 
+      let pendingThisYear = 0;
+      let pendingThisMonth = 0;
+
+      for (const l of userPendingLeaves) {
+        const lType = (l.leaveType || l.type || '').toUpperCase();
+        if (lType === lt.code.toUpperCase() || lType === lt.name.toUpperCase()) {
+          const start = new Date(l.startDate);
+          const days = l.totalDays !== undefined ? parseFloat(l.totalDays) : 1.0;
+          if (start.getFullYear() === currentYear) {
+            pendingThisYear += days;
+            if (start.getMonth() === currentMonth) {
+              pendingThisMonth += days;
+            }
+          }
+        }
+      }
+
       const existing = await prisma.userLeaveBalance.findUnique({
         where: {
           userId_leaveTypeId: {
@@ -271,21 +375,38 @@ const getLeaveBalances = async (req, res) => {
       });
 
       const carryForward = existing?.carryForward || 0;
-      const annualDays = lt.annualDays !== undefined ? parseFloat(lt.annualDays) : 12.0;
-      const monthlyCreditDays = lt.monthlyCreditDays !== undefined ? parseFloat(lt.monthlyCreditDays) : 1.0;
+      const roleAllowance = cleanedRoleAllowances[lt.code] || cleanedRoleAllowances[lt.id] || cleanedRoleAllowances[lt.name];
+      const annualDays = (roleAllowance?.annualDays !== undefined && roleAllowance?.annualDays !== null)
+        ? parseFloat(roleAllowance.annualDays)
+        : (lt.annualDays !== undefined ? parseFloat(lt.annualDays) : 12.0);
+      let monthlyCreditDays = (roleAllowance?.monthlyCreditDays !== undefined && roleAllowance?.monthlyCreditDays !== null)
+        ? parseFloat(roleAllowance.monthlyCreditDays)
+        : (lt.monthlyCreditDays !== undefined ? parseFloat(lt.monthlyCreditDays) : 1.0);
+
+      // In monthly allocation mode: if role allowance specifies custom days (e.g. Casual: 5, Sick: 8, Emergency: 0)
+      if (allocationMode === 'MONTHLY' && roleAllowance) {
+        if (roleAllowance.monthlyCreditDays !== undefined && roleAllowance.monthlyCreditDays !== null) {
+          monthlyCreditDays = parseFloat(roleAllowance.monthlyCreditDays);
+        } else if (roleAllowance.annualDays !== undefined && roleAllowance.annualDays !== null) {
+          monthlyCreditDays = parseFloat(roleAllowance.annualDays);
+        }
+      }
 
       let allocated = 0;
       let used = 0;
+      let pending = 0;
       let available = 0;
 
       if (allocationMode === 'MONTHLY') {
         allocated = monthlyCreditDays;
         used = usedThisMonth;
-        available = Math.max(0, monthlyCreditDays + carryForward - usedThisMonth);
+        pending = pendingThisMonth;
+        available = Math.max(0, monthlyCreditDays + carryForward - usedThisMonth - pendingThisMonth);
       } else {
         allocated = annualDays;
         used = usedThisYear;
-        available = Math.max(0, annualDays + carryForward - usedThisYear);
+        pending = pendingThisYear;
+        available = Math.max(0, annualDays + carryForward - usedThisYear - pendingThisYear);
       }
 
       await prisma.userLeaveBalance.upsert({
@@ -298,6 +419,7 @@ const getLeaveBalances = async (req, res) => {
         update: {
           allocated,
           used,
+          pending,
           available,
           lastCreditedAt: new Date()
         },
@@ -306,7 +428,7 @@ const getLeaveBalances = async (req, res) => {
           leaveTypeId: lt.id,
           allocated,
           used,
-          pending: 0,
+          pending,
           available,
           carryForward: 0,
           expired: 0,
@@ -326,8 +448,21 @@ const getLeaveBalances = async (req, res) => {
 
     const formattedTypes = balances.map((b) => {
       const lt = b.leaveType;
-      const annualDays = lt.annualDays !== undefined ? parseFloat(lt.annualDays) : 12.0;
-      const monthlyCreditDays = lt.monthlyCreditDays !== undefined ? parseFloat(lt.monthlyCreditDays) : 1.0;
+      const roleAllowance = cleanedRoleAllowances[lt.code] || cleanedRoleAllowances[lt.id] || cleanedRoleAllowances[lt.name];
+      const annualDays = (roleAllowance?.annualDays !== undefined && roleAllowance?.annualDays !== null)
+        ? parseFloat(roleAllowance.annualDays)
+        : (lt.annualDays !== undefined ? parseFloat(lt.annualDays) : 12.0);
+      let monthlyCreditDays = (roleAllowance?.monthlyCreditDays !== undefined && roleAllowance?.monthlyCreditDays !== null)
+        ? parseFloat(roleAllowance.monthlyCreditDays)
+        : (lt.monthlyCreditDays !== undefined ? parseFloat(lt.monthlyCreditDays) : 1.0);
+
+      if (allocationMode === 'MONTHLY' && roleAllowance) {
+        if (roleAllowance.monthlyCreditDays !== undefined && roleAllowance.monthlyCreditDays !== null) {
+          monthlyCreditDays = parseFloat(roleAllowance.monthlyCreditDays);
+        } else if (roleAllowance.annualDays !== undefined && roleAllowance.annualDays !== null) {
+          monthlyCreditDays = parseFloat(roleAllowance.annualDays);
+        }
+      }
 
       return {
         id: lt.id,
@@ -340,6 +475,7 @@ const getLeaveBalances = async (req, res) => {
         monthlyCreditDays,
         allocated: b.allocated,
         used: b.used,
+        pending: b.pending || 0,
         available: b.available,
         monthlyCredit: monthlyCreditDays,
         allowHalfDay: lt.allowHalfDay,
@@ -361,21 +497,25 @@ const getLeaveBalances = async (req, res) => {
       }
     });
 
-    const casualBal = balances.find(b => b.leaveType.code === 'CASUAL' || b.leaveType.name.toLowerCase().includes('casual'));
-    const sickBal = balances.find(b => b.leaveType.code === 'SICK' || b.leaveType.name.toLowerCase().includes('sick'));
-    const emergencyBal = balances.find(b => b.leaveType.code === 'EMERGENCY' || b.leaveType.name.toLowerCase().includes('emergency'));
+    const casualBal = balances.find(b => ['CL', 'CASUAL'].includes(b.leaveType.code.toUpperCase()) || b.leaveType.name.toLowerCase().includes('casual'));
+    const sickBal = balances.find(b => ['SL', 'SICK'].includes(b.leaveType.code.toUpperCase()) || b.leaveType.name.toLowerCase().includes('sick'));
+    const emergencyBal = balances.find(b => ['EL', 'EMERGENCY'].includes(b.leaveType.code.toUpperCase()) || b.leaveType.name.toLowerCase().includes('emergency'));
+    const wfhBal = balances.find(b => ['WFH'].includes(b.leaveType.code.toUpperCase()) || b.leaveType.name.toLowerCase().includes('wfh') || b.leaveType.name.toLowerCase().includes('home'));
 
     res.json({
       userId: targetUser.id,
       userName: targetUser.name,
+      userRole: targetUser.role,
       organizationId: orgId,
       allocationMode,
       policy,
       leaveTypes: formattedTypes,
       balances,
-      casualRemaining: casualBal ? casualBal.available : 12,
-      sickRemaining: sickBal ? sickBal.available : 12,
-      emergencyRemaining: emergencyBal ? emergencyBal.available : 6,
+      casualRemaining: casualBal ? casualBal.available : 0,
+      sickRemaining: sickBal ? sickBal.available : 0,
+      emergencyRemaining: emergencyBal ? emergencyBal.available : 0,
+      wfhRemaining: wfhBal ? wfhBal.available : 0,
+      wfhEnabled: !!wfhBal && wfhBal.leaveType.isActive,
       pendingRequestsCount,
       approvedRequestsCount,
       pendingRequests: pendingRequestsCount,
@@ -415,14 +555,6 @@ const applyLeave = async (req, res) => {
       return res.status(400).json({ message: 'Start date must be before or equal to end date.' });
     }
 
-    let totalDays = calculateTotalDays(start, end);
-    if (isHalfDay) {
-      totalDays = 0.5;
-    }
-    if (totalDays <= 0) {
-      return res.status(400).json({ message: 'Invalid leave duration.' });
-    }
-
     const rawType = leaveType || altType || 'CASUAL';
     const normalizedType = String(rawType).toUpperCase();
 
@@ -430,6 +562,14 @@ const applyLeave = async (req, res) => {
       where: { id: userId },
       select: { organizationId: true }
     });
+
+    let totalDays = await calculateTotalDays(start, end, userId, userRecordObj?.organizationId);
+    if (isHalfDay) {
+      totalDays = 0.5;
+    }
+    if (totalDays <= 0) {
+      return res.status(400).json({ message: 'The selected date range falls entirely on Sundays, shift holidays, or company holidays.' });
+    }
 
     const allLeaveTypes = await prisma.leaveType.findMany({ where: { isActive: true } });
     const companyLeaveTypes = filterLeaveTypesForCompany(allLeaveTypes, userRecordObj?.organizationId);
@@ -444,8 +584,14 @@ const applyLeave = async (req, res) => {
       ? (String(inputPayType).toUpperCase() === 'UNPAID' ? 'UNPAID' : 'PAID')
       : (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(normalizedType) || (matchedTypeObj && !matchedTypeObj.isPaid) ? 'UNPAID' : 'PAID');
 
+    if (normalizedType === 'WFH' && !matchedTypeObj) {
+      return res.status(400).json({
+        message: 'Work From Home (WFH) is not an active leave policy for your organization.'
+      });
+    }
+
     // Check available Leave Quota Balance against UserLeaveBalance in DB
-    if (normalizedType !== 'WFH' && determinedPayType !== 'UNPAID') {
+    if (determinedPayType !== 'UNPAID') {
       if (matchedTypeObj) {
         const userBal = await prisma.userLeaveBalance.findUnique({
           where: {
@@ -1031,5 +1177,6 @@ module.exports = {
   approveLeaveTL,
   approveLeaveAdmin,
   rejectLeave,
-  cancelLeave
+  cancelLeave,
+  calculateTotalDays
 };

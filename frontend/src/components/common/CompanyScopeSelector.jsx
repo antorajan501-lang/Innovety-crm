@@ -35,7 +35,7 @@ const CompanyScopeSelector = ({ onScopeChange, className = '', allowAllCompanies
   return (
     <div className={`p-4 rounded-3xl bg-card border border-border/60 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${className}`}>
       <div className="flex items-center gap-3 flex-1">
-        <div className="p-2.5 rounded-2xl bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 font-extrabold text-xs shrink-0 flex items-center gap-2">
+        <div className="p-2.5 rounded-2xl bg-primary/10 text-primary border border-primary/20 font-extrabold text-xs shrink-0 flex items-center gap-2">
           <Building2 className="h-4 w-4" />
           <span>Company:</span>
         </div>
@@ -46,7 +46,7 @@ const CompanyScopeSelector = ({ onScopeChange, className = '', allowAllCompanies
               id="global-company-scope-selector"
               value={selectedOrgId || (allowAllCompanies ? 'all' : (safeCompanies.length > 0 ? safeCompanies[0]?.id : ''))}
               onChange={handleCompanyChange}
-              className="w-full pl-4 pr-10 py-2.5 text-xs font-extrabold rounded-2xl border border-border/60 bg-muted/30 focus:bg-background focus:ring-2 focus:ring-emerald-500/20 outline-none cursor-pointer text-foreground appearance-none"
+              className="w-full pl-4 pr-10 py-2.5 text-xs font-extrabold rounded-2xl border border-border/60 bg-muted/30 focus:bg-background focus:ring-2 focus:ring-primary/20 focus:border-primary/50 outline-none cursor-pointer text-foreground appearance-none"
             >
               {companiesLoading ? (
                 <option value="">Loading companies...</option>
@@ -77,7 +77,7 @@ const CompanyScopeSelector = ({ onScopeChange, className = '', allowAllCompanies
 
       <div className="text-xs text-muted-foreground font-medium px-2 flex items-center gap-1.5">
         <span>Managing company scope:</span>
-        <strong className="text-emerald-600 font-extrabold flex items-center gap-1">
+        <strong className="text-primary font-extrabold flex items-center gap-1">
           {currentDisplayName || 'Selected Company'}
           {!isSuperAdmin && <Lock className="h-3 w-3 text-muted-foreground inline" />}
         </strong>

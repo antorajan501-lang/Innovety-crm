@@ -26,6 +26,7 @@ router.post('/types', createLeaveType);
 router.put('/types/:id', updateLeaveType);
 router.put('/types/:id/status', toggleLeaveTypeStatus);
 router.delete('/types/:id', deleteLeaveType);
+router.delete('/:id', deleteLeaveType);
 router.post('/adjust-balance', adjustUserLeaveBalance);
 router.post('/annual-reset', executeAnnualReset);
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Building2, Lock, Mail, AlertTriangle, ArrowRight, ShieldCheck, CheckCircle2, RefreshCw, Clock } from 'lucide-react';
-import api from '../services/api';
+import api, { getUploadUrl } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useOrganizationBranding } from '../context/BrandContext';
 import { setPlatformBranding } from '../utils/branding';
@@ -124,7 +124,10 @@ const CompanyLogin = () => {
     }
   };
 
-  const primaryColor = companyBranding?.primaryColor || '#10B981';
+  // Login Theme Variables
+  const primaryColor = companyBranding?.loginPrimaryColor || companyBranding?.primaryColor || '#F97316';
+  const welcomeTitle = companyBranding?.name || 'Company Portal';
+  const welcomeSubtitle = `Sign in to your ${companyBranding?.name || 'enterprise'} portal`;
 
   if (loadingCompany) {
     return (
@@ -159,61 +162,73 @@ const CompanyLogin = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
-      {/* Background Accent Glow */}
+    <div
+      className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden transition-all duration-300"
+      style={{
+        background: 'linear-gradient(135deg, #090D16 0%, #0F172A 50%, #020617 100%)'
+      }}
+    >
+      {/* Background Ambient Glow */}
       <div
-        className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 h-96 w-96 rounded-full blur-3xl opacity-15 pointer-events-none"
+        className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 h-96 w-96 rounded-full blur-3xl opacity-25 pointer-events-none transition-all duration-500"
         style={{ backgroundColor: primaryColor }}
       />
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="w-full max-w-md rounded-3xl border border-border/80 bg-card/90 backdrop-blur-xl p-6 sm:p-8 shadow-2xl space-y-6 text-left relative z-10"
+        className="w-full max-w-md rounded-3xl p-6 sm:p-8 space-y-6 text-left relative z-10 border border-white/15 dark:border-white/10 bg-slate-900/85 backdrop-blur-xl shadow-2xl text-white"
       >
         {/* Header Branding */}
         <div className="text-center space-y-3">
           <div
-            className="h-16 w-16 rounded-2xl mx-auto flex items-center justify-center font-extrabold text-white text-xl shadow-lg overflow-hidden"
+            className="h-16 w-16 rounded-2xl mx-auto flex items-center justify-center font-extrabold text-white text-xl shadow-lg overflow-hidden transition-colors"
             style={{ backgroundColor: primaryColor }}
           >
             {companyBranding?.logo ? (
-              <img src={companyBranding.logo} alt="Company Logo" className="h-full w-full object-cover" />
+              <img
+                src={getUploadUrl(companyBranding.logo)}
+                alt="Company Logo"
+                className="h-full w-full object-contain p-1"
+              />
             ) : (
               (companyBranding?.name || 'C').charAt(0).toUpperCase()
             )}
           </div>
+
           <div>
             <div className="flex items-center justify-center gap-2">
-              <h1 className="text-2xl font-black tracking-tight text-foreground">{companyBranding?.name}</h1>
-              <span
-                className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border"
-                style={{
-                  borderColor: `${primaryColor}40`,
-                  backgroundColor: `${primaryColor}15`,
-                  color: primaryColor
-                }}
-              >
-                {companyBranding?.companyCode}
-              </span>
+              <h1 className="text-2xl font-black tracking-tight text-white">{welcomeTitle}</h1>
+              {companyBranding?.companyCode && (
+                <span
+                  className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border"
+                  style={{
+                    borderColor: `${primaryColor}40`,
+                    backgroundColor: `${primaryColor}15`,
+                    color: primaryColor
+                  }}
+                >
+                  {companyBranding?.companyCode}
+                </span>
+              )}
             </div>
-            <p className="text-xs text-muted-foreground font-medium mt-1">
-              Sign in to your {companyBranding?.name} enterprise portal
+            <p className="text-xs text-slate-300 font-medium mt-1">
+              {welcomeSubtitle}
             </p>
           </div>
         </div>
 
         {/* State 1: Session Expired (Amber neutral banner) */}
         {sessionExpired && !formError && !serverError && (
-          <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in duration-200">
-            <Clock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in duration-200">
+            <Clock className="h-4 w-4 shrink-0 text-amber-400" />
             <span>Your session has expired. Please log in again.</span>
           </div>
         )}
 
         {/* State 2: Invalid Credentials (Red banner) */}
         {formError && (
-          <div className="p-3.5 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive text-xs font-bold flex items-center gap-2 animate-in fade-in duration-200">
+          <div className="p-3.5 rounded-2xl bg-destructive/10 border border-destructive/20 text-red-400 text-xs font-bold flex items-center gap-2 animate-in fade-in duration-200">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             <span>{formError}</span>
           </div>
@@ -221,7 +236,7 @@ const CompanyLogin = () => {
 
         {/* State 3: Server Exception Error (Red banner) */}
         {serverError && (
-          <div className="p-3.5 rounded-2xl bg-destructive/10 border border-destructive/20 text-destructive text-xs font-bold flex items-center gap-2 animate-in fade-in duration-200">
+          <div className="p-3.5 rounded-2xl bg-destructive/10 border border-destructive/20 text-red-400 text-xs font-bold flex items-center gap-2 animate-in fade-in duration-200">
             <AlertTriangle className="h-4 w-4 shrink-0" />
             <span>{serverError}</span>
           </div>
@@ -229,8 +244,8 @@ const CompanyLogin = () => {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-foreground mb-1.5 flex items-center gap-1.5">
-              <Mail className="h-3.5 w-3.5 text-muted-foreground" /> Email / Employee ID
+            <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+              <Mail className="h-3.5 w-3.5 text-slate-400" /> Email / Employee ID
             </label>
             <input
               type="text"
@@ -238,14 +253,21 @@ const CompanyLogin = () => {
               placeholder="e.g. john@company.com or EMP001"
               value={loginInput}
               onChange={(e) => setLoginInput(e.target.value)}
-              className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-xs font-bold text-foreground focus:outline-none focus:ring-2"
-              style={{ '--tw-ring-color': `${primaryColor}50` }}
+              className="w-full rounded-2xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-xs font-bold text-white placeholder-slate-400 focus:outline-none transition-all"
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = primaryColor;
+                e.currentTarget.style.boxShadow = `0 0 0 3px ${primaryColor}30`;
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = '';
+                e.currentTarget.style.boxShadow = '';
+              }}
             />
           </div>
 
           <div>
-            <label className="block text-xs font-bold text-foreground mb-1.5 flex items-center gap-1.5">
-              <Lock className="h-3.5 w-3.5 text-muted-foreground" /> Password
+            <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center gap-1.5">
+              <Lock className="h-3.5 w-3.5 text-slate-400" /> Password
             </label>
             <input
               type="password"
@@ -253,17 +275,25 @@ const CompanyLogin = () => {
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-2xl border border-border bg-background px-4 py-3 text-xs font-bold text-foreground focus:outline-none focus:ring-2"
+              className="w-full rounded-2xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-xs font-bold text-white placeholder-slate-400 focus:outline-none transition-all"
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = primaryColor;
+                e.currentTarget.style.boxShadow = `0 0 0 3px ${primaryColor}30`;
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = '';
+                e.currentTarget.style.boxShadow = '';
+              }}
             />
           </div>
 
           <button
             type="submit"
             disabled={submitting}
-            className="w-full py-3 rounded-2xl text-white text-xs font-extrabold transition-all shadow-lg cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+            className="w-full py-3 rounded-2xl text-white text-xs font-extrabold transition-all shadow-lg cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 hover:brightness-110 active:scale-[0.99]"
             style={{
               backgroundColor: primaryColor,
-              boxShadow: `0 8px 20px -4px ${primaryColor}40`
+              boxShadow: `0 8px 20px -4px ${primaryColor}50`
             }}
           >
             {submitting ? (
@@ -280,8 +310,12 @@ const CompanyLogin = () => {
           </button>
         </form>
 
-        <div className="pt-4 border-t border-border/60 text-center">
-          <Link to="/login" className="text-xs font-bold text-muted-foreground hover:text-foreground transition-colors">
+        <div className="pt-4 border-t border-slate-800 text-center">
+          <Link
+            to="/login"
+            className="text-xs font-bold hover:underline transition-colors"
+            style={{ color: primaryColor }}
+          >
             Switch to Global Login Portal
           </Link>
         </div>

@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const prisma = require('../utils/db');
+const { isTokenRevoked } = require('../services/securityService');
 
 const authenticate = async (req, res, next) => {
   try {
@@ -9,6 +10,10 @@ const authenticate = async (req, res, next) => {
     }
 
     const token = authHeader.split(' ')[1];
+    if (isTokenRevoked(token)) {
+      return res.status(401).json({ message: 'Session has been invalidated or logged out. Please sign in again.' });
+    }
+
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'enterprise_internship_crm_super_secret_jwt_key_123!');
 
     const user = await prisma.user.findUnique({

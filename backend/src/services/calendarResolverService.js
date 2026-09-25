@@ -1,4 +1,5 @@
 const prisma = require('../utils/db');
+const shiftService = require('./shiftService');
 
 /**
  * Helper to format Date object or components into YYYY-MM-DD string
@@ -13,12 +14,11 @@ const formatDateStr = (year, month, day) => {
  * Resolves calendar statuses for a given month and year for a specific user.
  * 
  * Resolution Order:
- * 1. Sunday -> HOLIDAY (isSunday = true, fixed & locked)
- * 2. Company Holiday -> HOLIDAY (date override or recurring permanent rule)
+ * 1. Sunday -> Holiday (isSunday = true, fixed & locked)
+ * 2. Company Holiday -> Holiday (date override or recurring permanent rule)
  * 3. User Approved Leave -> MY_LEAVE (for non-admin users on working/WFH days)
- * 4. Manual Override -> WFH / WORKING_DAY (specific date admin override)
- * 5. Saturday Default -> WFH
- * 6. Weekday Default -> WORKING_DAY
+ * 4. Manual Override -> WFH / Working (specific date admin override)
+ * 5. Assigned Shift Schedule -> Working / WFH / Holiday (via getShiftDayStatus)
  */
 const resolveMonthlyCalendar = async ({ user, month, year, organizationId }) => {
   const targetYear = parseInt(year, 10);
@@ -27,6 +27,28 @@ const resolveMonthlyCalendar = async ({ user, month, year, organizationId }) => 
   if (!targetOrgId || targetOrgId === 'undefined' || targetOrgId === 'null' || (typeof targetOrgId === 'string' && targetOrgId.trim() === '')) {
     targetOrgId = user?.organizationId || null;
   }
+
+  const timeZone = 'Asia/Kolkata';
+
+  // Resolve user's assigned shift (Priority: Assigned Shift -> Company Default Shift -> Settings)
+  let userShift = null;
+  if (user?.id) {
+    userShift = await shiftService.getEmployeeShiftWithSchedule(
+      user.id,
+      new Date(targetYear, targetMonth - 1, 1),
+      timeZone,
+      prisma
+    );
+  }
+
+  // Fallback for Admin/Super Admin viewing specific organization without personal shift assignment
+  if (!userShift && targetOrgId) {
+    userShift = await shiftService.createDefaultShift(targetOrgId, prisma);
+  }
+
+  const shiftName = userShift?.name || userShift?.shiftName || 'Company Default';
+  const startTime = userShift?.startTime || '09:00';
+  const endTime = userShift?.endTime || '18:00';
 
   // Determine number of days in the month
   const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
@@ -130,11 +152,12 @@ const resolveMonthlyCalendar = async ({ user, month, year, organizationId }) => 
     const dateStr = formatDateStr(targetYear, targetMonth, day);
     const currentDate = new Date(targetYear, targetMonth - 1, day);
     const dayOfWeek = currentDate.getDay(); // 0 = Sunday, 6 = Saturday
+    const dayName = shiftService.getDayName(currentDate, timeZone);
 
     const specificOverride = specificOverridesMap.get(dateStr);
     const permanentRule = permanentRulesMap.get(day);
 
-    let resolvedStatus = 'WORKING_DAY';
+    let resolvedStatus = 'Working';
     let title = 'Working Day';
     let reason = '';
     let overrideId = null;
@@ -145,7 +168,7 @@ const resolveMonthlyCalendar = async ({ user, month, year, organizationId }) => 
 
     // STEP 1: Sunday is fixed HOLIDAY (locked)
     if (dayOfWeek === 0) {
-      resolvedStatus = 'SUNDAY';
+      resolvedStatus = 'Holiday';
       title = 'Sunday';
       reason = 'Fixed Weekly Holiday';
       isSunday = true;
@@ -153,14 +176,14 @@ const resolveMonthlyCalendar = async ({ user, month, year, organizationId }) => 
     }
     // STEP 2: Company Holiday (Specific date override or Permanent Rule)
     else if (specificOverride && specificOverride.status === 'HOLIDAY') {
-      resolvedStatus = 'HOLIDAY';
+      resolvedStatus = 'Holiday';
       title = specificOverride.title || 'Company Holiday';
       reason = specificOverride.reason || 'Company Holiday';
       overrideId = specificOverride.id;
       isPermanent = specificOverride.isPermanent;
       createdBy = specificOverride.createdBy?.name || null;
     } else if (!specificOverride && permanentRule && permanentRule.status === 'HOLIDAY') {
-      resolvedStatus = 'HOLIDAY';
+      resolvedStatus = 'Holiday';
       title = permanentRule.title || 'Company Holiday';
       reason = permanentRule.reason || 'Annual Permanent Holiday';
       overrideId = permanentRule.id;
@@ -189,24 +212,19 @@ const resolveMonthlyCalendar = async ({ user, month, year, organizationId }) => 
     }
     // STEP 4: Manual WFH or Working Day Specific Override
     else if (specificOverride) {
-      resolvedStatus = specificOverride.status;
-      title = specificOverride.title || (specificOverride.status === 'WFH' ? 'Work From Home' : 'Working Day');
+      resolvedStatus = specificOverride.status === 'WORKING_DAY' ? 'Working' : specificOverride.status;
+      title = specificOverride.title || (resolvedStatus === 'WFH' ? 'Work From Home' : 'Working Day');
       reason = specificOverride.reason || '';
       overrideId = specificOverride.id;
       isPermanent = specificOverride.isPermanent;
       createdBy = specificOverride.createdBy?.name || null;
     }
-    // STEP 5: Saturday Default -> WFH
-    else if (dayOfWeek === 6) {
-      resolvedStatus = 'WFH';
-      title = 'Work From Home';
-      reason = 'Saturday Default WFH';
-    }
-    // STEP 6: Mon-Fri Default -> WORKING_DAY
+    // STEP 5: Dynamic Shift Engine Integration (getShiftDayStatus)
     else {
-      resolvedStatus = 'WORKING_DAY';
-      title = 'Working Day';
-      reason = 'Standard Working Day';
+      const shiftStatus = shiftService.getShiftDayStatus(userShift, dayName, currentDate);
+      resolvedStatus = shiftStatus || 'Working';
+      title = resolvedStatus === 'Working' ? 'Working Day' : resolvedStatus === 'WFH' ? 'Work From Home' : 'Holiday';
+      reason = `${shiftName} Schedule`;
     }
 
     resolvedDays.push({
@@ -223,7 +241,14 @@ const resolveMonthlyCalendar = async ({ user, month, year, organizationId }) => 
     });
   }
 
-  return resolvedDays;
+  return {
+    shiftName,
+    startTime,
+    endTime,
+    formattedStart: shiftService.formatTime12h(startTime),
+    formattedEnd: shiftService.formatTime12h(endTime),
+    days: resolvedDays
+  };
 };
 
 module.exports = {

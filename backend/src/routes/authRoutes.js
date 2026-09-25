@@ -9,12 +9,14 @@ const {
   verifyResetOtp,
   resetPassword,
   removeProfilePicture,
-  refreshToken
+  refreshToken,
+  logout
 } = require('../controllers/authController');
 const { authenticate } = require('../middleware/auth');
 const upload = require('../middleware/upload');
 
 router.post('/login', login);
+router.post('/logout', authenticate, logout);
 router.post('/refresh', refreshToken);
 router.post('/forgot-password', forgotPassword);
 router.post('/verify-reset-otp', verifyResetOtp);

@@ -1,13 +1,19 @@
 const prisma = require('../utils/db');
 const { resolveMonthlyCalendar } = require('../services/calendarResolverService');
 const { getEffectiveOrgId } = require('../utils/organizationScope');
+const { broadcastShiftUpdate } = require('../socket');
 
 /**
  * GET /api/work-calendar
- * Returns resolved monthly calendar for requested month & year for current user.
+ * Returns resolved monthly calendar for requested month & year for current user,
+ * dynamically resolved from their assigned shift.
  */
 const getCalendar = async (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const today = new Date();
     const month = parseInt(req.query.month, 10) || (today.getMonth() + 1);
     const year = parseInt(req.query.year, 10) || today.getFullYear();
@@ -21,7 +27,7 @@ const getCalendar = async (req, res) => {
 
     const targetOrgId = getEffectiveOrgId(req);
 
-    const calendarData = await resolveMonthlyCalendar({
+    const calendarResult = await resolveMonthlyCalendar({
       user: req.user,
       month,
       year,
@@ -31,7 +37,12 @@ const getCalendar = async (req, res) => {
     return res.json({
       month,
       year,
-      days: calendarData
+      shiftName: calendarResult.shiftName || 'Company Default',
+      startTime: calendarResult.startTime || '09:00',
+      endTime: calendarResult.endTime || '18:00',
+      formattedStart: calendarResult.formattedStart || '09:00 AM',
+      formattedEnd: calendarResult.formattedEnd || '06:00 PM',
+      days: calendarResult.days || []
     });
   } catch (error) {
     console.error('Error fetching work calendar:', error);
@@ -155,6 +166,10 @@ const createOverride = async (req, res) => {
       }
     }
 
+    if (targetOrgId) {
+      broadcastShiftUpdate(targetOrgId, { action: 'CALENDAR_OVERRIDE_CREATED' });
+    }
+
     return res.status(201).json({
       message: 'Work calendar override saved successfully.',
       override: resultRecord
@@ -202,6 +217,10 @@ const updateOverride = async (req, res) => {
       }
     });
 
+    if (existing.organizationId) {
+      broadcastShiftUpdate(existing.organizationId, { action: 'CALENDAR_OVERRIDE_UPDATED' });
+    }
+
     return res.json({
       message: 'Calendar override updated successfully.',
       override: updated
@@ -226,6 +245,10 @@ const deleteOverride = async (req, res) => {
     }
 
     await prisma.workCalendar.delete({ where: { id } });
+
+    if (existing.organizationId) {
+      broadcastShiftUpdate(existing.organizationId, { action: 'CALENDAR_OVERRIDE_DELETED' });
+    }
 
     return res.json({
       message: 'Calendar override removed successfully. Date restored to default status.'

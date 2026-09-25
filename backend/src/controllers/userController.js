@@ -6,7 +6,8 @@ const { sendWelcomeEmail } = require('../services/email');
 const { logActivity } = require('../utils/activityLogger');
 const { getOrganizationWhere, getEffectiveOrgId } = require('../utils/organizationScope');
 const { addUserToCompanyChat, removeUserFromCompanyChat } = require('../services/companyChatService');
-const { disconnectUserSocket } = require('../socket');
+const { disconnectUserSocket, broadcastShiftUpdate } = require('../socket');
+const shiftService = require('../services/shiftService');
 
 // Helper to auto-generate employee ID per role (e.g. EM-1001, IN-1005)
 const generateEmployeeId = async (role, organizationId) => {
@@ -316,6 +317,20 @@ const createUser = async (req, res) => {
       console.error('Failed to send welcome email to user:', newUser.email, err);
     });
 
+    // Sync shiftMember if shift is assigned
+    if (finalShiftId) {
+      try {
+        await prisma.shiftMember.upsert({
+          where: { userId: newUser.id },
+          create: { shiftId: finalShiftId, userId: newUser.id, assignedById: req.user?.id || null, effectiveFrom: new Date() },
+          update: { shiftId: finalShiftId, assignedById: req.user?.id || null, effectiveFrom: new Date() }
+        });
+        broadcastShiftUpdate(finalOrganizationId, { action: 'USER_SHIFT_ASSIGNED', userId: newUser.id, shiftId: finalShiftId });
+      } catch (smErr) {
+        console.warn('[createUser] Failed to sync shiftMember:', smErr.message);
+      }
+    }
+
     await logActivity({
       userId: req.user.id,
       action: 'USER_CREATE',
@@ -458,6 +473,10 @@ const getAllUsers = async (req, res) => {
 
 const getUserById = async (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const { id } = req.params;
     const user = await prisma.user.findFirst({
       where: getOrganizationWhere(req, { id }),
@@ -469,6 +488,9 @@ const getUserById = async (req, res) => {
         designationRef: true,
         reportingManager: { select: { id: true, name: true, employeeId: true, role: true } },
         shiftRef: true,
+        shiftAssignment: {
+          include: { shift: true }
+        },
         positionHistories: {
           include: {
             oldPosition: true,
@@ -495,8 +517,23 @@ const getUserById = async (req, res) => {
     }
 
     const { password, ...details } = user;
+
+    // Dynamically enrich with active shift if shiftAssignment is missing
+    let shiftAssignment = details.shiftAssignment;
+    if (!shiftAssignment?.shift) {
+      const dynamicShift = await shiftService.getEmployeeShiftWithSchedule(user.id);
+      if (dynamicShift) {
+        shiftAssignment = {
+          userId: user.id,
+          shiftId: dynamicShift.id,
+          shift: dynamicShift
+        };
+      }
+    }
+
     res.json({
       ...details,
+      shiftAssignment,
       department: details.department || details.departmentRef?.name || null
     });
   } catch (error) {
@@ -692,6 +729,25 @@ const editUser = async (req, res) => {
       where: { id },
       data
     });
+
+    if (shiftId !== undefined) {
+      try {
+        if (shiftId) {
+          await prisma.shiftMember.upsert({
+            where: { userId: id },
+            create: { shiftId, userId: id, assignedById: req.user?.id || null, effectiveFrom: new Date() },
+            update: { shiftId, assignedById: req.user?.id || null, effectiveFrom: new Date() }
+          });
+        } else {
+          await prisma.shiftMember.deleteMany({
+            where: { userId: id }
+          });
+        }
+        broadcastShiftUpdate(updatedUser.organizationId, { action: 'USER_SHIFT_UPDATED', userId: id, shiftId });
+      } catch (smErr) {
+        console.warn('[editUser] Failed to sync shiftMember:', smErr.message);
+      }
+    }
 
     await logActivity({
       userId: req.user.id,

@@ -27,6 +27,14 @@ import {
 
 const Attendance = () => {
   const { user } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') {
+      navigate('/attendance-audit', { replace: true });
+    }
+  }, [user?.role, navigate]);
+
   const { selectedOrgId } = useCompanyScope();
   const [time, setTime] = useState(new Date());
   const [clockedRecord, setClockedRecord] = useState(null);
@@ -162,9 +170,9 @@ const Attendance = () => {
   const lastFetchTimestampRef = useRef(0);
   const debounceFetchTimerRef = useRef(null);
 
-  const safeRefreshAttendance = useCallback(() => {
+  const safeRefreshAttendance = useCallback((force = false) => {
     const now = Date.now();
-    if (now - lastFetchTimestampRef.current < 2000) {
+    if (!force && now - lastFetchTimestampRef.current < 1500) {
       return;
     }
     if (debounceFetchTimerRef.current) {
@@ -172,11 +180,11 @@ const Attendance = () => {
     }
     debounceFetchTimerRef.current = setTimeout(() => {
       lastFetchTimestampRef.current = Date.now();
-      console.log('[AutoClockOut] Executing single attendance page refresh');
+      console.log('[Attendance] Executing attendance & shift state refresh');
       fetchClockInStatus();
       fetchAttendanceStatus();
       setHistoryRefreshTrigger(prev => prev + 1);
-    }, 150);
+    }, 100);
   }, []);
 
   useEffect(() => {
@@ -184,6 +192,12 @@ const Attendance = () => {
     fetchAttendanceStatus();
     fetchSettings();
 
+    const handleShiftEvent = (payload) => {
+      console.log('[Socket/Window] Shift update received on Attendance page:', payload);
+      safeRefreshAttendance(true);
+    };
+
+    window.addEventListener('shift_updated', handleShiftEvent);
     const socket = getSocket();
     if (socket) {
       const handleAttendanceEvent = (payload) => {
@@ -195,17 +209,28 @@ const Attendance = () => {
       socket.off('attendance_clock_out', handleAttendanceEvent);
       socket.off('attendance_updated', handleAttendanceEvent);
       socket.off('settings_updated', handleAttendanceEvent);
+      socket.off('shift_updated', handleShiftEvent);
+      socket.off('schedule_updated', handleShiftEvent);
 
       socket.on('attendance_clock_in', handleAttendanceEvent);
       socket.on('attendance_clock_out', handleAttendanceEvent);
       socket.on('attendance_updated', handleAttendanceEvent);
       socket.on('settings_updated', handleAttendanceEvent);
+      socket.on('shift_updated', handleShiftEvent);
+      socket.on('schedule_updated', handleShiftEvent);
 
       return () => {
+        window.removeEventListener('shift_updated', handleShiftEvent);
         socket.off('attendance_clock_in', handleAttendanceEvent);
         socket.off('attendance_clock_out', handleAttendanceEvent);
         socket.off('attendance_updated', handleAttendanceEvent);
         socket.off('settings_updated', handleAttendanceEvent);
+        socket.off('shift_updated', handleShiftEvent);
+        socket.off('schedule_updated', handleShiftEvent);
+      };
+    } else {
+      return () => {
+        window.removeEventListener('shift_updated', handleShiftEvent);
       };
     }
   }, [safeRefreshAttendance]);
@@ -294,7 +319,6 @@ const Attendance = () => {
     return () => clearInterval(pollInterval);
   }, []);
 
-  const navigate = useNavigate();
   const [isClockInModalOpen, setIsClockInModalOpen] = useState(false);
 
   const handleClockIn = () => {
@@ -418,6 +442,49 @@ const Attendance = () => {
         </div>
       )}
 
+      {/* Assigned Shift Banner */}
+      {clockInStatus?.shift && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-card border border-border/60 shadow-xs text-left">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-primary/10 text-primary">
+              <Clock className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-black text-foreground">Shift: {clockInStatus.shift.name}</p>
+                <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md border ${
+                  clockInStatus.shift.todayStatus === 'Holiday'
+                    ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                    : clockInStatus.shift.todayStatus === 'WFH'
+                      ? 'bg-purple-500/10 text-purple-600 border-purple-500/20'
+                      : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                }`}>
+                  {clockInStatus.shift.todayStatus || 'Working'}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Scheduled Hours: <strong className="text-foreground">{clockInStatus.shift.startTime} – {clockInStatus.shift.endTime}</strong>
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Holiday Message */}
+      {(clockInStatus?.reason === 'HOLIDAY' || clockInStatus?.shift?.todayStatus === 'Holiday') && !clockedRecord && (
+        <div className="p-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300 flex items-center justify-between text-xs font-semibold text-left animate-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 text-rose-500 shrink-0" />
+            <div>
+              <p className="font-extrabold text-sm text-rose-600 dark:text-rose-400">Today is a Holiday 🏖️</p>
+              <p className="text-[11px] opacity-90 mt-0.5">
+                Today is marked as a Holiday in your shift schedule. Clock-in is disabled.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Late Attendance Alert Banner */}
       {clockedRecord && clockedRecord.status === 'LATE' && (
         <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 flex items-center justify-between text-xs font-semibold text-left animate-in slide-in-from-top duration-300">
@@ -426,7 +493,7 @@ const Attendance = () => {
             <div>
               <p className="font-extrabold text-sm text-amber-600 dark:text-amber-400">Late Attendance Recorded ⚠️</p>
               <p className="text-[11px] opacity-90 mt-0.5">
-                You clocked in past your official shift start time (09:30 AM). Your attendance status for today is marked as <strong>LATE</strong>.
+                You clocked in past your official shift start time ({clockInStatus?.shiftStartFormatted || clockInStatus?.shift?.formattedStart || clockInStatus?.clockInTime || '09:00 AM'}). Your attendance status for today is marked as <strong>LATE</strong>.
               </p>
             </div>
           </div>
@@ -560,9 +627,16 @@ const Attendance = () => {
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.96, y: -4 }}
                   transition={{ duration: 0.25, ease: 'easeInOut' }}
-                  className="w-full flex items-center justify-center text-center p-2.5 rounded-2xl bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 shadow-sm"
+                  className="w-full flex items-center justify-center text-center p-2.5 rounded-2xl bg-primary/10 border border-primary/20 text-primary shadow-sm"
                 >
-                  <span className="inline-flex items-center justify-center px-4 py-1.5 rounded-full text-xs font-mono font-extrabold bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 border border-emerald-500/30">
+                  <span
+                    className="inline-flex items-center justify-center px-4 py-1.5 rounded-full text-xs font-mono font-extrabold border"
+                    style={{
+                      backgroundColor: 'var(--brand-primary-light)',
+                      borderColor: 'var(--brand-primary)',
+                      color: 'var(--brand-primary)'
+                    }}
+                  >
                     Worked Today: {getWorkedDurationText(clockedRecord) || '0h 0m'}
                   </span>
                 </motion.div>

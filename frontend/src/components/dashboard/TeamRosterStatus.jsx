@@ -8,17 +8,31 @@ const TeamRosterStatus = ({
   className = ''
 }) => {
   return (
-    <div className={`rounded-3xl border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left font-sans ${className}`}>
+    <div className={`rounded-[24px] border border-border/70 bg-card p-6 shadow-sm space-y-5 text-left font-sans ${className}`}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border/40 pb-3">
         <div className="flex items-center gap-2.5">
-          <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+          <div
+            className="p-2 rounded-xl border border-primary/20 bg-primary/10 text-primary"
+            style={{
+              backgroundColor: 'var(--brand-primary-light)',
+              borderColor: 'var(--brand-primary)',
+              color: 'var(--brand-primary)'
+            }}
+          >
             <Users className="w-4 h-4" />
           </div>
           <h3 className="text-sm font-bold text-foreground">{title}</h3>
         </div>
 
-        <span className="text-[10px] font-extrabold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+        <span
+          className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-primary/25 bg-primary/10 text-primary"
+          style={{
+            backgroundColor: 'var(--brand-primary-light)',
+            borderColor: 'var(--brand-primary)',
+            color: 'var(--brand-primary)'
+          }}
+        >
           {members.length} Member{members.length === 1 ? '' : 's'}
         </span>
       </div>

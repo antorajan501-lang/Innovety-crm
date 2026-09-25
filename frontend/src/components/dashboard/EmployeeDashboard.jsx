@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
+import { useTheme } from '../../context/ThemeContext';
 import api, { getSocket } from '../../services/api';
 import UserAvatar from '../common/UserAvatar';
 import ClockInModal from '../attendance/ClockInModal';
@@ -78,6 +79,7 @@ const itemVariants = {
 export const EmployeeDashboard = () => {
   const { user } = useAuth();
   const { onlineUsers, notifications } = useSocket();
+  const { userChatEnabled } = useTheme();
   const navigate = useNavigate();
 
   // Time & Live Clock State
@@ -91,6 +93,7 @@ export const EmployeeDashboard = () => {
   const [clockStatus, setClockStatus] = useState(null);
   const [attendanceAlert, setAttendanceAlert] = useState('');
   const [clockInToast, setClockInToast] = useState(null);
+  const [upcomingSchedule, setUpcomingSchedule] = useState(null);
 
   const handleClockInSuccess = (resData) => {
     setIsClockInModalOpen(false);
@@ -199,9 +202,9 @@ export const EmployeeDashboard = () => {
   const lastFetchTimestampRef = useRef(0);
   const debounceFetchTimerRef = useRef(null);
 
-  const safeRefreshDashboard = useCallback(() => {
+  const safeRefreshDashboard = useCallback((force = false) => {
     const now = Date.now();
-    if (now - lastFetchTimestampRef.current < 2000) {
+    if (!force && now - lastFetchTimestampRef.current < 1500) {
       return;
     }
     if (debounceFetchTimerRef.current) {
@@ -209,14 +212,20 @@ export const EmployeeDashboard = () => {
     }
     debounceFetchTimerRef.current = setTimeout(() => {
       lastFetchTimestampRef.current = Date.now();
-      console.log('[AutoClockOut] Executing single attendance state refresh');
+      console.log('[Dashboard] Executing single dashboard & shift state refresh');
       fetchEmployeeDashboardData();
-    }, 150);
+    }, 100);
   }, []);
 
   useEffect(() => {
     fetchEmployeeDashboardData();
 
+    const handleShiftEvent = (payload) => {
+      console.log('[Socket/Window] Shift update received on Employee Dashboard:', payload);
+      safeRefreshDashboard(true);
+    };
+
+    window.addEventListener('shift_updated', handleShiftEvent);
     const socket = getSocket();
     if (socket) {
       const handleAttendanceEvent = (payload) => {
@@ -228,17 +237,28 @@ export const EmployeeDashboard = () => {
       socket.off('attendance_clock_out', handleAttendanceEvent);
       socket.off('attendance_updated', handleAttendanceEvent);
       socket.off('settings_updated', handleAttendanceEvent);
+      socket.off('shift_updated', handleShiftEvent);
+      socket.off('schedule_updated', handleShiftEvent);
 
       socket.on('attendance_clock_in', handleAttendanceEvent);
       socket.on('attendance_clock_out', handleAttendanceEvent);
       socket.on('attendance_updated', handleAttendanceEvent);
       socket.on('settings_updated', handleAttendanceEvent);
+      socket.on('shift_updated', handleShiftEvent);
+      socket.on('schedule_updated', handleShiftEvent);
 
       return () => {
+        window.removeEventListener('shift_updated', handleShiftEvent);
         socket.off('attendance_clock_in', handleAttendanceEvent);
         socket.off('attendance_clock_out', handleAttendanceEvent);
         socket.off('attendance_updated', handleAttendanceEvent);
         socket.off('settings_updated', handleAttendanceEvent);
+        socket.off('shift_updated', handleShiftEvent);
+        socket.off('schedule_updated', handleShiftEvent);
+      };
+    } else {
+      return () => {
+        window.removeEventListener('shift_updated', handleShiftEvent);
       };
     }
   }, [user, safeRefreshDashboard]);
@@ -256,7 +276,8 @@ export const EmployeeDashboard = () => {
         leavesRes,
         teamsRes,
         logsRes,
-        holidaysRes
+        holidaysRes,
+        scheduleRes
       ] = await Promise.all([
         api.get('/tasks').catch(() => ({ data: [] })),
         api.get('/projects').catch(() => ({ data: [] })),
@@ -266,7 +287,8 @@ export const EmployeeDashboard = () => {
         api.get('/leaves').catch(() => ({ data: [] })),
         api.get('/teams').catch(() => ({ data: [] })),
         api.get('/logs?limit=20').catch(() => ({ data: { logs: [] } })),
-        api.get('/payroll/holidays').catch(() => ({ data: [] }))
+        api.get('/payroll/holidays').catch(() => ({ data: [] })),
+        api.get('/shifts/my-schedule').catch(() => ({ data: {} }))
       ]);
 
       // 1. My Tasks (Strictly Filtered for logged-in Employee)
@@ -320,6 +342,12 @@ export const EmployeeDashboard = () => {
       const rawLogs = logsRes.data?.logs || logsRes.data || [];
       const userLogs = Array.isArray(rawLogs) ? rawLogs.filter(l => l.userId === user.id || l.userCode === user.employeeId) : [];
       setMyActivities(userLogs);
+
+      // 8. Upcoming Shift Schedule (Phase 6)
+      const schedData = scheduleRes.data?.data || (scheduleRes.data?.today ? scheduleRes.data : null);
+      if (schedData) {
+        setUpcomingSchedule(schedData);
+      }
 
       setLoading(false);
     } catch (err) {
@@ -533,6 +561,41 @@ export const EmployeeDashboard = () => {
     const presentCount = thisMonthLogs.filter(l => ['PRESENT', 'LATE', 'HALF_DAY', 'WORK_FROM_HOME'].includes(l.status)).length;
     return Math.round((presentCount / thisMonthLogs.length) * 100);
   }, [attendanceLogs]);
+
+  // Dynamic Late Count Stats (for current calendar month)
+  const lateStats = useMemo(() => {
+    if (clockStatus?.lateStats) {
+      return clockStatus.lateStats;
+    }
+    // Fallback calculation from attendanceLogs if clockStatus is not loaded yet
+    const now = new Date();
+    const currYear = now.getFullYear();
+    const currMonth = now.getMonth();
+    const monthlyLates = (attendanceLogs || []).filter(l => {
+      const d = new Date(l.date);
+      return d.getFullYear() === currYear && d.getMonth() === currMonth && l.status === 'LATE';
+    }).length;
+
+    const warningLimit = 3;
+    const warningsRemaining = Math.max(0, warningLimit - monthlyLates);
+    let subtitle = `${warningLimit} warnings remaining`;
+    if (monthlyLates === 0) {
+      subtitle = `${warningLimit} warnings remaining`;
+    } else if (monthlyLates < warningLimit) {
+      subtitle = `${warningsRemaining} warning${warningsRemaining === 1 ? '' : 's'} remaining`;
+    } else if (monthlyLates === warningLimit) {
+      subtitle = 'Last warning';
+    } else {
+      subtitle = 'Deduction started';
+    }
+
+    return {
+      monthlyLates,
+      warningLimit,
+      displayRatio: `${monthlyLates}/${warningLimit}`,
+      subtitle
+    };
+  }, [clockStatus, attendanceLogs]);
 
   // Leave Balances (12 Casual, 8 Sick, 3 Emergency default limits minus approved)
   const leaveStats = useMemo(() => {
@@ -756,13 +819,13 @@ export const EmployeeDashboard = () => {
 
   return (
     <motion.div
-      className="space-y-6 pb-10"
+      className="w-full space-y-8 pb-10"
       variants={containerVariants}
       initial="hidden"
       animate="visible"
     >
       {/* 1. Personalized Welcome Banner Section */}
-      <motion.div variants={itemVariants} className="relative rounded-[28px] border border-border/80 bg-card p-6 md:p-8 shadow-sm backdrop-blur-xl overflow-hidden">
+      <motion.div variants={itemVariants} className="relative rounded-[24px] border border-border/80 bg-card p-6 md:p-8 shadow-sm backdrop-blur-xl overflow-hidden">
         <div className="absolute -right-12 -bottom-12 w-64 h-64 rounded-full bg-primary/10 blur-3xl pointer-events-none" />
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
           {/* User Identity & Info */}
@@ -813,9 +876,16 @@ export const EmployeeDashboard = () => {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: -4 }}
                     transition={{ duration: 0.25, ease: 'easeInOut' }}
-                    className="w-full flex items-center justify-center text-center p-1.5 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 shadow-sm"
+                    className="w-full flex items-center justify-center text-center p-1.5 rounded-xl bg-primary/10 border border-primary/20 text-primary shadow-sm"
                   >
-                    <span className="inline-flex items-center justify-center px-3 py-1 rounded-full text-[10px] font-mono font-extrabold bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 border border-emerald-500/30">
+                    <span
+                      className="inline-flex items-center justify-center px-3 py-1 rounded-full text-[10px] font-mono font-extrabold border"
+                      style={{
+                        backgroundColor: 'var(--brand-primary-light)',
+                        borderColor: 'var(--brand-primary)',
+                        color: 'var(--brand-primary)'
+                      }}
+                    >
                       Worked Today: {getWorkedDurationText(clockedRecord) || '0h 0m'}
                     </span>
                   </motion.div>
@@ -901,13 +971,15 @@ export const EmployeeDashboard = () => {
           <span>My Profile</span>
         </Link>
 
-        <Link
-          to="/chat"
-          className="flex items-center gap-2 bg-card hover:bg-muted text-foreground border border-border/70 px-4 py-2.5 rounded-2xl text-xs font-bold shadow-xs transition-all shrink-0"
-        >
-          <MessageSquare className="h-4 w-4 text-purple-500" />
-          <span>Chat Room</span>
-        </Link>
+        {userChatEnabled && (
+          <Link
+            to="/chat"
+            className="flex items-center gap-2 bg-card hover:bg-muted text-foreground border border-border/70 px-4 py-2.5 rounded-2xl text-xs font-bold shadow-xs transition-all shrink-0"
+          >
+            <MessageSquare className="h-4 w-4 text-purple-500" />
+            <span>Chat Room</span>
+          </Link>
+        )}
 
         <Link
           to="/announcements"
@@ -919,8 +991,8 @@ export const EmployeeDashboard = () => {
       </motion.div>
 
       {/* 12. Employee Statistics Strip Cards (Dynamic Database Values) */}
-      <motion.div variants={itemVariants} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-        <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm flex flex-col justify-between text-left">
+      <motion.div variants={itemVariants} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-5">
+        <div className="rounded-[24px] border border-border/70 bg-card p-5 shadow-sm flex flex-col justify-between text-left">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Total Tasks</span>
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-2xl font-black text-foreground">{myTasks.length}</span>
@@ -929,7 +1001,7 @@ export const EmployeeDashboard = () => {
           <span className="text-[10px] text-muted-foreground mt-1">Assigned to you</span>
         </div>
 
-        <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm flex flex-col justify-between text-left">
+        <div className="rounded-[24px] border border-border/70 bg-card p-5 shadow-sm flex flex-col justify-between text-left">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Completed</span>
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-2xl font-black text-primary">{completedTasks.length}</span>
@@ -938,7 +1010,7 @@ export const EmployeeDashboard = () => {
           <span className="text-[10px] text-muted-foreground mt-1">Approved deliverables</span>
         </div>
 
-        <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm flex flex-col justify-between text-left">
+        <div className="rounded-[24px] border border-border/70 bg-card p-5 shadow-sm flex flex-col justify-between text-left">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Pending</span>
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-2xl font-black text-amber-500">{pendingTasks.length + inProgressTasks.length + reviewTasks.length}</span>
@@ -947,7 +1019,7 @@ export const EmployeeDashboard = () => {
           <span className="text-[10px] text-muted-foreground mt-1">In progress & queued</span>
         </div>
 
-        <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm flex flex-col justify-between text-left">
+        <div className="rounded-[24px] border border-border/70 bg-card p-5 shadow-sm flex flex-col justify-between text-left">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Attendance %</span>
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-2xl font-black text-primary">{attendanceRate}%</span>
@@ -956,7 +1028,7 @@ export const EmployeeDashboard = () => {
           <span className="text-[10px] text-muted-foreground mt-1">This month</span>
         </div>
 
-        <div className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm flex flex-col justify-between text-left">
+        <div className="rounded-[24px] border border-border/70 bg-card p-5 shadow-sm flex flex-col justify-between text-left">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">Assigned Projects</span>
           <div className="flex items-baseline justify-between mt-2">
             <span className="text-2xl font-black text-blue-500">{myProjects.length}</span>
@@ -966,21 +1038,21 @@ export const EmployeeDashboard = () => {
         </div>
       </motion.div>
 
-      {/* Main Grid Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+      {/* 2-Column Responsive SaaS Grid (Left ~68%, Right ~32%) */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         
-        {/* Left Column (2 Cols wide on Desktop) */}
-        <div className="lg:col-span-2 space-y-6">
+        {/* Left Column (~68%) */}
+        <div className="lg:col-span-8 space-y-8">
 
-          {/* 2. Attendance Summary Card with Real Hours & Dynamic Progress Bar */}
-          <motion.div variants={itemVariants} className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          {/* 2. Today's Shift Attendance Summary (Primary Card) */}
+          <motion.div variants={itemVariants} className="rounded-[24px] border border-border/70 bg-card p-6 shadow-sm space-y-5 text-left">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-border/40 pb-4">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-primary/10 text-primary shrink-0">
+                <div className="p-2.5 rounded-2xl bg-primary/10 text-primary shrink-0">
                   <Clock className="h-5 w-5" />
                 </div>
                 <div className="space-y-1">
-                  <h3 className="text-base font-bold text-foreground">Today's Shift Attendance Summary</h3>
+                  <h3 className="text-lg font-bold text-foreground">Today's Shift Attendance Summary</h3>
                   <p className="text-xs text-muted-foreground font-medium">Logged check-in times, shift status, and daily hours progress.</p>
                   
                   {/* Auto Clock-Out Status Badge Placed Under Header (Only shown during active shift) */}
@@ -999,13 +1071,13 @@ export const EmployeeDashboard = () => {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 self-start sm:self-center">
                 {clockedRecord?.autoClockOut && (
                   <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-blue-500/10 text-blue-600 border border-blue-500/20">
                     Auto Clocked Out
                   </span>
                 )}
-                <span className={`px-3 py-1 rounded-full text-xs font-black border ${
+                <span className={`px-3.5 py-1 rounded-full text-xs font-black border ${
                   clockedRecord && clockedRecord.clockOut
                     ? 'bg-primary/10 text-primary border-primary/20'
                     : clockedRecord
@@ -1022,100 +1094,131 @@ export const EmployeeDashboard = () => {
             </div>
 
             {attendanceAlert && (
-              <div className="p-3 rounded-xl border border-primary/20 bg-primary/10 text-primary text-xs font-semibold flex items-center justify-between">
+              <div className="p-3.5 rounded-2xl border border-primary/20 bg-primary/10 text-primary text-xs font-semibold flex items-center justify-between">
                 <span>{attendanceAlert}</span>
               </div>
             )}
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-1">
+            {/* Four Equal-Width Metric Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-5 pt-1">
               {/* Box 1: Check In */}
-              <div className="p-3.5 rounded-2xl bg-muted/30 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Check In</span>
-                <span className="text-lg font-black text-foreground block mt-1">
-                  {clockedRecord?.clockIn
-                    ? new Date(clockedRecord.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : '--:--'}
-                </span>
+              <div className="p-4 rounded-2xl bg-muted/20 border border-border/60 flex flex-col justify-between min-h-[105px]">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground">Check In</span>
+                <div>
+                  <span className="text-2xl font-black text-foreground block tracking-tight">
+                    {clockedRecord?.clockIn
+                      ? new Date(clockedRecord.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                      : '--:--'}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground font-medium block mt-0.5 truncate">
+                    {clockedRecord?.clockIn ? 'Recorded Entry' : 'Scheduled Start'}
+                  </span>
+                </div>
               </div>
 
               {/* Box 2: Check Out (Live Countdown + Company Shift End Time) */}
-              <div className={`p-3.5 rounded-2xl border ${
+              <div className={`p-4 rounded-2xl border flex flex-col justify-between min-h-[105px] ${
                 isClockedIn
                   ? (shiftCountdown.isExpired && !shiftCountdown.autoClockOutEnabled
                       ? 'bg-amber-500/10 border-amber-500/20'
                       : 'bg-primary/10 border-primary/20')
-                  : 'bg-muted/30 border-border/40'
+                  : 'bg-muted/20 border-border/60'
               }`}>
-                <span className={`text-[10px] font-extrabold uppercase ${isClockedIn ? 'text-primary' : 'text-muted-foreground'}`}>
+                <span className={`text-[11px] font-extrabold uppercase tracking-wider ${isClockedIn ? 'text-primary' : 'text-muted-foreground'}`}>
                   Check Out
                 </span>
                 
-                {clockedRecord?.clockOut ? (
-                  <>
-                    <span className="text-lg font-black text-foreground block mt-1">
-                      {new Date(clockedRecord.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                    <span className="text-[10px] text-muted-foreground font-semibold block mt-0.5">
-                      {clockedRecord.autoClockOut ? 'Automatically Clocked Out' : 'Shift Completed'}
-                    </span>
-                  </>
-                ) : isClockedIn ? (
-                  shiftCountdown.isExpired ? (
-                    shiftCountdown.autoClockOutEnabled ? (
-                      <>
-                        <span className="text-lg font-black text-foreground block mt-1">
-                          {shiftCountdown.targetEndTimeFormatted}
-                        </span>
-                        <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold block mt-0.5">
-                          Automatically Clocked Out
-                        </span>
-                      </>
+                <div>
+                  {clockedRecord?.clockOut ? (
+                    <>
+                      <span className="text-2xl font-black text-foreground block tracking-tight">
+                        {new Date(clockedRecord.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <span className="text-[11px] text-muted-foreground font-semibold block mt-0.5 truncate">
+                        {clockedRecord.autoClockOut ? 'Auto Clocked Out' : 'Shift Completed'}
+                      </span>
+                    </>
+                  ) : isClockedIn ? (
+                    shiftCountdown.isExpired ? (
+                      shiftCountdown.autoClockOutEnabled ? (
+                        <>
+                          <span className="text-2xl font-black text-foreground block tracking-tight">
+                            {shiftCountdown.targetEndTimeFormatted}
+                          </span>
+                          <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-bold block mt-0.5 truncate">
+                            Auto Clocked Out
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-xl font-black text-amber-600 dark:text-amber-400 block tracking-tight">
+                            Shift Ended
+                          </span>
+                          <span className="text-[11px] text-amber-600/90 dark:text-amber-400/90 font-bold block mt-0.5 truncate">
+                            Manual Clock-Out
+                          </span>
+                        </>
+                      )
                     ) : (
                       <>
-                        <span className="text-base font-black text-amber-600 dark:text-amber-400 block mt-1">
-                          Shift Ended
+                        <span className="text-2xl font-black font-mono text-primary block tracking-tight">
+                          {shiftCountdown.formattedRemaining}
                         </span>
-                        <span className="text-[10px] text-amber-600/90 dark:text-amber-400/90 font-bold block mt-0.5">
-                          Please clock out manually.
+                        <span className="text-[11px] text-muted-foreground font-semibold block mt-0.5 truncate">
+                          Ends: {shiftCountdown.targetEndTimeFormatted}
                         </span>
                       </>
                     )
                   ) : (
                     <>
-                      <span className="text-lg font-black font-mono text-primary block mt-1">
-                        {shiftCountdown.formattedRemaining}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground font-semibold block mt-0.5">
-                        Shift Ends: {shiftCountdown.targetEndTimeFormatted}
+                      <span className="text-2xl font-black text-foreground block tracking-tight">--:--</span>
+                      <span className="text-[11px] text-muted-foreground font-medium block mt-0.5 truncate">
+                        Awaiting Clock In
                       </span>
                     </>
-                  )
-                ) : (
-                  <span className="text-lg font-black text-foreground block mt-1">--:--</span>
-                )}
+                  )}
+                </div>
               </div>
 
               {/* Box 3: Working Hours */}
-              <div className="p-3.5 rounded-2xl bg-muted/30 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Working Hours</span>
-                <span className="text-lg font-black text-primary block mt-1">
-                  {currentWorkingHours.toFixed(1)} hrs
-                </span>
+              <div className="p-4 rounded-2xl bg-muted/20 border border-border/60 flex flex-col justify-between min-h-[105px]">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground">Working Hours</span>
+                <div>
+                  <span className="text-2xl font-black text-primary block tracking-tight">
+                    {currentWorkingHours.toFixed(1)} hrs
+                  </span>
+                  <span className="text-[11px] text-muted-foreground font-medium block mt-0.5 truncate">
+                    Target: {targetShiftHours.toFixed(1)} hrs
+                  </span>
+                </div>
               </div>
 
-              {/* Box 4: Break & Overtime */}
-              <div className="p-3.5 rounded-2xl bg-muted/30 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground">Break & Overtime</span>
-                <span className="text-lg font-black text-foreground block mt-1">
-                  {clockedRecord ? '45m' : '0m'} / {currentWorkingHours > 8 ? `${(currentWorkingHours - 8).toFixed(1)}h` : '0h'}
-                </span>
+              {/* Box 4: Late Count */}
+              <div className="p-4 rounded-2xl bg-muted/20 border border-border/60 flex flex-col justify-between min-h-[105px]">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground">Late Count</span>
+                <div>
+                  <span className={`text-2xl font-black block tracking-tight ${
+                    lateStats.monthlyLates > lateStats.warningLimit
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : (lateStats.monthlyLates === lateStats.warningLimit ? 'text-amber-600 dark:text-amber-400' : 'text-foreground')
+                  }`}>
+                    {lateStats.displayRatio || `${lateStats.monthlyLates || 0}/${lateStats.warningLimit || 3}`}
+                  </span>
+                  <span className={`text-[11px] font-medium block mt-0.5 truncate ${
+                    lateStats.monthlyLates > lateStats.warningLimit
+                      ? 'text-rose-500 dark:text-rose-400 font-semibold'
+                      : (lateStats.monthlyLates === lateStats.warningLimit ? 'text-amber-500 font-semibold' : 'text-muted-foreground')
+                  }`}>
+                    {lateStats.subtitle}
+                  </span>
+                </div>
               </div>
             </div>
 
             {/* Daily Shift Progress Bar */}
-            <div className="space-y-1.5 pt-2">
+            <div className="space-y-2 pt-1">
               <div className="flex items-center justify-between text-xs font-bold">
-                <span className="text-muted-foreground">Shift Completion Progress (Target: {targetShiftHours.toFixed(1)} Hours)</span>
+                <span className="text-muted-foreground font-medium">Shift Completion Progress (Target: {targetShiftHours.toFixed(1)} Hours)</span>
                 <span className={`font-mono font-bold transition-colors duration-500 ${isClockedIn || clockedRecord?.clockOut ? progressColor.text : 'text-muted-foreground'}`}>
                   {shiftProgressPercent}%
                 </span>
@@ -1133,33 +1236,45 @@ export const EmployeeDashboard = () => {
           </motion.div>
 
           {/* 3. My Tasks Widget (Strictly Employee Assigned Tasks) */}
-          <motion.div variants={itemVariants} className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
+          <motion.div variants={itemVariants} className="rounded-[24px] border border-border/70 bg-card p-6 shadow-sm space-y-5 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <div>
                 <h3 className="text-base font-bold text-foreground">My Assigned Deliverables & Tasks</h3>
                 <p className="text-xs text-muted-foreground font-medium">Tasks explicitly assigned to your workflow.</p>
               </div>
 
-              <Link to="/tasks" className="text-xs font-bold text-primary hover:underline flex items-center gap-1">
+              <Link to="/tasks" className="text-xs font-bold text-primary hover:underline flex items-center gap-1 bg-primary/10 px-3 py-1.5 rounded-xl transition-all">
                 <span>View All Tasks</span>
                 <ChevronRight className="h-3.5 w-3.5" />
               </Link>
             </div>
 
-            {/* Task Status Filters */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs font-bold">
-              <span className="px-3 py-1 rounded-full bg-muted text-foreground border border-border/40">All ({myTasks.length})</span>
-              <span className="px-3 py-1 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">Pending ({pendingTasks.length})</span>
-              <span className="px-3 py-1 rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">In Progress ({inProgressTasks.length})</span>
-              <span className="px-3 py-1 rounded-full bg-purple-500/10 text-purple-600 border border-purple-500/20">In Review ({reviewTasks.length})</span>
-              <span className="px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20">Completed ({completedTasks.length})</span>
+            {/* Task Status Filters - One horizontal row, equal spacing, consistent height */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs font-bold no-scrollbar">
+              <span className="h-8 px-3.5 inline-flex items-center rounded-full bg-muted text-foreground border border-border/40 shrink-0">
+                All ({myTasks.length})
+              </span>
+              <span className="h-8 px-3.5 inline-flex items-center rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20 shrink-0">
+                Pending ({pendingTasks.length})
+              </span>
+              <span className="h-8 px-3.5 inline-flex items-center rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20 shrink-0">
+                In Progress ({inProgressTasks.length})
+              </span>
+              <span className="h-8 px-3.5 inline-flex items-center rounded-full bg-purple-500/10 text-purple-600 border border-purple-500/20 shrink-0">
+                In Review ({reviewTasks.length})
+              </span>
+              <span className="h-8 px-3.5 inline-flex items-center rounded-full bg-primary/10 text-primary border border-primary/20 shrink-0">
+                Completed ({completedTasks.length})
+              </span>
             </div>
 
-            {/* Task Cards List */}
+            {/* Task Cards List / Empty State */}
             <div className="dash-scroll max-h-80 space-y-3">
               {myTasks.length === 0 ? (
-                <div className="p-6 text-center text-xs text-muted-foreground bg-muted/20 rounded-2xl border border-dashed border-border/60">
-                  No tasks assigned. You're all caught up!
+                <div className="h-44 flex flex-col items-center justify-center text-center text-xs text-muted-foreground bg-muted/10 rounded-2xl border border-dashed border-border/60 p-6">
+                  <CheckCircle2 className="h-8 w-8 text-primary/40 mb-2" />
+                  <span className="font-bold text-foreground text-sm">No tasks assigned</span>
+                  <span className="text-[11px] text-muted-foreground mt-0.5">You're all caught up on deliverables for today!</span>
                 </div>
               ) : (
                 myTasks.map((task) => (
@@ -1212,7 +1327,7 @@ export const EmployeeDashboard = () => {
           </motion.div>
 
           {/* 6 & 13. Real Performance Analytics & Weekly Productivity Chart */}
-          <motion.div variants={itemVariants} className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
+          <motion.div variants={itemVariants} className="rounded-[24px] border border-border/70 bg-card p-6 shadow-sm space-y-5 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <div>
                 <h3 className="text-base font-bold text-foreground">Performance Analytics & Productivity</h3>
@@ -1261,11 +1376,11 @@ export const EmployeeDashboard = () => {
 
         </div>
 
-        {/* Right Column (1 Col wide on Desktop) */}
-        <div className="space-y-6">
+        {/* Right Column (~32%) */}
+        <div className="lg:col-span-4 space-y-8">
 
-          {/* 4. Today's Dynamic Schedule */}
-          <motion.div variants={itemVariants} className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
+          {/* 4. Today's Dynamic Schedule (Aligned Flush with Top of Attendance Card) */}
+          <motion.div variants={itemVariants} className="rounded-[24px] border border-border/70 bg-card p-6 shadow-sm space-y-5 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <h3 className="text-base font-bold text-foreground flex items-center gap-2">
                 <Calendar className="h-5 w-5 text-primary" />
@@ -1276,7 +1391,9 @@ export const EmployeeDashboard = () => {
 
             <div className="dash-scroll max-h-52">
             {todaySchedule.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-6 text-center font-medium">No schedule for today.</p>
+              <div className="py-6 text-center text-xs text-muted-foreground font-medium bg-muted/10 rounded-2xl border border-dashed border-border/40">
+                No scheduled events for today.
+              </div>
             ) : (
               <div className="space-y-3 relative before:absolute before:left-3 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/60">
                 {todaySchedule.map((item, idx) => (
@@ -1294,39 +1411,45 @@ export const EmployeeDashboard = () => {
           </motion.div>
 
           {/* 5. Real Leave Balances & Apply Modal Trigger */}
-          <motion.div variants={itemVariants} className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
+          <motion.div variants={itemVariants} className="rounded-[24px] border border-border/70 bg-card p-6 shadow-sm space-y-5 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h3 className="text-xl sm:text-2xl font-semibold text-foreground tracking-tight">Leave Balances</h3>
-                <span className="inline-flex items-center rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-foreground tracking-tight">Leave Balances</h3>
+                <span className="inline-flex items-center rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[10px] font-bold text-primary">
                   {(leaveBalancesData.allocationMode || '').toUpperCase() === 'MONTHLY' ? 'Monthly Credit' : 'Annual Allocation'}
                 </span>
               </div>
               <button
                 onClick={() => setIsLeaveModalOpen(true)}
-                className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer bg-primary/10 px-2.5 py-1 rounded-xl transition-all"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Apply</span>
               </button>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 gap-x-4 gap-y-4 text-center">
+            {/* Dynamic Leave Cards */}
+            <div className={`grid gap-3 text-center ${
+              leaveBalancesData.leaveTypes.length === 1 ? 'grid-cols-1' :
+              leaveBalancesData.leaveTypes.length === 2 ? 'grid-cols-2' :
+              leaveBalancesData.leaveTypes.length === 3 ? 'grid-cols-3' :
+              'grid-cols-2 sm:grid-cols-4'
+            }`}>
               {leaveBalancesData.leaveTypes.length === 0 ? (
-                <div className="col-span-full p-4 text-xs text-muted-foreground">Loading leave balances...</div>
+                <div className="col-span-full p-4 text-xs text-muted-foreground">No leave balances available.</div>
               ) : (
                 leaveBalancesData.leaveTypes.map((lt) => (
                   <div
                     key={lt.id || lt.code}
-                    className="p-3.5 rounded-2xl bg-muted/40 border border-border/40 flex flex-col items-center justify-center text-center min-h-[105px] transition-all hover:bg-muted/60 hover:border-border/70"
+                    className="p-3.5 rounded-2xl bg-muted/30 border border-border/50 flex flex-col items-center justify-center text-center min-h-[95px] transition-all hover:bg-muted/50 hover:border-border/70"
                   >
-                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block text-center leading-tight w-full">
+                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block text-center leading-tight w-full truncate" title={lt.name}>
                       {lt.name}
                     </span>
-                    <span className="text-3xl font-bold text-foreground block text-center leading-none my-1">
+                    <span className="text-2xl font-black text-foreground block text-center leading-none my-1.5">
                       {lt.available}
                     </span>
-                    <span className="text-[11px] text-muted-foreground font-medium block text-center mt-0.5">
+                    <span className="text-[10px] text-muted-foreground font-medium block text-center">
                       Days Left
                     </span>
                   </div>
@@ -1334,19 +1457,19 @@ export const EmployeeDashboard = () => {
               )}
             </div>
 
-            <div className="flex items-center justify-between text-xs font-bold pt-2 border-t border-border/40">
-              <span className="text-muted-foreground">Pending Requests: <strong className="text-amber-500">{leaveBalancesData.pendingRequests}</strong></span>
-              <span className="text-muted-foreground">Approved: <strong className="text-success">{leaveBalancesData.approvedRequests}</strong></span>
+            <div className="flex items-center justify-between text-xs font-semibold pt-1 border-t border-border/40">
+              <span className="text-muted-foreground">Pending Requests: <strong className="text-amber-500 font-bold">{leaveBalancesData.pendingRequests}</strong></span>
+              <span className="text-muted-foreground">Approved: <strong className="text-success font-bold">{leaveBalancesData.approvedRequests}</strong></span>
             </div>
           </motion.div>
 
           {/* 10. Team Roster & Status Widget */}
           <motion.div variants={itemVariants}>
-            <TeamRosterStatus members={enrichedTeamMembers} />
+            <TeamRosterStatus members={enrichedTeamMembers} className="rounded-[24px]" />
           </motion.div>
 
           {/* 7. Real Announcements & Alerts */}
-          <motion.div variants={itemVariants} className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
+          <motion.div variants={itemVariants} className="rounded-[24px] border border-border/70 bg-card p-6 shadow-sm space-y-5 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <h3 className="text-base font-bold text-foreground">Announcements & Alerts</h3>
               <Megaphone className="h-5 w-5 text-primary" />
@@ -1357,7 +1480,7 @@ export const EmployeeDashboard = () => {
                 <p className="text-xs text-muted-foreground py-4 text-center font-medium">No announcements.</p>
               ) : (
                 announcements.map((anc) => (
-                  <div key={anc.id} className="p-3 rounded-2xl border border-border/40 bg-muted/20 space-y-1">
+                  <div key={anc.id} className="p-3.5 rounded-2xl border border-border/40 bg-muted/20 space-y-1">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-foreground">{anc.title}</span>
                       <span className="text-[10px] text-muted-foreground font-mono">{new Date(anc.createdAt).toLocaleDateString()}</span>

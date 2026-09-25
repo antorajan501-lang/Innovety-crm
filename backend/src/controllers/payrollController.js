@@ -3,21 +3,86 @@ const { logActivity } = require('../utils/activityLogger');
 const { createNotification } = require('../services/notification');
 const { isPayrollEligibleUser } = require('../utils/payrollHelper');
 const { getEffectiveOrgId, assertOrganizationAccess } = require('../utils/organizationScope');
+const { getEffectiveSettings } = require('../utils/settingsResolver');
+const shiftService = require('../services/shiftService');
 const crypto = require('crypto');
 
 // Helper to calculate itemized salary for a user in a given month/year
 const calculateUserPayroll = async (user, month, year, inputSettings) => {
   const startDate = new Date(Date.UTC(year, month - 1, 1));
   const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59));
-  const workingDays = endDate.getUTCDate();
 
-  const settings = inputSettings || (user.organizationId ? await prisma.payrollSettings.findFirst({ where: { organizationId: user.organizationId } }) : null) || {};
+  const effectiveSettings = (inputSettings && inputSettings.warningLateLimit !== undefined)
+    ? inputSettings
+    : await getEffectiveSettings(user.organizationId);
+
+  const settings = inputSettings || effectiveSettings || {};
+
+  // Fetch assigned shift for fallback (Safeguard 2: Attendance Priority 1 -> Shift Priority 2 -> Settings Priority 3)
+  const assignedShift = await shiftService.getEmployeeShift(user.id);
 
   // 1. Fetch user's assigned salary structure (NO fallback to template)
   const structure = await prisma.salaryStructure.findUnique({
     where: { userId: user.id },
     include: { template: true }
   });
+
+  // Fetch company holidays in selected month
+  const holidays = await prisma.holidayCalendar.findMany({
+    where: {
+      date: { gte: startDate, lte: endDate },
+      ...(user.organizationId ? { organizationId: user.organizationId } : {})
+    }
+  });
+  const holidayDatesStr = new Set(holidays.map(h => new Date(h.date).toISOString().split('T')[0]));
+
+  // 2. Fetch live Attendance logs for month
+  const attendances = await prisma.attendance.findMany({
+    where: {
+      userId: user.id,
+      date: { gte: startDate, lte: endDate }
+    }
+  });
+
+  // Safeguard 2: Shift resolution for audit & display
+  const snapshotShiftName = attendances.find(a => a.shiftName)?.shiftName;
+  const shiftUsedName = snapshotShiftName || assignedShift?.name || 'Company Default';
+
+  // Calculate workingDays for the month (Safeguard 2: Attendance first, Shift second, Settings fallback)
+  const daysInMonth = endDate.getUTCDate();
+  const attendanceMap = new Map();
+  attendances.forEach(a => {
+    const dStr = new Date(a.date).toISOString().split('T')[0];
+    attendanceMap.set(dStr, a);
+  });
+
+  let computedWorkingDays = 0;
+  for (let dNum = 1; dNum <= daysInMonth; dNum++) {
+    const d = new Date(Date.UTC(year, month - 1, dNum));
+    const dStr = d.toISOString().split('T')[0];
+    const dayName = shiftService.getDayName(d);
+    const isSunday = d.getUTCDay() === 0 || dayName === 'SUNDAY';
+    const isCompanyHoliday = holidayDatesStr.has(dStr);
+
+    if (isSunday || isCompanyHoliday) {
+      continue; // Sunday is permanently locked, and company calendar holidays are excluded
+    }
+
+    const dayAtt = attendanceMap.get(dStr);
+    if (dayAtt) {
+      if (dayAtt.status !== 'HOLIDAY') {
+        computedWorkingDays += 1;
+      }
+    } else {
+      const dayStatus = shiftService.getShiftDayStatus(assignedShift, dayName, d);
+      if (dayStatus === 'Working' || dayStatus === 'WFH') {
+        computedWorkingDays += 1;
+      } else if (!assignedShift) {
+        computedWorkingDays += 1;
+      }
+    }
+  }
+  const workingDays = computedWorkingDays > 0 ? computedWorkingDays : daysInMonth;
 
   if (!structure) {
     return {
@@ -30,6 +95,7 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
       allowancesJson: {
         structureAssigned: false,
         remark: 'Salary Structure Not Assigned',
+        shiftName: shiftUsedName,
         specialAllowance: 0,
         travelAllowance: 0,
         medicalAllowance: 0,
@@ -43,7 +109,10 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
         incomeTax: 0,
         otherDeductions: 0,
         leaveDeduction: 0,
-        lateDeduction: 0
+        lateDeduction: 0,
+        totalLates: 0,
+        deductibleLates: 0,
+        warningLimit: 3
       },
       grossSalary: 0,
       netSalary: 0,
@@ -57,17 +126,12 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
       holidayDaysWorked: 0,
       holidayPay: 0,
       lateDeduction: 0,
+      totalLates: 0,
+      deductibleLates: 0,
+      warningLimit: 3,
       qrCodeHash: null
     };
   }
-
-  // 2. Fetch live Attendance logs for month
-  const attendances = await prisma.attendance.findMany({
-    where: {
-      userId: user.id,
-      date: { gte: startDate, lte: endDate }
-    }
-  });
 
   let presentDays = 0;
   let lateCount = 0;
@@ -91,15 +155,6 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
     }
   });
 
-  // Fetch company holidays in selected month
-  const holidays = await prisma.holidayCalendar.findMany({
-    where: {
-      date: { gte: startDate, lte: endDate },
-      ...(user.organizationId ? { organizationId: user.organizationId } : {})
-    }
-  });
-  const holidayDatesStr = new Set(holidays.map(h => new Date(h.date).toISOString().split('T')[0]));
-
   // 3. Fetch live Leave requests for month
   const leaves = await prisma.leaveRequest.findMany({
     where: {
@@ -116,6 +171,7 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
   let leaveWfhDays = 0;
   let unpaidLeaveDays = 0;
 
+  // Safeguard 3: Leave should evaluate each date individually: skip Sundays and shift holidays
   leaves.forEach(l => {
     const lType = (l.leaveType || l.type || 'CASUAL').toUpperCase();
     const isUnpaid = l.payType === 'UNPAID' || ['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(lType);
@@ -129,10 +185,13 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
     let curr = new Date(lStart);
     while (curr <= lEnd) {
       const dateStr = curr.toISOString().split('T')[0];
-      const isSunday = curr.getUTCDay() === 0;
+      const dayName = shiftService.getDayName(curr);
+      const isSunday = curr.getUTCDay() === 0 || dayName === 'SUNDAY';
       const isCompanyHoliday = holidayDatesStr.has(dateStr);
+      const shiftStatus = shiftService.getShiftDayStatus(assignedShift, dayName, curr);
+      const isShiftHoliday = shiftStatus === 'Holiday';
 
-      if (!isSunday && !isCompanyHoliday) {
+      if (!isSunday && !isCompanyHoliday && !isShiftHoliday) {
         if (lType === 'WFH') {
           leaveWfhDays += 1;
         } else if (isUnpaid) {
@@ -148,23 +207,81 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
   const wfhDays = attWfhDays + leaveWfhDays;
   const unpaidAbsentDays = explicitAbsentDays + (halfDays * 0.5) + unpaidLeaveDays;
 
-  // 4. Overtime & Holiday Work Calculations
+  // 4. Overtime & Holiday Work Calculations (Safeguard 2: Attendance first, Shift second, Settings fallback)
   let overtimeHours = 0;
   let holidayDaysWorked = 0;
 
   attendances.forEach(att => {
     const attDateStr = new Date(att.date).toISOString().split('T')[0];
-    if (att.workingHours && att.workingHours > 8) {
+
+    // Calculate overtime using Safeguard 2 hierarchy
+    if (att.clockIn && att.clockOut) {
+      // Priority 1: Attendance record snapshot shiftEndAt
+      if (att.shiftEndAt && new Date(att.clockOut) > new Date(att.shiftEndAt)) {
+        const otDiff = (new Date(att.clockOut).getTime() - new Date(att.shiftEndAt).getTime()) / (1000 * 60 * 60);
+        if (otDiff > 0) overtimeHours += otDiff;
+      } else if (att.scheduledStartTime && att.scheduledEndTime && att.workingHours) {
+        const [sH, sM] = att.scheduledStartTime.split(':').map(Number);
+        const [eH, eM] = att.scheduledEndTime.split(':').map(Number);
+        let schedMins = (eH * 60 + eM) - (sH * 60 + sM);
+        if (schedMins < 0) schedMins += 1440;
+        const schedHrs = schedMins / 60;
+        if (att.workingHours > schedHrs) {
+          overtimeHours += (att.workingHours - schedHrs);
+        }
+      } else if (assignedShift?.startTime && assignedShift?.endTime && att.workingHours) {
+        // Priority 2: Assigned shift fallback
+        const [sH, sM] = assignedShift.startTime.split(':').map(Number);
+        const [eH, eM] = assignedShift.endTime.split(':').map(Number);
+        let schedMins = (eH * 60 + eM) - (sH * 60 + sM);
+        if (schedMins < 0) schedMins += 1440;
+        const schedHrs = schedMins / 60;
+        if (att.workingHours > schedHrs) {
+          overtimeHours += (att.workingHours - schedHrs);
+        }
+      } else if (att.workingHours && att.workingHours > 8) {
+        // Priority 3: Standard company 8h fallback
+        overtimeHours += (att.workingHours - 8);
+      }
+    } else if (att.workingHours && att.workingHours > 8) {
       overtimeHours += (att.workingHours - 8);
     }
+
     if (holidayDatesStr.has(attDateStr) && ['PRESENT', 'LATE', 'WORK_FROM_HOME'].includes(att.status)) {
       holidayDaysWorked += 1;
     }
   });
 
-  const dailyPay = structure.grossSalary / workingDays;
+  const dailyPay = workingDays > 0 ? (structure.grossSalary / workingDays) : 0;
   const leaveDeduction = Math.round(unpaidAbsentDays * dailyPay);
-  const lateDeduction = lateCount * (settings.lateDeductionRate || 100);
+
+  // Dynamic Late Policy: First 3 warnings (default), 4th late onward starts deduction
+  const latePolicyEnabled = effectiveSettings.latePolicyEnabled !== false;
+  const warningLateLimit = effectiveSettings.warningLateLimit !== undefined ? Number(effectiveSettings.warningLateLimit) : 3;
+  const deductionPerLate = effectiveSettings.deductionPerLate || '1_DAY_SALARY';
+  const latePolicyAppliesTo = (effectiveSettings.latePolicyAppliesTo || 'INTERN,EMPLOYEE,TEAM_LEADER')
+    .split(',')
+    .map(r => r.trim());
+
+  const isRoleApplicable = latePolicyAppliesTo.includes(user.role);
+
+  let deductibleLates = 0;
+  let lateDeduction = 0;
+
+  if (latePolicyEnabled && isRoleApplicable) {
+    deductibleLates = Math.max(0, lateCount - warningLateLimit);
+    if (deductibleLates > 0) {
+      if (deductionPerLate === '0.5_DAY_SALARY' || deductionPerLate === 'HALF_DAY') {
+        lateDeduction = Math.round(deductibleLates * (dailyPay * 0.5));
+      } else if (typeof deductionPerLate === 'number' || (!isNaN(Number(deductionPerLate)) && !String(deductionPerLate).includes('DAY'))) {
+        lateDeduction = Math.round(deductibleLates * Number(deductionPerLate));
+      } else {
+        // Default: 1 Day Salary per deductible late
+        lateDeduction = Math.round(deductibleLates * dailyPay);
+      }
+    }
+  }
+
   const overtimePay = Math.round(overtimeHours * (settings.overtimeHourlyRate || 150));
   const holidayPay = Math.round(holidayDaysWorked * dailyPay * (settings.holidayPayMultiplier || 2.0));
 
@@ -182,6 +299,7 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
     hra: structure.hra,
     da: structure.da,
     allowancesJson: {
+      shiftName: shiftUsedName,
       specialAllowance: structure.specialAllowance,
       travelAllowance: structure.travelAllowance,
       medicalAllowance: structure.medicalAllowance,
@@ -195,7 +313,10 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
       incomeTax: structure.incomeTax,
       otherDeductions: structure.otherDeductions,
       leaveDeduction,
-      lateDeduction
+      lateDeduction,
+      totalLates: lateCount,
+      deductibleLates,
+      warningLimit: warningLateLimit
     },
     grossSalary: totalEarnings,
     netSalary: finalNetSalary,
@@ -209,6 +330,9 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
     holidayDaysWorked,
     holidayPay,
     lateDeduction,
+    totalLates: lateCount,
+    deductibleLates,
+    warningLimit: warningLateLimit,
     qrCodeHash
   };
 };
@@ -230,7 +354,7 @@ const processPayrollBatch = async (req, res) => {
     const m = Number(month);
     const y = Number(year);
 
-    const settings = (targetOrgId ? await prisma.payrollSettings.findFirst({ where: { organizationId: targetOrgId } }) : null) || {};
+    const settings = await getEffectiveSettings(targetOrgId);
 
     let targetUsers = [];
     if (Array.isArray(userIds) && userIds.length > 0) {
@@ -330,7 +454,17 @@ const processPayrollBatch = async (req, res) => {
         processedBy: { select: { id: true, name: true, role: true } },
         payslips: {
           include: {
-            user: { select: { id: true, name: true, email: true, employeeId: true, role: true, department: true } }
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                employeeId: true,
+                role: true,
+                department: true,
+                shiftAssignment: { include: { shift: true } }
+              }
+            }
           }
         }
       }
@@ -394,7 +528,17 @@ const getPayrollBatchById = async (req, res) => {
         processedBy: { select: { id: true, name: true, role: true } },
         payslips: {
           include: {
-            user: { select: { id: true, name: true, email: true, employeeId: true, role: true, department: true } }
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                employeeId: true,
+                role: true,
+                department: true,
+                shiftAssignment: { include: { shift: true } }
+              }
+            }
           }
         }
       }

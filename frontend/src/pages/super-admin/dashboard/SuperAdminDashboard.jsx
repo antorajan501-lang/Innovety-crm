@@ -9,10 +9,11 @@ import {
 import api, { getSocket } from '../../../services/api';
 import { useAuth } from '../../../context/AuthContext';
 import { useCompanyScope } from '../../../context/CompanyScopeContext';
+import CompanyScopeSelector from '../../../components/common/CompanyScopeSelector';
 
 const SuperAdminDashboard = () => {
   const { user } = useAuth();
-  const { selectedOrgId } = useCompanyScope();
+  const { selectedOrgId, loading: scopeLoading } = useCompanyScope();
   const [data, setData] = useState(null);
   const [positions, setPositions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,9 @@ const SuperAdminDashboard = () => {
   };
 
   useEffect(() => {
+    // If company scope is still loading and selectedOrgId is not yet determined, wait to avoid duplicate query
+    if (scopeLoading && !selectedOrgId) return;
+
     fetchDashboardStats(false);
 
     // Setup live Socket.io real-time event listeners
@@ -86,7 +90,7 @@ const SuperAdminDashboard = () => {
         socket.off('team_performance_updated', handleRealtimeUpdate);
       }
     };
-  }, [selectedOrgId]);
+  }, [selectedOrgId, scopeLoading]);
 
   if (loading) {
     return (
@@ -135,6 +139,9 @@ const SuperAdminDashboard = () => {
         </div>
       </div>
 
+      {/* Tenant Context Selector */}
+      <CompanyScopeSelector />
+
       {/* PHASE 4: Executive Overview (8 Cards - Live Backend Data Only) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Card 1: Total Workforce */}
@@ -161,7 +168,7 @@ const SuperAdminDashboard = () => {
           </div>
           <p className="text-2xl font-black text-primary">{stats.totalAdmins || 0}</p>
           <div className="text-[11px] text-muted-foreground font-medium flex items-center justify-between pt-1 border-t border-border/20">
-            <span>Active: <strong className="text-emerald-600 dark:text-emerald-400">{stats.activeAdmins || 0}</strong></span>
+            <span>Active: <strong className="text-primary">{stats.activeAdmins || 0}</strong></span>
             <Link to="/super-admin/admins" className="text-primary hover:underline font-bold text-[10px]">Manage</Link>
           </div>
         </div>
@@ -196,7 +203,7 @@ const SuperAdminDashboard = () => {
         <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-xs space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Attendance Today</span>
-            <Clock className="h-4 w-4 text-emerald-500" />
+            <Clock className="h-4 w-4 text-primary" />
           </div>
           <p className="text-2xl font-black text-foreground">{attendanceToday.totalPresent || 0}</p>
           <div className="text-[11px] text-muted-foreground font-medium flex items-center justify-between pt-1 border-t border-border/20">
@@ -399,7 +406,7 @@ const SuperAdminDashboard = () => {
         <div className="rounded-3xl border border-border/60 bg-card p-6 shadow-md space-y-4">
           <div className="flex items-center justify-between border-b border-border/40 pb-3">
             <div className="flex items-center gap-2">
-              <Clock className="h-4.5 w-4.5 text-emerald-500" />
+              <Clock className="h-4.5 w-4.5 text-primary" />
               <h3 className="text-sm font-bold text-foreground">Attendance Today</h3>
             </div>
             <span className="text-[10px] font-mono text-muted-foreground uppercase font-bold">Shift Status</span>

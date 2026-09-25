@@ -430,8 +430,26 @@ const broadcastLeavePolicyUpdate = (organizationId, data = {}) => {
   };
   if (organizationId) {
     io.to(`org_${organizationId}`).emit('organization_leave_policy_updated', payload);
+    io.to(`org_${organizationId}`).emit('leave_balance_updated', payload);
   }
   io.emit('organization_leave_policy_updated', payload);
+  io.emit('leave_balance_updated', payload);
+};
+
+// Broadcast shift update real-time event
+const broadcastShiftUpdate = (organizationId, data = {}) => {
+  if (!io) return;
+  const payload = {
+    organizationId,
+    timestamp: new Date().toISOString(),
+    ...data
+  };
+  if (organizationId) {
+    io.to(`org_${organizationId}`).emit('shift_updated', payload);
+    io.to(`org_${organizationId}`).emit('schedule_updated', payload);
+  }
+  io.emit('shift_updated', payload);
+  io.emit('schedule_updated', payload);
 };
 
 module.exports = {
@@ -446,5 +464,6 @@ module.exports = {
   disconnectOrganizationSockets,
   broadcastAttendanceEvent,
   broadcastTeamPerformanceUpdate,
-  broadcastLeavePolicyUpdate
+  broadcastLeavePolicyUpdate,
+  broadcastShiftUpdate
 };

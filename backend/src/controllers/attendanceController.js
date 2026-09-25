@@ -4,6 +4,7 @@ const { createNotification } = require('../services/notification');
 const { broadcastAttendanceEvent } = require('../socket');
 const { getOrganizationWhere, getEffectiveOrgId } = require('../utils/organizationScope');
 const { getEffectiveSettings } = require('../utils/settingsResolver');
+const shiftService = require('../services/shiftService');
 const {
   getSystemTimeZone,
   getTodayZonedDate,
@@ -74,6 +75,10 @@ const getOrCreateSystemSettings = async (organizationId) => {
 
 const getClockInStatus = async (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     const userId = req.user.id;
     const now = new Date();
 
@@ -126,21 +131,28 @@ const getClockInStatus = async (req, res) => {
       }
     });
 
+    // Fetch user's assigned shift enriched with today's schedule
+    const userShift = await shiftService.getEmployeeShiftWithSchedule(userId, now, timeZone);
+
     const validation = validateAttendanceWindow({
       userRole: req.user.role,
       settings,
       attendanceRecord: existing,
       approvedLeave,
-      now
+      now,
+      userShift
     });
 
-    const clockOutTimeStr = settings?.clockOutTime || (req.user.role === 'TEAM_LEADER' ? settings?.tlShiftEnd : settings?.internShiftEnd) || '18:00';
+    const clockInTimeStr = userShift?.startTime || settings?.clockInTime || (req.user.role === 'TEAM_LEADER' ? settings?.tlShiftStart : settings?.internShiftStart) || '09:00';
+    const clockOutTimeStr = userShift?.endTime || settings?.clockOutTime || (req.user.role === 'TEAM_LEADER' ? settings?.tlShiftEnd : settings?.internShiftEnd) || '18:00';
     const [endHour, endMin] = clockOutTimeStr.split(':').map(Number);
     const { year, month, day } = getZonedParts(now, timeZone);
     const todayConfiguredShiftEnd = createZonedDate(year, month, day, endHour, endMin, timeZone);
 
     let shiftEndAt = todayConfiguredShiftEnd;
     if (existing?.clockOut && existing?.shiftEndAt) {
+      shiftEndAt = existing.shiftEndAt;
+    } else if (existing?.shiftEndAt) {
       shiftEndAt = existing.shiftEndAt;
     }
 
@@ -158,8 +170,60 @@ const getClockInStatus = async (req, res) => {
 
     const autoClockOutEnabled = settings?.autoClockOutEnabled !== undefined ? settings.autoClockOutEnabled : true;
 
+    // Dynamic Late Policy Calculations for Current Calendar Month
+    const { year: currentYear, month: currentMonth } = getZonedParts(now, timeZone);
+    const monthStart = createZonedDate(currentYear, currentMonth, 1, 0, 0, timeZone);
+    const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+    const nextYear = currentMonth === 12 ? currentYear + 1 : currentYear;
+    const monthEnd = createZonedDate(nextYear, nextMonth, 1, 0, 0, timeZone);
+
+    const monthlyLateCount = await prisma.attendance.count({
+      where: {
+        userId,
+        status: 'LATE',
+        date: {
+          gte: monthStart,
+          lt: monthEnd
+        }
+      }
+    });
+
+    const isLatePolicyEnabled = settings?.latePolicyEnabled !== false;
+    const warningLimit = settings?.warningLateLimit !== undefined ? Number(settings.warningLateLimit) : 3;
+    const appliesTo = (settings?.latePolicyAppliesTo || 'INTERN,EMPLOYEE,TEAM_LEADER')
+      .split(',')
+      .map(r => r.trim());
+    const isApplicable = appliesTo.includes(req.user.role);
+
+    const warningsRemaining = Math.max(0, warningLimit - monthlyLateCount);
+    const deductibleLates = Math.max(0, monthlyLateCount - warningLimit);
+
+    let lateSubtitle = `${warningLimit} warnings remaining`;
+    if (monthlyLateCount === 0) {
+      lateSubtitle = `${warningLimit} warnings remaining`;
+    } else if (monthlyLateCount < warningLimit) {
+      lateSubtitle = `${warningsRemaining} warning${warningsRemaining === 1 ? '' : 's'} remaining`;
+    } else if (monthlyLateCount === warningLimit) {
+      lateSubtitle = 'Last warning';
+    } else {
+      lateSubtitle = 'Deduction started';
+    }
+
+    const lateStats = {
+      enabled: isLatePolicyEnabled,
+      isApplicable,
+      monthlyLates: monthlyLateCount,
+      warningLimit,
+      deductibleLates,
+      warningsRemaining,
+      displayRatio: `${monthlyLateCount}/${warningLimit}`,
+      subtitle: lateSubtitle,
+      deductionPerLate: settings?.deductionPerLate || '1_DAY_SALARY'
+    };
+
     res.json({
       ...validation,
+      lateStats,
       isClockedIn,
       clockIn: existing?.clockIn || null,
       clockOut: existing?.clockOut || null,
@@ -168,10 +232,25 @@ const getClockInStatus = async (req, res) => {
       serverTime: now.toISOString(),
       autoClockOut: Boolean(existing?.autoClockOut),
       autoClockOutEnabled,
-      clockInTime: settings?.clockInTime || settings?.internShiftStart || '09:00',
+      clockInTime: clockInTimeStr,
       clockOutTime: clockOutTimeStr,
       existingRecord: existing || null,
       approvedLeave: approvedLeave || null,
+      shift: userShift ? {
+        id: userShift.id,
+        name: userShift.name,
+        shiftName: userShift.name,
+        startTime: userShift.startTime,
+        endTime: userShift.endTime,
+        workingDays: userShift.workingDays,
+        isDefault: userShift.name === 'Company Default',
+        todayStatus: userShift.todayStatus,
+        dayName: userShift.dayName,
+        isSaturdayLeave: Boolean(userShift.isSaturdayLeave),
+        formattedStart: shiftService.formatTime12h(userShift.startTime),
+        formattedEnd: shiftService.formatTime12h(userShift.endTime)
+      } : null,
+      ...(validation.reason === 'SATURDAY_LEAVE' ? { message: 'Today is a scheduled Saturday leave.' } : validation.reason === 'HOLIDAY' ? { message: 'Today is a Holiday.' } : {}),
       geofence: {
         officeLatitude: settings?.officeLatitude ?? 12.971598,
         officeLongitude: settings?.officeLongitude ?? 77.594562,
@@ -292,17 +371,25 @@ const clockIn = async (req, res) => {
       }
     });
 
+    // Fetch user's assigned shift enriched with today's schedule
+    const userShift = await shiftService.getEmployeeShiftWithSchedule(userId, now, timeZone);
+
     const validation = validateAttendanceWindow({
       userRole: req.user.role,
       settings,
       attendanceRecord: existing,
       approvedLeave,
-      now
+      now,
+      userShift
     });
 
     if (!validation.canClockIn) {
       let msg = `Clock-in is prohibited at this time.`;
-      if (validation.reason === 'SHIFT_NOT_STARTED') {
+      if (validation.reason === 'SATURDAY_LEAVE') {
+        msg = `Today is a scheduled Saturday leave.`;
+      } else if (validation.reason === 'HOLIDAY') {
+        msg = `Today is a Holiday.`;
+      } else if (validation.reason === 'SHIFT_NOT_STARTED') {
         msg = `Clock-in is available from ${validation.windowOpenFormatted}.`;
       } else if (validation.reason === 'ALREADY_CLOCKED_IN') {
         msg = `You have already clocked in today.`;
@@ -329,7 +416,7 @@ const clockIn = async (req, res) => {
     let finalStatus = 'PRESENT';
     let lateMinutes = validation.lateMinutes;
 
-    if (approvedLeave && approvedLeave.type === 'WFH') {
+    if ((approvedLeave && approvedLeave.type === 'WFH') || userShift?.todayStatus === 'WFH' || workLocation === 'HOME') {
       finalStatus = 'WORK_FROM_HOME';
       lateMinutes = null;
     } else if (validation.state === 'OPEN_LATE') {
@@ -339,11 +426,15 @@ const clockIn = async (req, res) => {
       lateMinutes = null;
     }
 
-    const shiftStartStr = (req.user.role === 'TEAM_LEADER' || req.user.role === 'ADMIN')
-      ? (settings?.tlShiftStart || settings?.clockInTime || '09:00')
-      : (settings?.internShiftStart || settings?.clockInTime || '09:00');
+    const shiftStartStr = userShift?.startTime || (
+      (req.user.role === 'TEAM_LEADER' || req.user.role === 'ADMIN')
+        ? (settings?.tlShiftStart || settings?.clockInTime || '09:00')
+        : (settings?.internShiftStart || settings?.clockInTime || '09:00')
+    );
 
-    const clockOutTimeStr = settings?.clockOutTime || (req.user.role === 'TEAM_LEADER' ? settings?.tlShiftEnd : settings?.internShiftEnd) || '18:00';
+    const clockOutTimeStr = userShift?.endTime || (
+      settings?.clockOutTime || (req.user.role === 'TEAM_LEADER' ? settings?.tlShiftEnd : settings?.internShiftEnd) || '18:00'
+    );
     const [endHour, endMin] = clockOutTimeStr.split(':').map(Number);
     const { year, month, day } = getZonedParts(now, timeZone);
     const shiftEndAt = createZonedDate(year, month, day, endHour, endMin, timeZone);
@@ -370,7 +461,12 @@ const clockIn = async (req, res) => {
         lateMinutes,
         earlyWindowUsed: settings?.earlyWindowMinutes !== undefined ? settings.earlyWindowMinutes : 30,
         gracePeriodUsed: settings?.gracePeriodMinutes !== undefined ? settings.gracePeriodMinutes : 15,
-        shiftStartUsed: shiftStartStr
+        shiftStartUsed: shiftStartStr,
+        // Safeguard 1: Audit snapshot of shift active at clock-in
+        shiftId: userShift?.id || null,
+        shiftName: userShift?.name || 'Company Default',
+        scheduledStartTime: shiftStartStr,
+        scheduledEndTime: clockOutTimeStr
       }
     });
 
@@ -382,10 +478,38 @@ const clockIn = async (req, res) => {
     });
 
     if (finalStatus === 'LATE') {
+      const { year: currentYear, month: currentMonth } = getZonedParts(now, timeZone);
+      const monthStart = createZonedDate(currentYear, currentMonth, 1, 0, 0, timeZone);
+      const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+      const nextYear = currentMonth === 12 ? currentYear + 1 : currentYear;
+      const monthEnd = createZonedDate(nextYear, nextMonth, 1, 0, 0, timeZone);
+
+      const monthlyLateCount = await prisma.attendance.count({
+        where: {
+          userId,
+          status: 'LATE',
+          date: { gte: monthStart, lt: monthEnd }
+        }
+      });
+
+      const warningLimit = settings?.warningLateLimit !== undefined ? Number(settings.warningLateLimit) : 3;
+      let lateAlertMsg = `You clocked in at ${validation.currentTimeFormatted}, which is ${lateMinutes} minute(s) past the grace period. Marked as LATE.`;
+
+      if (monthlyLateCount <= warningLimit) {
+        if (monthlyLateCount === warningLimit) {
+          lateAlertMsg += ` [Last Warning: ${monthlyLateCount}/${warningLimit} lates this month. Next late arrival will initiate salary deductions.]`;
+        } else {
+          lateAlertMsg += ` [Warning: ${monthlyLateCount}/${warningLimit} lates this month. ${warningLimit - monthlyLateCount} warnings remaining.]`;
+        }
+      } else {
+        const deductibleCount = monthlyLateCount - warningLimit;
+        lateAlertMsg += ` [Deduction Alert: Exceeded warning limit (${monthlyLateCount}/${warningLimit}). Late #${deductibleCount} will be deducted in payroll.]`;
+      }
+
       await createNotification({
         userId,
         title: 'Late Attendance Alert ⚠️',
-        message: `You clocked in at ${validation.currentTimeFormatted}, which is ${lateMinutes} minute(s) past the grace period end time (${validation.windowCloseFormatted}). Your attendance for today is marked as LATE.`,
+        message: lateAlertMsg,
         type: 'ATTENDANCE_LATE'
       });
     }
@@ -422,7 +546,7 @@ const clockOut = async (req, res) => {
     const userId = req.user.id;
     const now = new Date();
 
-    const settings = await prisma.systemSettings.findUnique({ where: { id: 'GLOBAL' } });
+    const settings = await getOrCreateSystemSettings(req.user?.organizationId);
     const timeZone = getSystemTimeZone(settings);
     const todayDate = getTodayZonedDate(now, timeZone);
 
@@ -521,12 +645,11 @@ const isShiftEndedForDate = (targetDateObj, now, settings) => {
     return false;
   }
 
-  // If target date is today, check if current time is past shift end window (default 18:00 IST)
+  // If target date is today, check if current time in timeZone is past shift end window (default 18:00)
   const shiftEndHour = settings?.shiftEndHour !== undefined ? settings.shiftEndHour : 18;
   const shiftEndMinute = settings?.shiftEndMinute !== undefined ? settings.shiftEndMinute : 0;
 
-  const currentH = now.getHours();
-  const currentM = now.getMinutes();
+  const { hour: currentH, minute: currentM } = getZonedParts(now, timeZone);
 
   if (currentH > shiftEndHour || (currentH === shiftEndHour && currentM >= shiftEndMinute)) {
     return true;
@@ -544,49 +667,74 @@ const getAttendanceLogs = async (req, res) => {
     const settings = await getOrCreateSystemSettings(targetOrgId);
     const timeZone = getSystemTimeZone(settings);
     const now = new Date();
-    const { year: nowY, month: nowM, day: nowD } = getZonedParts(now, timeZone);
-    const todayZoned = createZonedDate(nowY, nowM, nowD, 0, 0, timeZone);
+    const todayParts = getZonedParts(now, timeZone);
+    const todayDateStr = todayParts.dateStr; // e.g. "2026-09-22"
 
-    let minDate;
-    if (startDate && String(startDate).trim() !== '') {
-      minDate = parseInputDate(startDate, timeZone) || new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
-    } else {
-      minDate = createZonedDate(nowY, nowM, nowD, 0, 0, timeZone);
-      minDate.setDate(minDate.getDate() - 60);
+    // Parse helper for YYYY-MM-DD
+    const parseToYMD = (inputVal) => {
+      if (!inputVal) return null;
+      const str = String(inputVal).trim();
+      const match = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (match) {
+        return {
+          year: parseInt(match[1], 10),
+          month: parseInt(match[2], 10),
+          day: parseInt(match[3], 10),
+          dateStr: `${match[1]}-${match[2]}-${match[3]}`
+        };
+      }
+      return null;
+    };
+
+    let startYMD = parseToYMD(startDate);
+    if (!startYMD) {
+      // Default to 60 days ago
+      const defaultStart = new Date(Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day - 60, 0, 0, 0, 0));
+      const sY = defaultStart.getUTCFullYear();
+      const sM = defaultStart.getUTCMonth() + 1;
+      const sD = defaultStart.getUTCDate();
+      startYMD = {
+        year: sY,
+        month: sM,
+        day: sD,
+        dateStr: `${sY}-${String(sM).padStart(2, '0')}-${String(sD).padStart(2, '0')}`
+      };
     }
 
-    let maxDate = (endDate && String(endDate).trim() !== '')
-      ? (parseInputDate(endDate, timeZone) || todayZoned)
-      : todayZoned;
+    let endYMD = parseToYMD(endDate) || { ...todayParts };
 
-    const minYMD = getZonedParts(minDate, timeZone);
-    minDate = createZonedDate(minYMD.year, minYMD.month, minYMD.day, 0, 0, timeZone);
-
-    const maxYMD = getZonedParts(maxDate, timeZone);
-    maxDate = createZonedDate(maxYMD.year, maxYMD.month, maxYMD.day, 0, 0, timeZone);
-
-    if (minDate > maxDate) {
-      const temp = minDate;
-      minDate = maxDate;
-      maxDate = temp;
+    if (startYMD.dateStr > endYMD.dateStr) {
+      const temp = startYMD;
+      startYMD = endYMD;
+      endYMD = temp;
     }
 
     // STRICT RULE: Attendance Audit Maximum Date = TODAY
-    if (maxDate > todayZoned) {
-      maxDate = todayZoned;
+    if (endYMD.dateStr > todayDateStr) {
+      endYMD = { ...todayParts };
     }
 
-    // If requested range is entirely in the future, return empty list immediately
-    if (minDate > todayZoned) {
+    // If requested range starts after today, return empty list immediately
+    if (startYMD.dateStr > todayDateStr) {
       return res.json([]);
     }
 
-    // Generate array of distinct dates within [minDate, maxDate], excluding future dates
+    // Generate array of calendar dates within [startYMD, endYMD]
     const dateList = [];
-    const curr = new Date(minDate);
-    while (curr <= maxDate && curr <= todayZoned) {
-      dateList.push(new Date(curr));
-      curr.setDate(curr.getDate() + 1);
+    const curDate = new Date(Date.UTC(startYMD.year, startYMD.month - 1, startYMD.day, 0, 0, 0, 0));
+    const endDateLimit = new Date(Date.UTC(endYMD.year, endYMD.month - 1, endYMD.day, 0, 0, 0, 0));
+
+    while (curDate <= endDateLimit) {
+      const y = curDate.getUTCFullYear();
+      const m = curDate.getUTCMonth() + 1;
+      const d = curDate.getUTCDate();
+      const dateStr = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      dateList.push({
+        dateObj: new Date(curDate),
+        dateStr,
+        dayOfWeek: curDate.getUTCDay() // 0 = Sunday
+      });
+      curDate.setUTCDate(curDate.getUTCDate() + 1);
     }
 
     // 2. Determine Active Users Scope (Strictly Attendance-Eligible Roles ONLY)
@@ -653,59 +801,136 @@ const getAttendanceLogs = async (req, res) => {
 
     const userIds = activeUsers.map(u => u.id);
 
-    // 3. Fetch Real Attendance & Approved Leaves for the date range & users
-    const queryMaxDate = createZonedDate(maxYMD.year, maxYMD.month, maxYMD.day, 23, 59, timeZone);
-    const realAttendances = await prisma.attendance.findMany({
-      where: {
-        date: { gte: minDate, lte: queryMaxDate },
-        userId: { in: userIds }
-      },
-      include: {
-        user: { select: { id: true, name: true, employeeId: true, email: true, department: true, profilePic: true } }
-      }
-    });
+    // 3. Fetch Real Attendance, Approved Leaves & WorkCalendar for the date range & users
+    const queryMinDate = new Date(Date.UTC(startYMD.year, startYMD.month - 1, startYMD.day - 1, 0, 0, 0, 0));
+    const queryMaxDate = new Date(Date.UTC(endYMD.year, endYMD.month - 1, endYMD.day + 1, 23, 59, 59, 999));
 
-    const approvedLeaves = await prisma.leaveRequest.findMany({
-      where: {
-        status: 'APPROVED',
-        startDate: { lte: queryMaxDate },
-        endDate: { gte: minDate },
-        userId: { in: userIds }
-      }
-    });
+    const [realAttendances, approvedLeaves, calendarOverrides, permanentHolidays] = await Promise.all([
+      prisma.attendance.findMany({
+        where: {
+          date: { gte: queryMinDate, lte: queryMaxDate },
+          userId: { in: userIds }
+        },
+        include: {
+          user: { select: { id: true, name: true, employeeId: true, email: true, department: true, profilePic: true } }
+        }
+      }),
+      prisma.leaveRequest.findMany({
+        where: {
+          status: 'APPROVED',
+          startDate: { lte: queryMaxDate },
+          endDate: { gte: queryMinDate },
+          userId: { in: userIds }
+        }
+      }),
+      prisma.workCalendar.findMany({
+        where: {
+          date: { gte: queryMinDate, lte: queryMaxDate },
+          ...(targetOrgId ? {
+            OR: [
+              { organizationId: targetOrgId },
+              { organizationId: null, createdBy: { organizationId: targetOrgId } }
+            ]
+          } : {})
+        }
+      }),
+      prisma.workCalendar.findMany({
+        where: {
+          isPermanent: true,
+          status: 'HOLIDAY',
+          ...(targetOrgId ? {
+            OR: [
+              { organizationId: targetOrgId },
+              { organizationId: null, createdBy: { organizationId: targetOrgId } }
+            ]
+          } : {})
+        }
+      })
+    ]);
 
     // Build lookup maps for fast matching
     const attendanceMap = new Map();
     realAttendances.forEach(att => {
-      const dateStr = getZonedParts(att.date, timeZone).dateStr;
-      attendanceMap.set(`${att.userId}_${dateStr}`, att);
+      let dStr = null;
+      if (att.clockIn) {
+        dStr = getZonedParts(att.clockIn, timeZone).dateStr;
+      } else if (att.date) {
+        dStr = getZonedParts(att.date, timeZone).dateStr;
+      }
+      if (dStr) {
+        attendanceMap.set(`${att.userId}_${dStr}`, att);
+      }
+    });
+
+    const calendarOverrideMap = new Map();
+    calendarOverrides.forEach(item => {
+      if (item.date) {
+        const itemDStr = getZonedParts(item.date, timeZone).dateStr;
+        calendarOverrideMap.set(itemDStr, item);
+      }
+    });
+
+    const permanentRulesMap = new Map();
+    permanentHolidays.forEach(item => {
+      if (item.recurrenceMonth && item.recurrenceDay) {
+        permanentRulesMap.set(`${item.recurrenceMonth}_${item.recurrenceDay}`, item);
+      }
     });
 
     // 4. Merge into View Model
     const mergedLogs = [];
 
-    for (const dObj of dateList) {
-      const dateStr = getZonedParts(dObj, timeZone).dateStr;
-      const dTime = new Date(`${dateStr}T00:00:00.000Z`).getTime();
-      const dayEnded = isShiftEndedForDate(dObj, now, settings);
+    for (const { dateObj, dateStr, dayOfWeek } of dateList) {
+      const dTime = dateObj.getTime();
+      const [curY, curM, curD] = dateStr.split('-').map(Number);
+
+      // Check if date is a company holiday or weekend
+      const specificOverride = calendarOverrideMap.get(dateStr);
+      const permRule = permanentRulesMap.get(`${curM}_${curD}`);
+
+      let isHoliday = false;
+      let holidayTitle = '';
+
+      if (dayOfWeek === 0) {
+        // Sunday is default holiday, unless explicitly overridden to WORKING/WFH
+        if (specificOverride && (specificOverride.status === 'WORKING' || specificOverride.status === 'WFH')) {
+          isHoliday = false;
+        } else {
+          isHoliday = true;
+          holidayTitle = 'Sunday';
+        }
+      } else if (specificOverride) {
+        if (specificOverride.status === 'HOLIDAY') {
+          isHoliday = true;
+          holidayTitle = specificOverride.title || 'Holiday';
+        }
+      } else if (permRule) {
+        isHoliday = true;
+        holidayTitle = permRule.title || 'Holiday';
+      }
 
       for (const u of activeUsers) {
         // STRICT RULE: Attendance audit only starts from each employee's official joining date
         if (u.joiningDate) {
           const uJoiningMidnight = new Date(new Date(u.joiningDate).toISOString().split('T')[0] + 'T00:00:00.000Z').getTime();
           if (dTime < uJoiningMidnight) {
-            continue; // Skip pre-employment date completely (no synthetic ABSENT or NOT_CHECKED_IN)
+            continue; // Skip pre-employment date completely
           }
         }
+
         const key = `${u.id}_${dateStr}`;
         const realAtt = attendanceMap.get(key);
 
+        // 1. Real attendance record exists
         if (realAtt) {
-          mergedLogs.push(realAtt);
+          mergedLogs.push({
+            ...realAtt,
+            date: dateObj // Guarantee strictly matching selected calendar date
+          });
           continue;
         }
 
-        // Check if user has an approved leave spanning dObj
+        // 2. Check if user has an approved leave spanning this date
         const leave = approvedLeaves.find(l => {
           if (l.userId !== u.id) return false;
           const lStart = new Date(l.startDate).toISOString().split('T')[0];
@@ -723,7 +948,7 @@ const getAttendanceLogs = async (req, res) => {
             id: `leave_${u.id}_${dateStr}`,
             isSynthetic: true,
             userId: u.id,
-            date: dObj,
+            date: dateObj,
             clockIn: null,
             clockOut: null,
             workingHours: null,
@@ -734,17 +959,33 @@ const getAttendanceLogs = async (req, res) => {
           continue;
         }
 
-        // No attendance & No approved leave
-        const targetStatus = dayEnded ? 'ABSENT' : 'PENDING';
+        // 3. Company holiday or weekend
+        if (isHoliday) {
+          mergedLogs.push({
+            id: `holiday_${u.id}_${dateStr}`,
+            isSynthetic: true,
+            userId: u.id,
+            date: dateObj,
+            clockIn: null,
+            clockOut: null,
+            workingHours: null,
+            status: 'HOLIDAY',
+            holidayTitle,
+            user: u
+          });
+          continue;
+        }
+
+        // 4. No record and no leave: Absent
         mergedLogs.push({
-          id: `pending_${u.id}_${dateStr}`,
+          id: `absent_${u.id}_${dateStr}`,
           isSynthetic: true,
           userId: u.id,
-          date: dObj,
+          date: dateObj,
           clockIn: null,
           clockOut: null,
           workingHours: null,
-          status: targetStatus,
+          status: 'ABSENT',
           user: u
         });
       }
@@ -761,8 +1002,8 @@ const getAttendanceLogs = async (req, res) => {
         if (targetS === 'ABSENT') {
           return log.status === 'ABSENT';
         }
-        if (targetS === 'PENDING') {
-          return log.status === 'PENDING';
+        if (targetS === 'HOLIDAY') {
+          return log.status === 'HOLIDAY';
         }
         return log.status === targetS;
       });
@@ -809,12 +1050,12 @@ const updateAttendance = async (req, res) => {
     let targetDate = bodyDate ? new Date(bodyDate) : null;
 
     // Check if real record exists in DB
-    if (id && !id.startsWith('pending_') && !id.startsWith('leave_') && !id.startsWith('synthetic_')) {
+    if (id && !id.startsWith('pending_') && !id.startsWith('leave_') && !id.startsWith('absent_') && !id.startsWith('holiday_') && !id.startsWith('synthetic_')) {
       record = await prisma.attendance.findUnique({
         where: { id },
         include: { user: true }
       });
-    } else if (id && (id.startsWith('pending_') || id.startsWith('leave_'))) {
+    } else if (id && (id.startsWith('pending_') || id.startsWith('leave_') || id.startsWith('absent_') || id.startsWith('holiday_') || id.startsWith('synthetic_'))) {
       const parts = id.split('_');
       if (parts.length >= 3) {
         targetUserId = parts[1];
@@ -972,14 +1213,11 @@ const getAttendanceAnalytics = async (req, res) => {
     const lateCount = todayAttendances.filter((a) => a.status === 'LATE').length;
     const halfDayCount = todayAttendances.filter((a) => a.status === 'HALF_DAY').length;
 
-    let absentCount = 0;
-    if (dayEnded) {
-      const usersWithActivity = new Set([
-        ...todayAttendances.map(a => a.userId),
-        ...todayApprovedLeaves.map(l => l.userId)
-      ]);
-      absentCount = userIds.filter(id => !usersWithActivity.has(id)).length;
-    }
+    const usersWithActivity = new Set([
+      ...todayAttendances.map(a => a.userId),
+      ...todayApprovedLeaves.map(l => l.userId)
+    ]);
+    const absentCount = userIds.filter(id => !usersWithActivity.has(id)).length;
 
     res.json({
       totalInterns: totalMembersCount,

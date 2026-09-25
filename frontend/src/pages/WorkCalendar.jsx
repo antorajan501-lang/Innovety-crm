@@ -16,9 +16,10 @@ import {
   Sparkles,
   Lock,
   Building2,
-  Palmtree
+  Palmtree,
+  Clock
 } from 'lucide-react';
-import api from '../services/api';
+import api, { getSocket } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import { useCompanyScope } from '../context/CompanyScopeContext';
@@ -60,13 +61,15 @@ const isGenericTitle = (title) => {
     'standard working day',
     'saturday default wfh',
     'fixed weekly holiday',
+    'holiday',
+    'company holiday',
     'wfh'
-  ].includes(lower);
+  ].includes(lower) || lower.endsWith('schedule');
 };
 
 // Status Configuration Tokens with rich soft corporate background colors & matching text tokens
 const STATUS_TOKENS = {
-  WORKING_DAY: {
+  Working: {
     label: 'Working Day',
     cellBg: 'bg-[#D3F3E7] dark:bg-emerald-950/40 text-[#087443] dark:text-emerald-200 hover:bg-[#C2EDE0] dark:hover:bg-emerald-900/50 border-[#B5EADB]/40',
     legendBg: 'bg-[#D3F3E7] text-[#087443] border-[#A8E2CD] dark:bg-emerald-950/50 dark:text-emerald-200 dark:border-emerald-800/60',
@@ -82,12 +85,12 @@ const STATUS_TOKENS = {
     textCls: 'text-[#124A9E] dark:text-sky-200',
     icon: Home
   },
-  HOLIDAY: {
-    label: 'Company Holiday',
-    cellBg: 'bg-[#FFDAE0] dark:bg-rose-950/40 text-[#A81D37] dark:text-rose-200 hover:bg-[#FCD0D8] dark:hover:bg-rose-900/50 border-[#FBBFCB]/40',
-    legendBg: 'bg-[#FFDAE0] text-[#A81D37] border-[#FCA5B5] dark:bg-rose-950/50 dark:text-rose-200 dark:border-rose-800/60',
-    indicatorBg: 'bg-[#A81D37] dark:bg-rose-400',
-    textCls: 'text-[#A81D37] dark:text-rose-200',
+  Holiday: {
+    label: 'Holiday',
+    cellBg: 'bg-[#E9ECEF] dark:bg-slate-800/60 text-[#475569] dark:text-slate-300 hover:bg-[#DFE3E8] dark:hover:bg-slate-800/80 border-[#CBD5E1]/40',
+    legendBg: 'bg-[#E9ECEF] text-[#475569] border-[#CBD5E1] dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700',
+    indicatorBg: 'bg-[#475569] dark:bg-slate-400',
+    textCls: 'text-[#475569] dark:text-slate-300',
     icon: Building2
   },
   MY_LEAVE: {
@@ -97,16 +100,13 @@ const STATUS_TOKENS = {
     indicatorBg: 'bg-[#9E5D12] dark:bg-amber-400',
     textCls: 'text-[#9E5D12] dark:text-amber-200',
     icon: Palmtree
-  },
-  SUNDAY: {
-    label: 'Sunday',
-    cellBg: 'bg-[#E9ECEF] dark:bg-slate-800/60 text-[#475569] dark:text-slate-300 hover:bg-[#DFE3E8] dark:hover:bg-slate-800/80 border-[#CBD5E1]/40',
-    legendBg: 'bg-[#E9ECEF] text-[#475569] border-[#CBD5E1] dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700',
-    indicatorBg: 'bg-[#475569] dark:bg-slate-400',
-    textCls: 'text-[#475569] dark:text-slate-300',
-    icon: Lock
   }
 };
+
+// Aliases for compatibility
+STATUS_TOKENS.WORKING_DAY = STATUS_TOKENS.Working;
+STATUS_TOKENS.HOLIDAY = STATUS_TOKENS.Holiday;
+STATUS_TOKENS.SUNDAY = STATUS_TOKENS.Holiday;
 
 const WorkCalendar = () => {
   const { user } = useAuth();
@@ -118,6 +118,13 @@ const WorkCalendar = () => {
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [calendarDays, setCalendarDays] = useState([]);
+  const [shiftInfo, setShiftInfo] = useState({
+    shiftName: '',
+    startTime: '',
+    endTime: '',
+    formattedStart: '',
+    formattedEnd: ''
+  });
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -165,6 +172,15 @@ const WorkCalendar = () => {
 
       const res = await api.get(`/work-calendar?${params.toString()}`);
       setCalendarDays(res.data.days || []);
+      if (res.data.shiftName) {
+        setShiftInfo({
+          shiftName: res.data.shiftName,
+          startTime: res.data.startTime || '',
+          endTime: res.data.endTime || '',
+          formattedStart: res.data.formattedStart || '',
+          formattedEnd: res.data.formattedEnd || ''
+        });
+      }
     } catch (err) {
       console.error('[WorkCalendar] Failed to load work calendar:', err);
       setErrorMsg(err.response?.data?.message || 'Failed to fetch work calendar data.');
@@ -179,6 +195,33 @@ const WorkCalendar = () => {
     setCalendarDays([]);
     fetchCalendar(selectedOrgId);
   }, [month, year, selectedOrgId, orgsLoading, companies]);
+
+  // Real-time synchronization when shifts, schedules, or member assignments update
+  useEffect(() => {
+    const handleShiftUpdated = () => {
+      fetchCalendar();
+    };
+
+    window.addEventListener('shift_updated', handleShiftUpdated);
+    window.addEventListener('schedule_updated', handleShiftUpdated);
+
+    const socket = getSocket();
+    if (socket) {
+      socket.on('shift_updated', handleShiftUpdated);
+      socket.on('schedule_updated', handleShiftUpdated);
+      socket.on('work_calendar_updated', handleShiftUpdated);
+    }
+
+    return () => {
+      window.removeEventListener('shift_updated', handleShiftUpdated);
+      window.removeEventListener('schedule_updated', handleShiftUpdated);
+      if (socket) {
+        socket.off('shift_updated', handleShiftUpdated);
+        socket.off('schedule_updated', handleShiftUpdated);
+        socket.off('work_calendar_updated', handleShiftUpdated);
+      }
+    };
+  }, [month, year, selectedOrgId]);
 
   const handlePrevMonth = () => {
     setCurrentDate(new Date(year, month - 2, 1));
@@ -198,14 +241,16 @@ const WorkCalendar = () => {
   const handleDayClick = (dayItem) => {
     setSelectedDay(dayItem);
     let defaultStatus = dayItem.status;
-    if (dayItem.status === 'SUNDAY') defaultStatus = 'HOLIDAY';
-    if (dayItem.status === 'MY_LEAVE') defaultStatus = dayItem.dayOfWeek === 6 ? 'WFH' : 'WORKING_DAY';
+    if (dayItem.status === 'Working' || dayItem.status === 'WORKING_DAY') defaultStatus = 'WORKING_DAY';
+    else if (dayItem.status === 'WFH') defaultStatus = 'WFH';
+    else if (dayItem.status === 'Holiday' || dayItem.status === 'HOLIDAY' || dayItem.status === 'SUNDAY') defaultStatus = 'HOLIDAY';
+    else if (dayItem.status === 'MY_LEAVE') defaultStatus = dayItem.dayOfWeek === 6 ? 'WFH' : 'WORKING_DAY';
 
     setEditForm({
       date: dayItem.date,
       status: ['WORKING_DAY', 'WFH', 'HOLIDAY'].includes(defaultStatus) ? defaultStatus : 'WORKING_DAY',
       title: dayItem.title && !isGenericTitle(dayItem.title) ? dayItem.title : '',
-      reason: dayItem.reason && !['Saturday Default WFH', 'Standard Working Day', 'Fixed Weekly Holiday'].includes(dayItem.reason) ? dayItem.reason : '',
+      reason: dayItem.reason && !['Saturday Default WFH', 'Standard Working Day', 'Fixed Weekly Holiday'].includes(dayItem.reason) && !dayItem.reason.endsWith('Schedule') ? dayItem.reason : '',
       isPermanent: Boolean(dayItem.isPermanent)
     });
 
@@ -216,6 +261,10 @@ const WorkCalendar = () => {
       setIsEditMode(false);
     }
     setIsDetailsOpen(true);
+  };
+
+  const handleStartEdit = () => {
+    setIsEditMode(true);
   };
 
   // Close Override Form and discard changes
@@ -316,9 +365,17 @@ const WorkCalendar = () => {
               <CalendarIcon className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">Work Calendar</h1>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-foreground">Work Calendar</h1>
+                {shiftInfo.shiftName && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-primary/10 text-primary border border-primary/20 text-xs font-semibold shadow-xs">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Shift: {shiftInfo.shiftName} {shiftInfo.formattedStart ? `(${shiftInfo.formattedStart} – ${shiftInfo.formattedEnd})` : ''}</span>
+                  </span>
+                )}
+              </div>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Overview of working days, WFH schedule, company holidays, and personal leaves.
+                Live view of your assigned shift schedule, working days, WFH schedule, holidays, and leaves.
               </p>
             </div>
           </div>
@@ -389,7 +446,9 @@ const WorkCalendar = () => {
       <div className="bg-card border border-border rounded-xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3 text-xs md:text-sm">
         <span className="font-semibold text-muted-foreground uppercase text-[11px] tracking-wider">Legend:</span>
         <div className="flex flex-wrap items-center gap-2 md:gap-4">
-          {Object.entries(STATUS_TOKENS).map(([key, config]) => {
+          {['Working', 'WFH', 'Holiday', 'MY_LEAVE'].map((key) => {
+            const config = STATUS_TOKENS[key];
+            if (!config) return null;
             const Icon = config.icon;
             return (
               <div
@@ -442,7 +501,7 @@ const WorkCalendar = () => {
             {calendarDays.map((dayItem) => {
               const dayNum = parseInt(dayItem.date.split('-')[2], 10);
               const isToday = dayItem.date === todayStr;
-              const config = STATUS_TOKENS[dayItem.status] || STATUS_TOKENS.WORKING_DAY;
+              const config = STATUS_TOKENS[dayItem.status] || STATUS_TOKENS.Working;
               const showCustomTitle = !isGenericTitle(dayItem.title);
 
               return (
@@ -547,7 +606,7 @@ const WorkCalendar = () => {
                   <div>
                     <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</label>
                     {(() => {
-                      const cfg = STATUS_TOKENS[selectedDay.status] || STATUS_TOKENS.WORKING_DAY;
+                      const cfg = STATUS_TOKENS[selectedDay.status] || STATUS_TOKENS.Working;
                       const Icon = cfg.icon;
                       return (
                         <div className={`mt-1 flex items-center gap-2 px-3 py-2 rounded-xl border font-semibold text-sm ${cfg.legendBg}`}>
@@ -647,7 +706,7 @@ const WorkCalendar = () => {
                     >
                       <option value="WORKING_DAY">🟢 Working Day</option>
                       <option value="WFH">🔵 Work From Home</option>
-                      <option value="HOLIDAY">🔴 Company Holiday</option>
+                      <option value="HOLIDAY">⚪ Company Holiday</option>
                     </select>
                   </div>
 

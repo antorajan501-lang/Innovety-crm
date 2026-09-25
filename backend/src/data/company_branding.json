@@ -1,12 +1,24 @@
 {
   "cmteaqlih0000sj52wckjbgci": {
-    "companyName": "Innoveity Enterprise",
-    "companyLogo": null,
-    "selectedTheme": "emerald",
+    "companyName": "Innoveity Tech",
+    "companyLogo": "/uploads/branding/company-logo-1789984457558-698299555.png",
+    "selectedTheme": "orange",
     "themeMode": "light",
-    "updatedAt": "2026-09-17T03:02:59.597Z",
+    "updatedAt": "2026-09-23T05:34:06.365Z",
     "chatEnabledForAdmins": false,
-    "chatEnabledForUsers": false
+    "chatEnabledForUsers": false,
+    "loginPrimaryColor": "#10B981",
+    "loginBackgroundType": "gradient",
+    "loginBackgroundColor": "#0F172A",
+    "loginGradientStart": "#0F172A",
+    "loginGradientEnd": "#1E293B",
+    "loginGradientDirection": "to bottom right",
+    "loginBackgroundImage": null,
+    "loginCardStyle": "glass",
+    "loginButtonStyle": "rounded",
+    "showLoginLogo": true,
+    "loginWelcomeTitle": "Welcome to Innoveity ",
+    "loginWelcomeSubtitle": "Sign in to continue to your workspace"
   },
   "cmtgsp8710000bb94ztamcrue": {
     "companyName": "Innoviety Enterprise",
@@ -38,8 +50,29 @@
     "companyLogo": null,
     "selectedTheme": "blue",
     "themeMode": "light",
-    "chatEnabledForAdmins": true,
-    "chatEnabledForUsers": true,
-    "updatedAt": "2026-09-17T03:10:45.508Z"
+    "chatEnabledForAdmins": false,
+    "chatEnabledForUsers": false,
+    "updatedAt": "2026-09-22T09:20:44.757Z"
+  },
+  "GLOBAL": {
+    "loginPrimaryColor": "#10B981",
+    "loginBackgroundType": "gradient",
+    "loginBackgroundColor": "#0F172A",
+    "loginGradientStart": "#0F172A",
+    "loginGradientEnd": "#1E293B",
+    "loginGradientDirection": "to bottom right",
+    "loginBackgroundImage": null,
+    "loginCardStyle": "glass",
+    "loginButtonStyle": "rounded",
+    "showLoginLogo": true,
+    "loginWelcomeTitle": "Welcome to Innoveity ",
+    "loginWelcomeSubtitle": "Sign in to continue to your workspace",
+    "updatedAt": "2026-09-23T05:34:06.367Z",
+    "companyName": "Innoveity Tech",
+    "companyLogo": "/uploads/branding/company-logo-1789984457558-698299555.png",
+    "selectedTheme": "orange",
+    "themeMode": "light",
+    "chatEnabledForAdmins": false,
+    "chatEnabledForUsers": false
   }
 }

@@ -9,10 +9,19 @@ if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
+function normalizeRole(role) {
+  if (!role) return null;
+  const r = String(role).trim().toUpperCase();
+  if (r === 'TL' || r === 'TEAMLEADER' || r === 'TEAM-LEADER' || r === 'TEAM_LEADER' || r === 'TEAM_LEAD' || r === 'TEAMLEAD') {
+    return 'TEAM_LEADER';
+  }
+  return r;
+}
+
 /**
  * Get company-specific leave policy configuration
  */
-function getCompanyLeavePolicy(organizationId) {
+function getCompanyLeavePolicy(organizationId, role = null) {
   const defaultPolicy = {
     allocationType: 'ANNUAL',
     carryForwardEnabled: true,
@@ -29,9 +38,30 @@ function getCompanyLeavePolicy(organizationId) {
   try {
     const raw = fs.readFileSync(STORE_PATH, 'utf8');
     const data = JSON.parse(raw);
-    return data.policies && data.policies[organizationId]
-      ? { ...defaultPolicy, ...data.policies[organizationId] }
-      : defaultPolicy;
+    const companyData = data.policies && data.policies[organizationId] ? data.policies[organizationId] : null;
+    if (!companyData) return defaultPolicy;
+
+    const basePolicy = { ...defaultPolicy, ...companyData };
+    const companyAllocationType = companyData.allocationType || basePolicy.allocationType || 'ANNUAL';
+    const normRole = normalizeRole(role);
+
+    if (normRole && companyData.roles && (companyData.roles[normRole] || companyData.roles[role])) {
+      const roleData = companyData.roles[normRole] || companyData.roles[role];
+      return {
+        ...basePolicy,
+        ...roleData,
+        // Crucial: Company's active allocationType always defines the company policy mode for all roles
+        allocationType: companyAllocationType,
+        allowances: {
+          ...(companyData.allowances || {}),
+          ...(roleData.allowances || {})
+        }
+      };
+    }
+    return {
+      ...basePolicy,
+      allocationType: companyAllocationType
+    };
   } catch (err) {
     console.error('Error reading company leave policy:', err);
     return defaultPolicy;
@@ -39,9 +69,9 @@ function getCompanyLeavePolicy(organizationId) {
 }
 
 /**
- * Save company-specific leave policy configuration
+ * Save company-specific leave policy configuration (optionally for a specific role)
  */
-function setCompanyLeavePolicy(organizationId, policyData) {
+function setCompanyLeavePolicy(organizationId, policyData, role = null) {
   if (!organizationId) return;
   let data = { policies: {}, types: {} };
   if (fs.existsSync(STORE_PATH)) {
@@ -54,10 +84,27 @@ function setCompanyLeavePolicy(organizationId, policyData) {
   }
 
   if (!data.policies) data.policies = {};
-  data.policies[organizationId] = {
-    ...data.policies[organizationId],
-    ...policyData
-  };
+  if (!data.policies[organizationId]) {
+    data.policies[organizationId] = {};
+  }
+
+  const normRole = normalizeRole(role);
+  if (normRole) {
+    if (!data.policies[organizationId].roles) {
+      data.policies[organizationId].roles = {};
+    }
+    const cleanPolicyData = { ...policyData };
+    delete cleanPolicyData.roles;
+    data.policies[organizationId].roles[normRole] = {
+      ...data.policies[organizationId].roles[normRole],
+      ...cleanPolicyData
+    };
+  } else {
+    data.policies[organizationId] = {
+      ...data.policies[organizationId],
+      ...policyData
+    };
+  }
 
   fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), 'utf8');
 }
@@ -152,8 +199,8 @@ function filterLeaveTypesForCompany(allTypes, organizationId) {
   const allAssignedTypeIds = getAllAssignedLeaveTypeIds();
 
   const filtered = allTypes.filter((lt) => {
-    // Core system leave types (WFH, CL, SL) are ALWAYS included for every company
-    const isSystemType = lt.isSystem || ['WFH', 'CL', 'SL'].includes((lt.code || '').toUpperCase());
+    // Core system leave types (CL, SL) are ALWAYS included for every company
+    const isSystemType = lt.isSystem || ['CL', 'SL'].includes((lt.code || '').toUpperCase());
     if (isSystemType) return true;
 
     // If explicitly assigned to THIS company, include it
@@ -169,11 +216,58 @@ function filterLeaveTypesForCompany(allTypes, organizationId) {
   return filtered;
 }
 
+function cleanupCompanyLeavePolicyReferences(organizationId, identifiers = []) {
+  if (!fs.existsSync(STORE_PATH)) return;
+  try {
+    const raw = fs.readFileSync(STORE_PATH, 'utf8');
+    const data = JSON.parse(raw);
+    const orgIds = organizationId ? [organizationId] : Object.keys(data.policies || {});
+
+    orgIds.forEach((org) => {
+      // Clean from types array
+      if (data.types && data.types[org]) {
+        data.types[org] = data.types[org].filter((id) => !identifiers.includes(id));
+      }
+      // Clean from role allowances
+      const comp = data.policies && data.policies[org];
+      if (comp && comp.roles) {
+        Object.keys(comp.roles).forEach((rKey) => {
+          const roleData = comp.roles[rKey];
+          if (roleData && roleData.allowances) {
+            identifiers.forEach((ident) => {
+              if (ident) {
+                delete roleData.allowances[ident];
+                delete roleData.allowances[ident.toUpperCase()];
+              }
+            });
+          }
+        });
+      }
+      if (comp && comp.allowances) {
+        identifiers.forEach((ident) => {
+          if (ident) {
+            delete comp.allowances[ident];
+            delete comp.allowances[ident.toUpperCase()];
+          }
+        });
+      }
+    });
+
+    fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), 'utf8');
+  } catch (err) {
+    console.error('Error cleaning company leave policy references:', err);
+  }
+}
+
 module.exports = {
   getCompanyLeavePolicy,
   setCompanyLeavePolicy,
   getCompanyLeaveTypeIds,
+  getAllAssignedLeaveTypeIds,
   addLeaveTypeToCompany,
   removeLeaveTypeFromCompany,
-  filterLeaveTypesForCompany
+  cleanupCompanyLeavePolicyReferences,
+  filterLeaveTypesForCompany,
+  normalizeRole
 };
+

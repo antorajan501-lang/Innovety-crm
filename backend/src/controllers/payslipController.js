@@ -30,7 +30,19 @@ const getPayslips = async (req, res) => {
       payslips = await prisma.payslip.findMany({
         where: whereClause,
         include: {
-          user: { select: { id: true, name: true, email: true, employeeId: true, role: true, department: true, profilePic: true, organizationId: true } },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              employeeId: true,
+              role: true,
+              department: true,
+              profilePic: true,
+              organizationId: true,
+              shiftAssignment: { include: { shift: true } }
+            }
+          },
           batch: true
         },
         orderBy: [{ year: 'desc' }, { month: 'desc' }]
@@ -43,7 +55,19 @@ const getPayslips = async (req, res) => {
           status: 'PUBLISHED'
         },
         include: {
-          user: { select: { id: true, name: true, email: true, employeeId: true, role: true, department: true, profilePic: true, organizationId: true } },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              employeeId: true,
+              role: true,
+              department: true,
+              profilePic: true,
+              organizationId: true,
+              shiftAssignment: { include: { shift: true } }
+            }
+          },
           batch: true
         },
         orderBy: [{ year: 'desc' }, { month: 'desc' }]
@@ -73,7 +97,8 @@ const getPayslipById = async (req, res) => {
           select: {
             id: true, name: true, email: true, phone: true, employeeId: true,
             role: true, department: true, designation: true, profilePic: true,
-            joiningDate: true, companyName: true, organizationId: true
+            joiningDate: true, companyName: true, organizationId: true,
+            shiftAssignment: { include: { shift: true } }
           }
         },
         batch: true

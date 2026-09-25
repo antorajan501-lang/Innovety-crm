@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
 import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import { useCompanyScope } from '../context/CompanyScopeContext';
 import CompanyLeaveAuditModal from '../components/attendance/CompanyLeaveAuditModal';
+import AttendanceReportSection from '../components/attendance/AttendanceReportSection';
 import {
   Search,
   Filter,
@@ -31,12 +33,16 @@ const QUICK_FILTERS = [
   { id: 'CUSTOM', label: 'Custom Range' }
 ];
 
+const formatLocalDate = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
 const getQuickFilterDates = (preset) => {
   const now = new Date();
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const todayStr = `${yyyy}-${mm}-${dd}`;
+  const todayStr = formatLocalDate(now);
 
   let fromDate = '';
   let toDate = '';
@@ -49,9 +55,11 @@ const getQuickFilterDates = (preset) => {
     const diffToMonday = now.getDate() - day + (day === 0 ? -6 : 1);
     const monday = new Date(now.getFullYear(), now.getMonth(), diffToMonday);
 
-    fromDate = monday.toISOString().split('T')[0];
+    fromDate = formatLocalDate(monday);
     toDate = todayStr; // Clamp to today max
   } else if (preset === 'THIS_MONTH') {
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
     fromDate = `${yyyy}-${mm}-01`;
     toDate = todayStr; // Clamp to today max
   }
@@ -73,9 +81,9 @@ const formatDateDDMMYYYY = (dateInput) => {
   }
   const obj = new Date(dateInput);
   if (isNaN(obj.getTime())) return '—';
-  const day = String(obj.getDate()).padStart(2, '0');
-  const month = String(obj.getMonth() + 1).padStart(2, '0');
-  const year = obj.getFullYear();
+  const day = String(obj.getUTCDate ? obj.getUTCDate() : obj.getDate()).padStart(2, '0');
+  const month = String((obj.getUTCMonth ? obj.getUTCMonth() : obj.getMonth()) + 1).padStart(2, '0');
+  const year = obj.getUTCFullYear ? obj.getUTCFullYear() : obj.getFullYear();
   return `${day}/${month}/${year}`;
 };
 
@@ -165,6 +173,7 @@ const AttendanceAudit = () => {
   });
 
   const [loading, setLoading] = useState(false);
+  const [showReports, setShowReports] = useState(false);
 
   // Filters
   const [quickFilter, setQuickFilter] = useState('ALL');
@@ -343,6 +352,7 @@ const AttendanceAudit = () => {
 
   const handleQuickFilterClick = (preset) => {
     setQuickFilter(preset);
+    setLogs([]); // Immediately purge existing logs so no stale date records show while fetching
     if (preset === 'ALL') {
       setStartDate('');
       setEndDate('');
@@ -356,6 +366,7 @@ const AttendanceAudit = () => {
   };
 
   const handleClearFilters = () => {
+    setLogs([]);
     setQuickFilter('ALL');
     setUserIdFilter('');
     setStatusFilter('');
@@ -368,12 +379,12 @@ const AttendanceAudit = () => {
 
   const departmentOptions = Array.from(new Set(allInterns.map(i => i.department).filter(Boolean)));
 
-  const todayISO = new Date().toISOString().split('T')[0];
+  const todayLocalStr = formatLocalDate(new Date());
 
   const rawFilteredLogs = logs.filter(log => {
     if (log.date) {
-      const logDateStr = new Date(log.date).toISOString().split('T')[0];
-      if (logDateStr > todayISO) return false; // Strictly disallow future dates
+      const logDateStr = typeof log.date === 'string' ? log.date.split('T')[0] : formatLocalDate(new Date(log.date));
+      if (logDateStr > todayLocalStr) return false; // Strictly disallow future dates
     }
     if (shiftFilter && log.shift !== shiftFilter && log.user?.shift !== shiftFilter) return false;
     if (departmentFilter && log.user?.department !== departmentFilter) return false;
@@ -413,6 +424,10 @@ const AttendanceAudit = () => {
   const formatDateTimeLocal = (dateVal, recordDate) => {
     if (!dateVal) {
       if (!recordDate) return '';
+      if (typeof recordDate === 'string' && recordDate.includes('T')) {
+        const datePart = recordDate.split('T')[0];
+        return `${datePart}T09:30`;
+      }
       const recD = new Date(recordDate);
       if (isNaN(recD.getTime())) return '';
       const pad = (n) => String(n).padStart(2, '0');
@@ -626,12 +641,28 @@ const AttendanceAudit = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left">
         <div>
           <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-foreground">
-            Attendance Audit
+            Attendance
           </h1>
           <p className="text-sm text-muted-foreground font-medium">
-            Monitor employee attendance records, and daily activity.
+            Monitor employee attendance records, daily activity, and generate Excel reports.
           </p>
         </div>
+
+        {/* Top Header Export Report Toggle Button */}
+        {(user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN') && (
+          <button
+            id="toggle-attendance-reports-btn"
+            onClick={() => setShowReports(prev => !prev)}
+            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs transition-all shadow-xs active:scale-95 cursor-pointer shrink-0 ${
+              showReports
+                ? 'bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90 shadow-md hover:shadow-lg'
+            }`}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            <span>{showReports ? 'Hide Reports Panel' : 'Export Report'}</span>
+          </button>
+        )}
       </div>
 
       {/* Main Attendance Audit Logs Panel */}
@@ -770,6 +801,20 @@ const AttendanceAudit = () => {
             </div>
           </div>
 
+          {/* Attendance Report Section (Admin / Super Admin) Toggle Panel */}
+          <AnimatePresence>
+            {showReports && (
+              <motion.div
+                initial={{ opacity: 0, height: 0, overflow: 'hidden' }}
+                animate={{ opacity: 1, height: 'auto', overflow: 'visible' }}
+                exit={{ opacity: 0, height: 0, overflow: 'hidden' }}
+                transition={{ duration: 0.25, ease: 'easeInOut' }}
+              >
+                <AttendanceReportSection user={user} onClose={() => setShowReports(false)} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {/* Clean Logs Table */}
           <div className="w-full min-w-0 overflow-x-auto rounded-2xl border border-border/40 bg-card shadow-premium text-left">
             <table className="w-full text-sm border-collapse">
@@ -824,7 +869,7 @@ const AttendanceAudit = () => {
                         {log.status === 'PENDING' || !log.status ? (
                           <span className="text-muted-foreground font-bold">—</span>
                         ) : (
-                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-emerald-500/10 text-emerald-600' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : log.status === 'HALF_DAY' ? 'bg-purple-500/10 text-purple-600' : log.status === 'ABSENT' ? 'bg-rose-500/10 text-rose-600' : 'bg-amber-500/10 text-amber-600'}`}>
+                          <span className={`inline-flex rounded-full px-2.5 py-0.5 text-[9px] font-bold uppercase ${log.status === 'PRESENT' || log.status === 'WORK_FROM_HOME' ? 'bg-emerald-500/10 text-emerald-600' : log.status === 'LATE' ? 'bg-yellow-500/10 text-yellow-600' : log.status === 'HALF_DAY' ? 'bg-purple-500/10 text-purple-600' : log.status === 'ABSENT' ? 'bg-rose-500/10 text-rose-600' : log.status === 'HOLIDAY' ? 'bg-sky-500/10 text-sky-600' : 'bg-amber-500/10 text-amber-600'}`}>
                             {log.status === 'LATE' && log.lateMinutes ? `LATE (${formatLateMinutes(log.lateMinutes)})` : log.status}
                           </span>
                         )}

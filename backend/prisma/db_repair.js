@@ -110,6 +110,11 @@ async function repairDatabase() {
   });
   console.log('[5] Super Admin account verified.');
 
+  // 6. Ensure Default Company Shifts and Member Assignments
+  const { ensureDefaultShiftsForExistingOrgs } = require('../src/services/shiftService');
+  const shiftResults = await ensureDefaultShiftsForExistingOrgs(prisma);
+  console.log(`[6] Verified default company shifts for ${shiftResults.length} organization(s).`);
+
   console.log('====================================================');
   console.log('DATABASE REPAIR COMPLETED SUCCESSFULLY');
   console.log('====================================================');

@@ -45,15 +45,18 @@ import EmployeePayrollPage from './pages/finance/EmployeePayrollPage';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
 import { BrandProvider } from './context/BrandContext';
 import SuperAdminDashboard from './pages/super-admin/dashboard/SuperAdminDashboard';
-import BrandingTheme from './pages/super-admin/branding/BrandingTheme';
 import UsersDirectory from './pages/super-admin/users/UsersDirectory';
 import TeamDirectory from './pages/super-admin/teams/TeamDirectory';
 import AdminManagement from './pages/super-admin/admins/AdminManagement';
 import OrganizationManager from './pages/super-admin/organization/OrganizationManager';
 import PlatformOperationsDashboard from './pages/super-admin/operations/PlatformOperationsDashboard';
 import LeavePolicySettings from './pages/super-admin/LeavePolicySettings';
-
+import LatePolicySettings from './pages/super-admin/LatePolicySettings';
+import EmployeeSelfService from './components/intelligence/EmployeeSelfService';
 import ErrorBoundary from './components/common/ErrorBoundary';
+
+// Enterprise Branding Center
+import BrandingCenter from './components/enterprise/BrandingCenter';
 
 // Protected Route wrapper with Role Check
 const ProtectedRoute = ({ children, allowedRoles }) => {
@@ -136,10 +139,11 @@ const App = () => {
                     path="/super-admin/branding"
                     element={
                       <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
-                        <BrandingTheme />
+                        <BrandingCenter />
                       </ProtectedRoute>
                     }
                   />
+
                   <Route
                     path="/super-admin/users"
                     element={
@@ -180,6 +184,14 @@ const App = () => {
                       </ProtectedRoute>
                     }
                   />
+                  <Route
+                    path="/super-admin/late-policy"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <LatePolicySettings />
+                      </ProtectedRoute>
+                    }
+                  />
 
                   <Route
                     path="/super-admin/operations"
@@ -189,9 +201,19 @@ const App = () => {
                       </ProtectedRoute>
                     }
                   />
+                  <Route
+                    path="/self-service"
+                    element={
+                      <ProtectedRoute allowedRoles={['EMPLOYEE', 'INTERN', 'TEAM_LEADER', 'ADMIN', 'SUPER_ADMIN']}>
+                        <div className="p-6 max-w-7xl mx-auto">
+                          <EmployeeSelfService />
+                        </div>
+                      </ProtectedRoute>
+                    }
+                  />
+
 
                   {/* Protected Role-Based Routes */}
-                  <Route path="/integrations" element={<Navigate to="/" replace />} />
                   <Route
                     path="/"
                     element={
@@ -251,7 +273,7 @@ const App = () => {
                   <Route
                     path="/attendance"
                     element={
-                      <ProtectedRoute allowedRoles={['INTERN', 'TEAM_LEADER', 'EMPLOYEE']}>
+                      <ProtectedRoute allowedRoles={['INTERN', 'TEAM_LEADER', 'EMPLOYEE', 'ADMIN', 'SUPER_ADMIN']}>
                         <Attendance />
                       </ProtectedRoute>
                     }

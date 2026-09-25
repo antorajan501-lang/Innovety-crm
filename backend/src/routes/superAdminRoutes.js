@@ -13,21 +13,27 @@ if (!fs.existsSync(brandingUploadDir)) {
   fs.mkdirSync(brandingUploadDir, { recursive: true });
 }
 
-// Multer storage configuration for branding logo uploads
+// Multer storage configuration for branding logo and background uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, brandingUploadDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, 'company-logo-' + uniqueSuffix + path.extname(file.originalname));
+    const prefix = file.fieldname === 'backgroundImage' ? 'login-bg-' : 'company-logo-';
+    cb(null, prefix + uniqueSuffix + path.extname(file.originalname));
   }
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB max logo size
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB max logo/bg size
 });
+
+const brandingUpload = upload.fields([
+  { name: 'logo', maxCount: 1 },
+  { name: 'backgroundImage', maxCount: 1 }
+]);
 
 // All Super Admin routes require JWT authentication and SUPER_ADMIN role guard
 router.use(authenticate);
@@ -36,7 +42,7 @@ router.use(requireSuperAdmin);
 // Platform Overview & Settings
 router.get('/stats', superAdminController.getPlatformStats);
 router.get('/branding', superAdminController.getPlatformSettings);
-router.put('/branding', upload.single('logo'), superAdminController.updatePlatformSettings);
+router.put('/branding', brandingUpload, superAdminController.updatePlatformSettings);
 
 // Users Directory (All roles)
 router.get('/users', superAdminController.getUsersDirectory);

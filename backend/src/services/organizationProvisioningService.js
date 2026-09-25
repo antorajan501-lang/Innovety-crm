@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const bcrypt = require('bcrypt');
 const prisma = require('../utils/db');
+const { createDefaultShift } = require('./shiftService');
 
 // Helper to generate URL-friendly slug
 const generateSlug = async (name, currentId = null) => {
@@ -188,7 +189,10 @@ const provisionOrganizationWorkspace = async ({
         });
       }
 
-      return { organization, settings, adminUser };
+      // Create Default Company Shift & assign admin user
+      const defaultShift = await createDefaultShift(organization.id, tx);
+
+      return { organization, settings, adminUser, defaultShift };
     });
 
     // 4. Create upload workspace directories

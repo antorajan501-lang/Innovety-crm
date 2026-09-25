@@ -3,7 +3,7 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
 import { useTheme } from '../../context/ThemeContext';
-import api, { getUploadUrl } from '../../services/api';
+import api, { getUploadUrl, setManualLogoutFlag } from '../../services/api';
 import {
   LayoutDashboard,
   Users,
@@ -42,8 +42,8 @@ import {
   FileCode,
   Sparkles,
   Award,
-  Building2,
-  Loader2
+  Loader2,
+  Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -102,8 +102,10 @@ const QUICK_NAV_ITEMS = [
   { label: 'Organization Manager', path: '/super-admin/organization', keywords: ['organization', 'positions', 'position', 'pos-mgr', 'pos-snr', 'pos-int', 'ranks', 'senior', 'lead', 'manager', 'director', 'branches', 'departments'], category: 'Platform Control', icon: Award, roles: ['SUPER_ADMIN'] },
   { label: 'Users Directory', path: '/super-admin/users', keywords: ['users directory', 'all users', 'superadmin users', 'senior', 'junior', 'lead', 'manager'], category: 'Platform Control', icon: Users, roles: ['SUPER_ADMIN'] },
   { label: 'Team Directory', path: '/super-admin/teams', keywords: ['team directory', 'superadmin teams'], category: 'Platform Control', icon: Briefcase, roles: ['SUPER_ADMIN'] },
+  { label: 'Employee Self-Service', path: '/self-service', keywords: ['self service', 'my shift', 'portal', 'timeline', 'punches', 'attendance'], category: 'Operations', icon: UserIcon, roles: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER', 'ADMIN', 'SUPER_ADMIN'] },
   { label: 'Admin Management', path: '/super-admin/admins', keywords: ['admin management', 'admins', 'admin list'], category: 'Platform Control', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
-  { label: 'Branding & Theme', path: '/super-admin/branding', keywords: ['branding', 'theme', 'logo', 'colors'], category: 'Platform Control', icon: Sparkles, roles: ['SUPER_ADMIN'] }
+  { label: 'Branding & Theme', path: '/super-admin/branding', keywords: ['branding', 'theme', 'logo', 'colors'], category: 'Platform Control', icon: Sparkles, roles: ['SUPER_ADMIN'] },
+  { label: 'Late Policy', path: '/super-admin/late-policy', keywords: ['late policy', 'late', 'warning', 'deduction', 'lates'], category: 'Platform Control', icon: Clock, roles: ['SUPER_ADMIN'] }
 ];
 
 const DashboardLayout = ({ children }) => {
@@ -128,6 +130,57 @@ const DashboardLayout = ({ children }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
+
+  // Phase 7 Shift Notifications
+  const [shiftNotifs, setShiftNotifs] = useState([]);
+  const [shiftUnreadCount, setShiftUnreadCount] = useState(0);
+  const [notifTab, setNotifTab] = useState('all'); // 'all' | 'shifts'
+
+  const fetchShiftNotifs = async () => {
+    try {
+      const res = await api.get('/workforce/notifications');
+      if (res.data?.success) {
+        setShiftNotifs(res.data.notifications || []);
+        setShiftUnreadCount(res.data.unreadCount || 0);
+      }
+    } catch {
+      // Quiet fail if endpoint not reachable
+    }
+  };
+
+  useEffect(() => {
+    fetchShiftNotifs();
+    const interval = setInterval(fetchShiftNotifs, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (notifOpen) {
+      fetchShiftNotifs();
+    }
+  }, [notifOpen]);
+
+  const handleMarkShiftRead = async (id) => {
+    try {
+      await api.patch(`/workforce/notifications/${id}/read`);
+      setShiftNotifs(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+      setShiftUnreadCount(prev => Math.max(0, prev - 1));
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleMarkAllShiftRead = async () => {
+    try {
+      await api.post('/workforce/notifications/mark-all-read');
+      setShiftNotifs(prev => prev.map(n => ({ ...n, isRead: true })));
+      setShiftUnreadCount(0);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const totalCombinedUnread = (unreadCount || 0) + shiftUnreadCount;
 
   const isExpanded = isPinned || isHovered || sidebarOpen;
 
@@ -292,7 +345,8 @@ const DashboardLayout = ({ children }) => {
         { label: 'Team Directory', path: '/super-admin/teams', icon: Briefcase, roles: ['SUPER_ADMIN'] },
         { label: 'Admin Management', path: '/super-admin/admins', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
         { label: 'Organization Manager', path: '/super-admin/organization', icon: Award, roles: ['SUPER_ADMIN'] },
-        { label: 'Leave Policy', path: '/super-admin/leave-policy', icon: Calendar, roles: ['SUPER_ADMIN'] }
+        { label: 'Leave Policy', path: '/super-admin/leave-policy', icon: Calendar, roles: ['SUPER_ADMIN'] },
+        { label: 'Late Policy', path: '/super-admin/late-policy', icon: Clock, roles: ['SUPER_ADMIN'] }
       ]
     },
     {
@@ -323,7 +377,8 @@ const DashboardLayout = ({ children }) => {
       items: [
         { label: 'My Work Logs', path: '/worklogs', icon: Clock, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
         { label: 'Attendance Portal', path: '/attendance', icon: Clock, roles: ['INTERN', 'TEAM_LEADER', 'EMPLOYEE'] },
-        { label: 'Attendance Audit', path: '/attendance-audit', icon: Clock, roles: ['ADMIN', 'TEAM_LEADER', 'SUPER_ADMIN'] },
+        { label: 'Attendance', path: '/attendance-audit', icon: Clock, roles: ['ADMIN', 'SUPER_ADMIN'] },
+        { label: 'Attendance Audit', path: '/attendance-audit', icon: Clock, roles: ['TEAM_LEADER'] },
         { label: 'Leave Management', path: '/leave-management', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
         { label: 'Work Calendar', path: '/operations/work-calendar', icon: Calendar, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
         { label: 'Ticket Desk', path: '/tickets', icon: Ticket, roles: ['ADMIN', 'EMPLOYEE', 'TEAM_LEADER', 'INTERN', 'SUPER_ADMIN'] },
@@ -366,8 +421,27 @@ const DashboardLayout = ({ children }) => {
   ];
 
   const handleLogout = () => {
-    logout(true);
+    // 1. Immediately drop auth headers so any pending background requests don't use old token
+    if (api.defaults?.headers?.common) {
+      delete api.defaults.headers.common['Authorization'];
+    }
+
+    // 2. Mark manual logout flag immediately to prevent background API race conditions
+    setManualLogoutFlag(true);
+
+    // 3. Close profile dropdown immediately
+    setProfileOpen(false);
+
+    // 4. Immediately transition route to /login via React Router without waiting for cleanup
     navigate('/login', { replace: true });
+
+    // 5. Defer full cleanup to idle/background so it does not compete with /login first render
+    const runCleanup = () => logout(true);
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(runCleanup, { timeout: 200 });
+    } else {
+      setTimeout(runCleanup, 80);
+    }
   };
 
   const handleNotificationClick = (notif) => {
@@ -425,6 +499,9 @@ const DashboardLayout = ({ children }) => {
     } else if (pathname === '/operations/work-calendar' || pathname === '/work-calendar') {
       parts.push({ label: 'Operations', path: '/operations/work-calendar' });
       parts.push({ label: 'Work Calendar', path: '/operations/work-calendar' });
+    } else if (pathname === '/super-admin/late-policy') {
+      parts.push({ label: 'Platform Control', path: '/super-admin/dashboard' });
+      parts.push({ label: 'Late Policy', path: '/super-admin/late-policy' });
     } else if (pathname === '/reports') {
 
       parts.push({ label: 'System Control', path: '/reports' });
@@ -464,7 +541,7 @@ const DashboardLayout = ({ children }) => {
         transition={{ duration: 0.22, ease: 'easeInOut' }}
         onMouseEnter={() => !isPinned && setIsHovered(true)}
         onMouseLeave={() => !isPinned && setIsHovered(false)}
-        className={`fixed inset-y-0 left-0 z-40 font-sans transition-transform duration-300 md:translate-x-0 md:relative flex flex-col justify-between p-3 select-none ${sidebarOpen ? 'translate-x-0 bg-white dark:bg-slate-900 shadow-2xl' : '-translate-x-full md:translate-x-0'
+        className={`fixed inset-y-0 left-0 z-40 font-sans transition-transform duration-300 md:translate-x-0 md:relative flex flex-col justify-between p-3 select-none ${sidebarOpen ? 'translate-x-0 bg-card shadow-2xl' : '-translate-x-full md:translate-x-0'
           }`}
       >
         <div className="flex flex-col h-full">
@@ -481,7 +558,7 @@ const DashboardLayout = ({ children }) => {
               title={isPinned ? "Unpin sidebar (Enable Hover Expand)" : "Pin sidebar (Permanently Expand)"}
               className={`hidden md:flex h-9 w-9 items-center justify-center rounded-full transition-all shrink-0 ${isPinned
                 ? 'bg-primary text-white shadow-md shadow-primary/30'
-                : 'bg-white dark:bg-slate-900 text-muted-foreground hover:bg-primary/10 hover:text-primary border border-border/70 shadow-sm'
+                : 'bg-card text-muted-foreground hover:bg-primary/10 hover:text-primary border border-border/70 shadow-sm'
                 }`}
             >
               <ChevronRight className={`h-4.5 w-4.5 transition-transform duration-300 ${isPinned ? 'rotate-180 text-white font-bold' : ''}`} />
@@ -500,7 +577,7 @@ const DashboardLayout = ({ children }) => {
               return (
                 <div
                   key={cat.title}
-                  className="bg-white dark:bg-slate-900 backdrop-blur-xl border border-border/70 rounded-[28px] p-2 shadow-sm hover:shadow-md shadow-slate-950/5 dark:shadow-black/20 transition-all flex flex-col items-center"
+                  className="bg-card backdrop-blur-xl border border-border/70 rounded-[28px] p-2 shadow-sm hover:shadow-md shadow-slate-950/5 dark:shadow-black/20 transition-all flex flex-col items-center"
                 >
                   {/* Section Title */}
                   {isExpanded && (
@@ -560,7 +637,7 @@ const DashboardLayout = ({ children }) => {
       <div className="flex flex-1 flex-col overflow-hidden min-w-0 bg-transparent">
         {/* Extended Floating Glass App Bar Header Card */}
         <header className="sticky top-0 z-30 w-full px-2 sm:px-3 pt-3 pb-1">
-          <div className="flex h-20 w-full items-center justify-between border border-border/60 bg-white dark:bg-slate-900 px-6 sm:px-8 backdrop-blur-xl shadow-lg shadow-slate-950/5 rounded-[28px] transition-all">
+          <div className="flex h-20 w-full items-center justify-between border border-border/60 bg-card px-6 sm:px-8 backdrop-blur-xl shadow-lg shadow-slate-950/5 rounded-[28px] transition-all">
             {/* Left: Main Logo & Breadcrumb Navigation */}
             <div className="flex items-center gap-4 shrink-0">
               <button className="rounded-lg p-1.5 hover:bg-muted md:hidden" onClick={() => setSidebarOpen(true)}>
@@ -627,7 +704,7 @@ const DashboardLayout = ({ children }) => {
 
               {/* Quick Navigation Dropdown Popover */}
               {searchDropdownOpen && searchQuery.trim() && (
-                <div className="absolute top-full left-0 right-0 mt-2 z-50 rounded-2xl border border-border/80 bg-white dark:bg-slate-900 p-3 shadow-2xl animate-in fade-in slide-in-from-top-2 duration-150 max-h-96 overflow-y-auto">
+                <div className="absolute top-full left-0 right-0 mt-2 z-50 rounded-2xl border border-border/80 bg-card p-3 shadow-2xl animate-in fade-in slide-in-from-top-2 duration-150 max-h-96 overflow-y-auto">
                   {navSearchResults.length === 0 ? (
                     <div className="py-6 text-center text-xs text-muted-foreground font-semibold">
                       <p>No matching page found.</p>
@@ -691,55 +768,125 @@ const DashboardLayout = ({ children }) => {
               <div className="relative" ref={notifRef}>
                 <button onClick={() => setNotifOpen(!notifOpen)} className="relative rounded-xl p-2 text-muted-foreground hover:bg-muted hover:text-foreground transition-all">
                   <Bell className="h-5 w-5" />
-                  {unreadCount > 0 && (
+                  {totalCombinedUnread > 0 && (
                     <span className="absolute right-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[9px] font-bold text-white ring-2 ring-card animate-pulse">
-                      {unreadCount > 9 ? '9+' : unreadCount}
+                      {totalCombinedUnread > 9 ? '9+' : totalCombinedUnread}
                     </span>
                   )}
                 </button>
 
                 {notifOpen && (
-                  <div className="absolute right-0 mt-2.5 z-40 w-80 sm:w-96 rounded-2xl border border-border/60 bg-white dark:bg-slate-900 p-4 shadow-2xl animate-in fade-in slide-in-from-top-3 duration-200">
+                  <div className="absolute right-0 mt-2.5 z-40 w-80 sm:w-96 rounded-2xl border border-border/60 bg-card text-card-foreground p-4 shadow-2xl animate-in fade-in slide-in-from-top-3 duration-200">
                     <div className="flex items-center justify-between border-b border-border/40 pb-3">
-                      <span className="text-xs font-bold">Workspace Notifications</span>
+                      <span className="text-xs font-bold">Notifications</span>
                       <div className="flex items-center gap-2.5">
-                        {unreadCount > 0 && (
+                        {notifTab === 'all' && unreadCount > 0 && (
                           <button onClick={markAllAsRead} className="text-[10px] text-primary hover:underline font-bold">
                             Mark all read
                           </button>
                         )}
-                        {notifications.length > 0 && (
+                        {notifTab === 'shifts' && shiftUnreadCount > 0 && (
+                          <button onClick={handleMarkAllShiftRead} className="text-[10px] text-primary hover:underline font-bold">
+                            Mark all read
+                          </button>
+                        )}
+                        {notifTab === 'all' && notifications.length > 0 && (
                           <button onClick={clearAllNotifications} className="text-[10px] text-muted-foreground hover:text-rose-500 dark:hover:text-rose-400 hover:underline font-bold transition-colors">
                             Clear All
                           </button>
                         )}
                       </div>
                     </div>
-                    <div className="max-h-80 overflow-y-auto divide-y divide-border/40 py-2">
-                      {notifications.length === 0 ? (
-                        <p className="text-xs text-center text-muted-foreground py-6 font-medium">No new notifications</p>
-                      ) : (
-                        notifications.map((n) => (
-                          <div
-                            key={n._id || n.id}
-                            className={`p-3 rounded-xl transition-colors ${n.isRead ? 'opacity-70' : 'bg-primary/5 font-medium'} hover:bg-muted/50 flex items-start justify-between gap-2 my-1 cursor-pointer`}
-                            onClick={() => markRead(n._id || n.id)}
-                          >
-                            <div className="flex-1">
-                              <p className="text-xs font-semibold text-foreground">{n.title}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5">{n.message}</p>
-                            </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteNotification(n._id || n.id);
-                              }}
-                              className="text-muted-foreground hover:text-danger p-1 rounded-lg transition-colors"
+
+                    {/* Tab Selector */}
+                    <div className="flex items-center gap-1.5 p-1 bg-muted/60 rounded-xl my-2.5 text-[11px] font-semibold">
+                      <button
+                        onClick={() => setNotifTab('all')}
+                        className={`flex-1 py-1 px-2.5 rounded-lg transition-all text-center flex items-center justify-center gap-1.5 ${
+                          notifTab === 'all' ? 'bg-card text-foreground shadow-sm font-bold' : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        <span>Workspace</span>
+                        {unreadCount > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-primary/20 text-primary font-extrabold">{unreadCount}</span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => setNotifTab('shifts')}
+                        className={`flex-1 py-1 px-2.5 rounded-lg transition-all text-center flex items-center justify-center gap-1.5 ${
+                          notifTab === 'shifts' ? 'bg-card text-foreground shadow-sm font-bold' : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                      >
+                        <span>Shifts & Schedule</span>
+                        {shiftUnreadCount > 0 && (
+                          <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-amber-500/20 text-amber-600 dark:text-amber-400 font-extrabold">{shiftUnreadCount}</span>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Notification Items */}
+                    <div className="max-h-80 overflow-y-auto divide-y divide-border/40 py-1">
+                      {notifTab === 'all' ? (
+                        notifications.length === 0 ? (
+                          <p className="text-xs text-center text-muted-foreground py-6 font-medium">No new notifications</p>
+                        ) : (
+                          notifications.map((n) => (
+                            <div
+                              key={n._id || n.id}
+                              className={`p-3 rounded-xl transition-colors ${n.isRead ? 'opacity-70' : 'bg-primary/5 font-medium'} hover:bg-muted/50 flex items-start justify-between gap-2 my-1 cursor-pointer`}
+                              onClick={() => markRead(n._id || n.id)}
                             >
-                              <Trash2 size={14} />
-                            </button>
+                              <div className="flex-1">
+                                <p className="text-xs font-semibold text-foreground">{n.title}</p>
+                                <p className="text-xs text-muted-foreground mt-0.5">{n.message}</p>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteNotification(n._id || n.id);
+                                }}
+                                className="text-muted-foreground hover:text-danger p-1 rounded-lg transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          ))
+                        )
+                      ) : (
+                        shiftNotifs.length === 0 ? (
+                          <div className="text-center py-6">
+                            <Clock className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
+                            <p className="text-xs text-muted-foreground font-medium">No shift updates yet</p>
                           </div>
-                        ))
+                        ) : (
+                          shiftNotifs.map((sn) => (
+                            <div
+                              key={sn.id}
+                              onClick={() => !sn.isRead && handleMarkShiftRead(sn.id)}
+                              className={`p-3 rounded-xl transition-colors cursor-pointer my-1 flex items-start gap-2.5 ${
+                                sn.isRead ? 'opacity-75' : 'bg-amber-500/10 border-l-2 border-amber-500 font-medium'
+                              } hover:bg-muted/50`}
+                            >
+                              <div className="p-1.5 rounded-lg bg-muted shrink-0 mt-0.5 text-primary">
+                                <Clock size={14} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-1">
+                                  <p className="text-xs font-bold text-foreground truncate">{sn.title}</p>
+                                  <span className="text-[9px] text-muted-foreground shrink-0">
+                                    {new Date(sn.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-0.5 break-words">{sn.message}</p>
+                                {!sn.isRead && (
+                                  <div className="mt-1 flex items-center justify-end">
+                                    <span className="text-[9px] text-primary hover:underline font-bold">Mark as read</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))
+                        )
                       )}
                     </div>
                   </div>
@@ -767,7 +914,7 @@ const DashboardLayout = ({ children }) => {
                 </button>
 
                 {profileOpen && (
-                  <div className="absolute right-0 mt-2.5 z-50 w-56 rounded-2xl border border-border/60 bg-white dark:bg-slate-900 p-2 shadow-2xl animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-150 select-none">
+                  <div className="absolute right-0 mt-2.5 z-50 w-56 rounded-2xl border border-border/60 bg-card text-card-foreground p-2 shadow-2xl animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-150 select-none">
                     <div className="px-3 py-2.5 border-b border-border/30 mb-1.5 text-left">
                       <p className="text-xs font-bold text-foreground">{user?.name}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{user?.email}</p>

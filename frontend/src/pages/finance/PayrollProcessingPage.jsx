@@ -268,15 +268,15 @@ export default function PayrollProcessingPage() {
                 }}
                 className={`p-3.5 rounded-xl border text-center transition-all cursor-pointer ${
                   status === 'completed'
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 font-bold'
+                    ? 'bg-primary/10 border-primary/30 text-primary font-bold'
                     : status === 'active'
-                    ? 'bg-primary/10 border-primary text-primary font-black shadow-sm ring-2 ring-primary/20'
+                    ? 'bg-primary text-white font-black shadow-md shadow-primary/20 border-primary ring-2 ring-primary/20'
                     : 'bg-muted/30 border-border/60 text-muted-foreground hover:bg-muted/50'
                 }`}
               >
                 <div className="flex items-center justify-center gap-1 text-[10px] font-black uppercase tracking-wider mb-1">
                   {status === 'completed' ? (
-                    <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                    <CheckCircle className="w-3.5 h-3.5 text-primary" />
                   ) : null}
                   <span>Step {step.stepNum}</span>
                 </div>
@@ -375,11 +375,11 @@ export default function PayrollProcessingPage() {
 
               {currentBatch && (
                 <span className={`px-3 py-1 rounded-full text-xs font-black uppercase ${
-                  currentBatch.status === 'PUBLISHED' ? 'bg-emerald-500/10 text-emerald-600' :
-                  currentBatch.status === 'LOCKED' ? 'bg-amber-500/10 text-amber-600' :
-                  currentBatch.status === 'REVIEW' ? 'bg-blue-500/10 text-blue-600' :
-                  currentBatch.status === 'ROLLED_BACK' ? 'bg-rose-500/10 text-rose-600' :
-                  'bg-primary/10 text-primary'
+                  currentBatch.status === 'PUBLISHED' ? 'bg-primary/10 text-primary border border-primary/20' :
+                  currentBatch.status === 'LOCKED' ? 'bg-amber-500/10 text-amber-600 border border-amber-500/20' :
+                  currentBatch.status === 'REVIEW' ? 'bg-blue-500/10 text-blue-600 border border-blue-500/20' :
+                  currentBatch.status === 'ROLLED_BACK' ? 'bg-rose-500/10 text-rose-600 border border-rose-500/20' :
+                  'bg-primary/10 text-primary border border-primary/20'
                 }`}>
                   Status: {currentBatch.status}
                 </span>
@@ -394,9 +394,9 @@ export default function PayrollProcessingPage() {
                   {validatingStructures ? '...' : structureStats.totalUsers}
                 </span>
               </div>
-              <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 text-left">
-                <span className="text-[10px] font-extrabold uppercase text-emerald-600 dark:text-emerald-400 block">Structures Assigned</span>
-                <span className="text-xl font-black text-emerald-600 dark:text-emerald-400 mt-1 block">
+              <div className="p-4 rounded-xl border border-primary/30 bg-primary/5 text-left">
+                <span className="text-[10px] font-extrabold uppercase text-primary block">Structures Assigned</span>
+                <span className="text-xl font-black text-primary mt-1 block">
                   {validatingStructures ? '...' : structureStats.assignedCount}
                 </span>
               </div>
@@ -448,7 +448,7 @@ export default function PayrollProcessingPage() {
                   <button
                     onClick={handleProcess}
                     disabled={actionLoading}
-                    className="px-5 py-2.5 bg-primary hover:bg-primary/90 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
+                    className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md shadow-primary/20 transition-all cursor-pointer flex items-center gap-2 disabled:opacity-50"
                   >
                     <Play className="w-4 h-4 fill-current" />
                     <span>{actionLoading ? 'Calculating...' : currentBatch ? 'Recalculate Batch' : 'Calculate & Draft Batch'}</span>
@@ -457,7 +457,7 @@ export default function PayrollProcessingPage() {
                   {currentBatch && ['PREVIEW', 'DRAFT', 'ROLLED_BACK'].includes(currentBatch.status) && (
                     <button
                       onClick={() => setActiveStep(3)}
-                      className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                      className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md shadow-primary/20 transition-all cursor-pointer flex items-center gap-2"
                     >
                       <span>Continue to Lock Batch</span>
                       <ChevronRight className="w-4 h-4" />
@@ -489,7 +489,7 @@ export default function PayrollProcessingPage() {
                       <th className="p-3.5">Basic</th>
                       <th className="p-3.5">HRA / Allowances</th>
                       <th className="p-3.5">Paid Leave / Unpaid Leave</th>
-                      <th className="p-3.5">Overtime / Holiday Pay</th>
+                      <th className="p-3.5">Late</th>
                       <th className="p-3.5">Deductions</th>
                       <th className="p-3.5 text-right">Net Salary</th>
                     </tr>
@@ -500,7 +500,12 @@ export default function PayrollProcessingPage() {
                       return (
                         <tr key={ps.id} className={`hover:bg-muted/30 ${!isAssigned ? 'bg-amber-500/5' : ''}`}>
                           <td className="p-3.5">
-                            <p className="font-bold text-foreground">{ps.user?.name}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="font-bold text-foreground">{ps.user?.name}</p>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-primary/10 text-primary border border-primary/20">
+                                {ps.allowancesJson?.shiftName || ps.user?.shiftAssignment?.shift?.name || 'Company Default'}
+                              </span>
+                            </div>
                             <p className="text-[11px] text-muted-foreground">{ps.user?.role} • {ps.user?.email}</p>
                             {!isAssigned && (
                               <span className="inline-block mt-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 border border-amber-500/20">
@@ -518,12 +523,15 @@ export default function PayrollProcessingPage() {
                             <div className="font-semibold">Paid: {ps.paidLeaveDays || 0}d</div>
                             <div className="text-muted-foreground">Unpaid: {ps.unpaidAbsentDays || 0}d</div>
                           </td>
-                          <td className="p-3.5 text-primary font-semibold">
+                          <td className="p-3.5 font-semibold">
                             {isAssigned ? (
-                              <>
-                                +{formatINR(ps.overtimePay + ps.holidayPay)}
-                                <span className="text-[10px] text-muted-foreground block">{ps.overtimeHours}h OT • {ps.holidayDaysWorked}d Holiday</span>
-                              </>
+                              (ps.lateDeduction > 0 && (ps.deductionsJson?.deductibleLates > 0 || ps.deductibleLates > 0)) ? (
+                                <span className="text-destructive font-bold">
+                                  {formatINR(ps.lateDeduction)} (Late {ps.deductionsJson?.deductibleLates || ps.deductibleLates})
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground">₹0</span>
+                              )
                             ) : (
                               <span className="text-muted-foreground">—</span>
                             )}
@@ -587,7 +595,7 @@ export default function PayrollProcessingPage() {
             </div>
             <div>
               <span className="text-[10px] font-bold text-muted-foreground uppercase block">Salary Structures</span>
-              <span className="text-sm font-black text-emerald-600">All Valid</span>
+              <span className="text-sm font-black text-primary">All Valid</span>
             </div>
             <div>
               <span className="text-[10px] font-bold text-muted-foreground uppercase block">Gross Payroll</span>
@@ -645,7 +653,7 @@ export default function PayrollProcessingPage() {
                   <button
                     onClick={handleMoveToReview}
                     disabled={actionLoading}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                    className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md shadow-primary/20 transition-all cursor-pointer flex items-center gap-2"
                   >
                     <span>Continue to Audit & Review</span>
                     <ChevronRight className="w-4 h-4" />
@@ -654,7 +662,7 @@ export default function PayrollProcessingPage() {
                   <button
                     onClick={() => setShowLockModal(true)}
                     disabled={actionLoading || !currentBatch}
-                    className="px-5 py-2.5 bg-primary hover:bg-primary/90 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                    className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md shadow-primary/20 transition-all cursor-pointer flex items-center gap-2"
                   >
                     <Lock className="w-4 h-4" />
                     <span>Lock Payroll Batch</span>
@@ -706,27 +714,27 @@ export default function PayrollProcessingPage() {
             </div>
 
             {/* Audit Checklist */}
-            <div className="bg-emerald-500/5 border border-emerald-500/20 p-4 rounded-xl text-left space-y-2">
-              <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider block">
+            <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl text-left space-y-2">
+              <span className="text-xs font-extrabold text-primary uppercase tracking-wider block">
                 Automated Audit Reconciliations Passed
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs font-semibold text-foreground">
-                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5 text-primary">
                   <CheckCircle className="w-4 h-4" /> Salary structures validated
                 </span>
-                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5 text-primary">
                   <CheckCircle className="w-4 h-4" /> Attendance validated
                 </span>
-                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5 text-primary">
                   <CheckCircle className="w-4 h-4" /> Leave records validated
                 </span>
-                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5 text-primary">
                   <CheckCircle className="w-4 h-4" /> Deductions validated
                 </span>
-                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5 text-primary">
                   <CheckCircle className="w-4 h-4" /> Batch totals reconciled
                 </span>
-                <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
+                <span className="flex items-center gap-1.5 text-primary">
                   <CheckCircle className="w-4 h-4" /> No duplicate payslips
                 </span>
               </div>
@@ -752,7 +760,7 @@ export default function PayrollProcessingPage() {
 
                   <button
                     onClick={() => setActiveStep(5)}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                    className="px-5 py-2.5 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md shadow-primary/20 transition-all cursor-pointer flex items-center gap-2"
                   >
                     <span>Approve & Continue to Publish</span>
                     <ChevronRight className="w-4 h-4" />
@@ -776,8 +784,8 @@ export default function PayrollProcessingPage() {
                       <th className="p-3">Employee</th>
                       <th className="p-3">Basic</th>
                       <th className="p-3">HRA / Allowances</th>
-                      <th className="p-3">Attendance</th>
-                      <th className="p-3">OT / Holiday</th>
+                       <th className="p-3">Paid / Unpaid</th>
+                      <th className="p-3">Late</th>
                       <th className="p-3">PF / ESI / TDS</th>
                       <th className="p-3 text-right">Net Salary</th>
                       <th className="p-3 text-center">Action</th>
@@ -793,7 +801,15 @@ export default function PayrollProcessingPage() {
                         <td className="p-3 font-semibold">{formatINR(ps.basicSalary)}</td>
                         <td className="p-3 text-muted-foreground">{formatINR(ps.hra + (ps.allowancesJson?.specialAllowance || 0))}</td>
                         <td className="p-3">{ps.presentDays}d Present / {ps.paidLeaveDays}d Leave</td>
-                        <td className="p-3 text-primary font-semibold">+{formatINR(ps.overtimePay + ps.holidayPay)}</td>
+                        <td className="p-3 font-semibold">
+                          {(ps.lateDeduction > 0 && (ps.deductionsJson?.deductibleLates > 0 || ps.deductibleLates > 0)) ? (
+                            <span className="text-destructive font-bold">
+                              {formatINR(ps.lateDeduction)} (Late {ps.deductionsJson?.deductibleLates || ps.deductibleLates})
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">₹0</span>
+                          )}
+                        </td>
                         <td className="p-3 text-destructive font-semibold">-{formatINR(ps.grossSalary - ps.netSalary)}</td>
                         <td className="p-3 text-right font-extrabold text-sm">{formatINR(ps.netSalary)}</td>
                         <td className="p-3 text-center">
@@ -826,7 +842,7 @@ export default function PayrollProcessingPage() {
             </div>
 
             <span className={`px-3 py-1 rounded-full text-xs font-black uppercase ${
-              currentBatch?.status === 'PUBLISHED' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-blue-500/10 text-blue-600'
+              currentBatch?.status === 'PUBLISHED' ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-blue-500/10 text-blue-600 border border-blue-500/20'
             }`}>
               {currentBatch?.status || 'REVIEW'}
             </span>
@@ -844,7 +860,7 @@ export default function PayrollProcessingPage() {
             </div>
             <div>
               <span className="text-[10px] font-bold text-muted-foreground uppercase block">Audit Status</span>
-              <span className="text-sm font-black text-emerald-600">✓ Passed</span>
+              <span className="text-sm font-black text-primary">✓ Passed</span>
             </div>
             <div>
               <span className="text-[10px] font-bold text-muted-foreground uppercase block">Net Payroll</span>
@@ -853,8 +869,8 @@ export default function PayrollProcessingPage() {
           </div>
 
           {currentBatch?.status === 'PUBLISHED' ? (
-            <div className="p-6 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 space-y-3">
-              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-black text-base">
+            <div className="p-6 rounded-2xl bg-primary/10 border border-primary/20 space-y-3">
+              <div className="flex items-center gap-2 text-primary font-black text-base">
                 <CheckCircle className="w-6 h-6" />
                 <span>✓ Payroll Published Successfully</span>
               </div>
@@ -867,7 +883,7 @@ export default function PayrollProcessingPage() {
                 </span>
                 <button
                   onClick={() => navigate('/payroll/reports')}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+                  className="px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-xl font-bold text-xs transition-all shadow-md shadow-primary/20 cursor-pointer flex items-center gap-1.5"
                 >
                   <FileText className="w-4 h-4" /> View Payslips
                 </button>
@@ -892,7 +908,7 @@ export default function PayrollProcessingPage() {
                   <button
                     onClick={() => setShowPublishModal(true)}
                     disabled={actionLoading || !currentBatch}
-                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-lg transition-all cursor-pointer flex items-center gap-2"
+                    className="px-6 py-3 bg-primary hover:bg-primary-hover text-white font-black text-xs rounded-xl shadow-lg shadow-primary/20 transition-all cursor-pointer flex items-center gap-2"
                   >
                     <CheckCircle2 className="w-4 h-4" />
                     <span>Publish Payslips</span>
@@ -935,7 +951,7 @@ export default function PayrollProcessingPage() {
               <button
                 onClick={confirmLockBatch}
                 disabled={actionLoading}
-                className="px-5 py-2 bg-primary hover:bg-primary/90 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                className="px-5 py-2 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md shadow-primary/20 cursor-pointer flex items-center gap-1.5"
               >
                 {actionLoading ? 'Locking...' : 'Lock Batch'}
               </button>
@@ -949,7 +965,7 @@ export default function PayrollProcessingPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
           <div className="bg-card border border-border/80 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl text-left">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
                 <CheckCircle2 className="w-5 h-5" />
               </div>
               <div>
@@ -973,7 +989,7 @@ export default function PayrollProcessingPage() {
               <button
                 onClick={confirmPublishPayslips}
                 disabled={actionLoading}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                className="px-5 py-2 bg-primary hover:bg-primary-hover text-white font-bold text-xs rounded-xl shadow-md shadow-primary/20 cursor-pointer flex items-center gap-1.5"
               >
                 {actionLoading ? 'Publishing...' : 'Publish Payslips'}
               </button>
@@ -1070,7 +1086,7 @@ export default function PayrollProcessingPage() {
                   <p>ESI Deduction: <strong className="text-destructive">-{formatINR(auditEmployeePayslip.deductionsJson?.esiDeduction)}</strong></p>
                   <p>Prof Tax: <strong className="text-destructive">-{formatINR(auditEmployeePayslip.deductionsJson?.profTax)}</strong></p>
                   <p>Income Tax: <strong className="text-destructive">-{formatINR(auditEmployeePayslip.deductionsJson?.incomeTax)}</strong></p>
-                  <p>Late Penalty: <strong className="text-destructive">-{formatINR(auditEmployeePayslip.lateDeduction)}</strong></p>
+                  <p>Late Deduction{auditEmployeePayslip.deductionsJson?.deductibleLates > 0 ? ` (Late ${auditEmployeePayslip.deductionsJson.deductibleLates})` : ''}: <strong className="text-destructive">-{formatINR(auditEmployeePayslip.lateDeduction)}</strong></p>
                   <p>Leave LOP Deduction: <strong className="text-destructive">-{formatINR(auditEmployeePayslip.deductionsJson?.leaveDeduction)}</strong></p>
                 </div>
               </div>

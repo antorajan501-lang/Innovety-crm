@@ -39,6 +39,19 @@ const payrollReportRoutes = require('./routes/payrollReportRoutes');
 const app = express();
 const server = http.createServer(app);
 
+// Phase 10: Security Middleware Suite & Error Tracking
+const {
+  securityHeaders,
+  globalRateLimiter,
+  verifyTokenNotRevoked,
+  payloadSanitizer
+} = require('./middleware/securityMiddleware');
+const { trackError } = require('./services/errorTrackingService');
+const systemRoutes = require('./routes/systemRoutes');
+
+// Apply Helmet-style security headers
+app.use(securityHeaders);
+
 // Process-wide Uncaught Exception & Rejection Handlers
 process.on('uncaughtException', (err) => {
   console.error('[CRITICAL UNCAUGHT EXCEPTION]', err);
@@ -83,6 +96,11 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Phase 10: Global Sliding-Window Rate Limiting, Sanitization & Token Revocation
+app.use(globalRateLimiter);
+app.use(payloadSanitizer);
+app.use(verifyTokenNotRevoked);
 
 // Production Diagnostic Request Logging Middleware (Phase 8)
 app.use((req, res, next) => {
@@ -179,7 +197,9 @@ app.get('/api/platform/settings', async (req, res) => {
 
     const platformObj = {
       chatEnabledForAdmins: platform?.chatEnabledForAdmins ?? true,
-      chatEnabledForUsers: platform?.chatEnabledForUsers ?? true
+      chatEnabledForUsers: platform?.chatEnabledForUsers ?? true,
+      adminChatEnabled: platform?.chatEnabledForAdmins ?? true,
+      userChatEnabled: platform?.chatEnabledForUsers ?? true
     };
 
     if (organizationId) {
@@ -187,21 +207,38 @@ app.get('/api/platform/settings', async (req, res) => {
         where: { organizationId }
       }).catch(() => null);
 
+      let fileBranding = {};
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const brandingPath = path.join(__dirname, 'data/company_branding.json');
+        if (fs.existsSync(brandingPath)) {
+          const allBranding = JSON.parse(fs.readFileSync(brandingPath, 'utf8') || '{}');
+          fileBranding = allBranding[organizationId] || {};
+        }
+      } catch (e) {
+        // ignore
+      }
+
       const themeObj = orgSettings?.theme || orgSettings?.branding || {};
       const orgObj = {
         organizationId,
-        chatEnabledForAdmins: orgSettings?.chatEnabledForAdmins ?? true,
-        chatEnabledForUsers: orgSettings?.chatEnabledForUsers ?? true
+        chatEnabledForAdmins: fileBranding.chatEnabledForAdmins ?? (orgSettings?.chatEnabledForAdmins ?? true),
+        chatEnabledForUsers: fileBranding.chatEnabledForUsers ?? (orgSettings?.chatEnabledForUsers ?? true),
+        adminChatEnabled: fileBranding.chatEnabledForAdmins ?? (orgSettings?.chatEnabledForAdmins ?? true),
+        userChatEnabled: fileBranding.chatEnabledForUsers ?? (orgSettings?.chatEnabledForUsers ?? true)
       };
 
       return res.json({
         organizationId,
-        companyName: orgSettings?.branding?.companyName || platform?.companyName || 'Innoviety Enterprise',
-        selectedTheme: themeObj.selectedTheme || platform?.selectedTheme || 'emerald',
-        themeMode: themeObj.themeMode || platform?.themeMode || 'light',
-        companyLogo: orgSettings?.branding?.companyLogo || platform?.companyLogo || null,
+        companyName: fileBranding.companyName || orgSettings?.branding?.companyName || platform?.companyName || 'Innoviety Enterprise',
+        selectedTheme: fileBranding.selectedTheme || themeObj.selectedTheme || platform?.selectedTheme || 'emerald',
+        themeMode: fileBranding.themeMode || themeObj.themeMode || platform?.themeMode || 'light',
+        companyLogo: fileBranding.companyLogo !== undefined ? fileBranding.companyLogo : (orgSettings?.branding?.companyLogo || platform?.companyLogo || null),
         chatEnabledForAdmins: orgObj.chatEnabledForAdmins,
         chatEnabledForUsers: orgObj.chatEnabledForUsers,
+        adminChatEnabled: orgObj.adminChatEnabled,
+        userChatEnabled: orgObj.userChatEnabled,
         platform: platformObj,
         organization: orgObj
       });
@@ -211,6 +248,8 @@ app.get('/api/platform/settings', async (req, res) => {
       ...platform,
       chatEnabledForAdmins: platformObj.chatEnabledForAdmins,
       chatEnabledForUsers: platformObj.chatEnabledForUsers,
+      adminChatEnabled: platformObj.adminChatEnabled,
+      userChatEnabled: platformObj.userChatEnabled,
       platform: platformObj,
       organization: null
     });
@@ -222,6 +261,8 @@ app.get('/api/platform/settings', async (req, res) => {
       companyLogo: null,
       chatEnabledForAdmins: true,
       chatEnabledForUsers: true,
+      adminChatEnabled: true,
+      userChatEnabled: true,
       platform: { chatEnabledForAdmins: true, chatEnabledForUsers: true },
       organization: null
     });
@@ -263,8 +304,10 @@ app.use('/api/logs', logRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
 const leavePolicyRoutes = require('./routes/leavePolicyRoutes');
+const latePolicyRoutes = require('./routes/latePolicyRoutes');
 
 app.use('/api/leave-policy', leavePolicyRoutes);
+app.use('/api/late-policy', latePolicyRoutes);
 app.use('/api/leaves', leaveRoutes);
 app.use('/api/assets', assetRoutes);
 app.use('/api/chat', chatRoutes);
@@ -276,6 +319,16 @@ app.use('/api/daily-work-log', workLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 const workCalendarRoutes = require('./routes/workCalendarRoutes');
 app.use('/api/work-calendar', workCalendarRoutes);
+const shiftRoutes = require('./routes/shiftRoutes');
+app.use('/api/shifts', shiftRoutes);
+const scheduleRoutes = require('./routes/scheduleRoutes');
+app.use('/api/schedules', scheduleRoutes);
+const workforceAutomationRoutes = require('./routes/workforceAutomationRoutes');
+app.use('/api/workforce', workforceAutomationRoutes);
+const workforceIntelligenceRoutes = require('./routes/workforceIntelligenceRoutes');
+app.use('/api/intelligence', workforceIntelligenceRoutes);
+const enterpriseRoutes = require('./routes/enterpriseRoutes');
+app.use('/api/enterprise', enterpriseRoutes);
 
 
 
@@ -293,10 +346,24 @@ app.get(['/health', '/api/health'], (req, res) => {
   res.json({ status: 'healthy' });
 });
 
-// Central Error Handler
+// Phase 10: Production System, Security, Monitoring & Certification Routes
+app.use('/api/system', systemRoutes);
+
+// Central Error Handler with Phase 10 Error Tracking
 app.use((err, req, res, next) => {
   console.error('Express global error handler caught:', err);
   const status = err.statusCode || 500;
+  trackError({
+    message: err.message,
+    stack: err.stack,
+    statusCode: status,
+    path: req.originalUrl,
+    method: req.method,
+    userId: req.user?.id,
+    organizationId: req.user?.organizationId,
+    ip: req.ip,
+    userAgent: req.headers['user-agent']
+  });
   res.status(status).json({
     message: err.message || 'An unexpected error occurred on the server.',
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined

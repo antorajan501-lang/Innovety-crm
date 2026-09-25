@@ -61,11 +61,13 @@ const getTodayZonedDate = (now = new Date(), timeZone = 'Asia/Kolkata') => {
   return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 };
 
-const getShiftWindowDates = (role, settings, now = new Date()) => {
+const getShiftWindowDates = (role, settings, now = new Date(), userShift = null) => {
   const timeZone = getSystemTimeZone(settings);
-  const shiftStartStr = (role === 'TEAM_LEADER' || role === 'ADMIN')
-    ? (settings?.tlShiftStart || '09:30')
-    : (settings?.internShiftStart || '09:30');
+  const shiftStartStr = userShift?.startTime || (
+    (role === 'TEAM_LEADER' || role === 'ADMIN')
+      ? (settings?.tlShiftStart || '09:30')
+      : (settings?.internShiftStart || '09:30')
+  );
 
   const earlyWindowMins = settings?.earlyWindowMinutes !== undefined ? settings.earlyWindowMinutes : 30;
   const gracePeriodMins = settings?.gracePeriodMinutes !== undefined ? settings.gracePeriodMinutes : 15;
@@ -92,8 +94,8 @@ const getShiftWindowDates = (role, settings, now = new Date()) => {
   };
 };
 
-const validateAttendanceWindow = ({ userRole, settings, attendanceRecord, approvedLeave, now = new Date() }) => {
-  const windowInfo = getShiftWindowDates(userRole, settings, now);
+const validateAttendanceWindow = ({ userRole, settings, attendanceRecord, approvedLeave, now = new Date(), userShift = null }) => {
+  const windowInfo = getShiftWindowDates(userRole, settings, now, userShift);
 
   let state = 'BEFORE_WINDOW';
   let canClockIn = false;
@@ -115,12 +117,40 @@ const validateAttendanceWindow = ({ userRole, settings, attendanceRecord, approv
       canClockOut = true;
       reason = 'ALREADY_CLOCKED_IN';
     }
+  } else if (userShift?.todayStatus === 'Holiday') {
+    state = 'HOLIDAY';
+    canClockIn = false;
+    canClockOut = false;
+    reason = userShift?.isSaturdayLeave ? 'SATURDAY_LEAVE' : 'HOLIDAY';
+    attendanceStatus = 'HOLIDAY';
   } else if (approvedLeave && approvedLeave.type === 'WFH') {
     state = 'APPROVED_WFH';
     canClockIn = true;
     canClockOut = false;
     attendanceStatus = 'WORK_FROM_HOME';
     reason = null;
+  } else if (userShift?.todayStatus === 'WFH') {
+    if (now < windowInfo.windowOpen) {
+      state = 'BEFORE_WINDOW';
+      canClockIn = false;
+      canClockOut = false;
+      reason = 'SHIFT_NOT_STARTED';
+      attendanceStatus = 'WORK_FROM_HOME';
+    } else if (now >= windowInfo.windowOpen && now <= windowInfo.windowClose) {
+      state = 'OPEN_ON_TIME';
+      canClockIn = true;
+      canClockOut = false;
+      attendanceStatus = 'WORK_FROM_HOME';
+      reason = null;
+    } else {
+      state = 'OPEN_LATE';
+      canClockIn = true;
+      canClockOut = false;
+      attendanceStatus = 'WORK_FROM_HOME';
+      reason = null;
+      const diffMs = now.getTime() - windowInfo.windowClose.getTime();
+      lateMinutes = Math.floor(diffMs / (1000 * 60));
+    }
   } else if (now < windowInfo.windowOpen) {
     state = 'BEFORE_WINDOW';
     canClockIn = false;

@@ -15,6 +15,8 @@ import OrganizationUsageCard from '../../../components/organization/Organization
 import TenantAuditTimeline from '../../../components/organization/TenantAuditTimeline';
 import UserAvatar from '../../../components/common/UserAvatar';
 import CompanyScopeSelector from '../../../components/common/CompanyScopeSelector';
+import ShiftManager from '../../../components/organization/ShiftManager';
+import BranchManager from '../../../components/enterprise/BranchManager';
 
 import { useCompanyScope } from '../../../context/CompanyScopeContext';
 import { formatWorkingHoursRange } from '../../../utils/attendanceFormatter';
@@ -92,6 +94,9 @@ const OrganizationManager = () => {
   const [deptLoading, setDeptLoading] = useState(false);
   const [deptSearch, setDeptSearch] = useState('');
   const [deptStatusFilter, setDeptStatusFilter] = useState('ALL');
+
+  // Shifts Master State
+  const [shiftsCount, setShiftsCount] = useState(0);
   const [deptModalOpen, setDeptModalOpen] = useState(false);
   const [editingDept, setEditingDept] = useState(null);
   const [deptForm, setDeptForm] = useState({
@@ -228,6 +233,7 @@ const OrganizationManager = () => {
           setSelectedOrgId(defaultOrgId);
           fetchPositions(defaultOrgId);
           fetchDepartments(defaultOrgId);
+          fetchShiftsCount(defaultOrgId);
         }
       } else if (companiesRes?.error) {
         console.error('Error fetching companies:', companiesRes.error);
@@ -284,12 +290,26 @@ const OrganizationManager = () => {
     }
   };
 
+  const fetchShiftsCount = async (targetOrgId) => {
+    const orgId = targetOrgId !== undefined ? targetOrgId : selectedOrgId;
+    if (!orgId) return;
+    try {
+      const res = await api.get('/shifts', { params: { organizationId: orgId } });
+      if (res.data?.success && Array.isArray(res.data.shifts)) {
+        setShiftsCount(res.data.shifts.length);
+      }
+    } catch (err) {
+      console.error('Failed to fetch shifts count:', err);
+    }
+  };
+
   useEffect(() => {
     fetchCompanies();
     if (selectedOrgId) {
       setPositions([]);
       fetchPositions(selectedOrgId);
       fetchDepartments(selectedOrgId);
+      fetchShiftsCount(selectedOrgId);
     }
   }, [search, statusFilter, selectedOrgId]);
 
@@ -1048,7 +1068,7 @@ const OrganizationManager = () => {
       <div className="rounded-3xl border border-border/60 bg-card p-6 sm:p-8 shadow-md">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3.5 py-1 text-xs font-extrabold text-emerald-600 border border-emerald-500/20 mb-3">
+            <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3.5 py-1 text-xs font-extrabold text-primary border border-primary/20 mb-3">
               <ShieldCheck className="h-3.5 w-3.5" />
               <span>Multi-Tenant Control • Enterprise HRMS Master Hub</span>
             </div>
@@ -1076,7 +1096,7 @@ const OrganizationManager = () => {
                 {user?.role === 'SUPER_ADMIN' && (
                   <button
                     onClick={openCreateModal}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 text-xs font-extrabold shadow-md shadow-emerald-600/20 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-primary hover:bg-primary-hover text-white px-5 py-2.5 text-xs font-extrabold shadow-md shadow-primary/20 hover:scale-105 active:scale-95 transition-all cursor-pointer"
                   >
                     <Plus className="h-4 w-4 stroke-[3]" />
                     <span>Create Company</span>
@@ -1098,7 +1118,7 @@ const OrganizationManager = () => {
                 {user?.role === 'SUPER_ADMIN' && (
                   <button
                     onClick={() => handleOpenPosModal(null)}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 text-xs font-extrabold shadow-md shadow-emerald-600/20 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-primary hover:bg-primary-hover text-white px-5 py-2.5 text-xs font-extrabold shadow-md shadow-primary/20 hover:scale-105 active:scale-95 transition-all cursor-pointer"
                   >
                     <Plus className="h-4 w-4 stroke-[3]" />
                     <span>Create Position</span>
@@ -1120,7 +1140,7 @@ const OrganizationManager = () => {
                 {user?.role === 'SUPER_ADMIN' && (
                   <button
                     onClick={handleOpenCreateDeptModal}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 text-xs font-extrabold shadow-md shadow-emerald-600/20 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-primary hover:bg-primary-hover text-white px-5 py-2.5 text-xs font-extrabold shadow-md shadow-primary/20 hover:scale-105 active:scale-95 transition-all cursor-pointer"
                   >
                     <Plus className="h-4 w-4 stroke-[3]" />
                     <span>Create Department</span>
@@ -1137,7 +1157,7 @@ const OrganizationManager = () => {
             onClick={() => setActiveTab('companies')}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
               activeTab === 'companies'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                ? 'bg-primary text-white shadow-md shadow-primary/20'
                 : 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -1154,7 +1174,7 @@ const OrganizationManager = () => {
             onClick={() => setActiveTab('positions')}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
               activeTab === 'positions'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                ? 'bg-primary text-white shadow-md shadow-primary/20'
                 : 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -1171,7 +1191,7 @@ const OrganizationManager = () => {
             onClick={() => setActiveTab('departments')}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
               activeTab === 'departments'
-                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                ? 'bg-primary text-white shadow-md shadow-primary/20'
                 : 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -1183,11 +1203,43 @@ const OrganizationManager = () => {
               {departments.length}
             </span>
           </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('shifts');
+              fetchShiftsCount(selectedOrgId);
+            }}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
+              activeTab === 'shifts'
+                ? 'bg-primary text-white shadow-md shadow-primary/20'
+                : 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Clock className="h-4 w-4" />
+            <span>Shifts</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+              activeTab === 'shifts' ? 'bg-white/20 text-white' : 'bg-muted text-foreground'
+            }`}>
+              {shiftsCount}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('branches')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-extrabold transition-all cursor-pointer ${
+              activeTab === 'branches'
+                ? 'bg-primary text-white shadow-md shadow-primary/20'
+                : 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            <Building2 className="h-4 w-4" />
+            <span>Branches</span>
+          </button>
         </div>
       </div>
 
-      {/* Shared Company Selector Bar for Positions & Departments Tabs */}
-      {(activeTab === 'positions' || activeTab === 'departments') && (
+      {/* Shared Company Selector Bar for Positions, Departments & Branches Tabs */}
+      {(activeTab === 'positions' || activeTab === 'departments' || activeTab === 'branches') && (
         <CompanyScopeSelector onScopeChange={(newId) => {
           fetchPositions(newId);
           fetchDepartments(newId);
@@ -1220,7 +1272,7 @@ const OrganizationManager = () => {
                 placeholder="Search companies by name, code, or email..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 text-xs font-medium rounded-2xl border border-border/60 bg-muted/30 focus:bg-background focus:ring-2 focus:ring-emerald-500/20 outline-none"
+                className="w-full pl-10 pr-4 py-2 text-xs font-medium rounded-2xl border border-border/60 bg-muted/30 focus:bg-background focus:ring-2 focus:ring-primary/20 outline-none"
               />
             </div>
 
@@ -1479,7 +1531,7 @@ const OrganizationManager = () => {
               </button>
               <button
                 onClick={() => handleOpenPosModal(null)}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-extrabold rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-md transition-all cursor-pointer shrink-0"
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-extrabold rounded-2xl bg-primary hover:bg-primary-hover text-white shadow-md shadow-primary/20 transition-all cursor-pointer shrink-0"
               >
                 <Plus className="h-4 w-4" />
                 <span>Create Position</span>
@@ -1491,7 +1543,7 @@ const OrganizationManager = () => {
           <div className="rounded-3xl border border-border/60 bg-card overflow-hidden shadow-md">
             {posLoading ? (
               <div className="flex h-64 items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-500 border-t-transparent" />
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
               </div>
             ) : positions.length === 0 ? (
               <div className="p-12 text-center space-y-3">
@@ -1505,7 +1557,7 @@ const OrganizationManager = () => {
                 <div className="pt-2">
                   <button
                     onClick={() => handleOpenPosModal(null)}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-xs font-extrabold shadow-md transition-all cursor-pointer"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-primary hover:bg-primary-hover text-white px-4 py-2 text-xs font-extrabold shadow-md shadow-primary/20 transition-all cursor-pointer"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Create Position</span>
@@ -1683,7 +1735,7 @@ const OrganizationManager = () => {
 
               <button
                 onClick={handleOpenCreateDeptModal}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-extrabold rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-md transition-all cursor-pointer shrink-0"
+                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-extrabold rounded-2xl bg-primary hover:bg-primary-hover text-white shadow-md shadow-primary/20 transition-all cursor-pointer shrink-0"
               >
                 <Plus className="h-4 w-4" />
                 <span>Create Department</span>
@@ -1695,7 +1747,7 @@ const OrganizationManager = () => {
           <div className="rounded-3xl border border-border/60 bg-card overflow-hidden shadow-md">
             {deptLoading ? (
               <div className="flex h-64 items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-500 border-t-transparent" />
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
               </div>
             ) : departments.length === 0 ? (
               <div className="p-12 text-center space-y-3">
@@ -1709,7 +1761,7 @@ const OrganizationManager = () => {
                 <div className="pt-2">
                   <button
                     onClick={handleOpenCreateDeptModal}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-xs font-extrabold shadow-md transition-all cursor-pointer"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-primary hover:bg-primary-hover text-white px-4 py-2 text-xs font-extrabold shadow-md shadow-primary/20 transition-all cursor-pointer"
                   >
                     <Plus className="h-4 w-4" />
                     <span>Create Department</span>
@@ -1744,7 +1796,7 @@ const OrganizationManager = () => {
                         <tr key={dept.id} className="hover:bg-muted/20 transition-colors">
                           <td className="px-6 py-4 font-bold text-foreground">
                             <div className="flex items-center gap-3">
-                              <div className="h-8 w-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold">
+                              <div className="h-8 w-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold">
                                 <Briefcase className="h-4 w-4" />
                               </div>
                               <span>{dept.displayName || dept.name}</span>
@@ -1776,7 +1828,7 @@ const OrganizationManager = () => {
                             <div className="flex items-center justify-end gap-1.5">
                               <button
                                 onClick={() => openManageDeptModal(dept)}
-                                className="px-3.5 py-1.5 rounded-xl bg-emerald-600 text-white font-bold text-xs hover:bg-emerald-700 transition-colors cursor-pointer"
+                                className="px-3.5 py-1.5 rounded-xl bg-primary text-white font-bold text-xs hover:bg-primary-hover shadow-xs shadow-primary/20 transition-colors cursor-pointer"
                               >
                                 Manage Members
                               </button>
@@ -1790,6 +1842,16 @@ const OrganizationManager = () => {
             )}
           </div>
         </div>
+      )}
+
+      {/* TAB 4: SHIFTS VIEW */}
+      {activeTab === 'shifts' && (
+        <ShiftManager onShiftsCountChange={setShiftsCount} />
+      )}
+
+      {/* TAB 5: ENTERPRISE BRANCHES VIEW */}
+      {activeTab === 'branches' && (
+        <BranchManager />
       )}
 
       {/* CREATE COMPANY MODAL */}
@@ -1966,7 +2028,7 @@ const OrganizationManager = () => {
                       <button
                         type="button"
                         onClick={handleOpenAddAdminModal}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer"
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold transition-all shadow-xs shrink-0 cursor-pointer"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         <span>Add Administrator</span>
@@ -2015,7 +2077,7 @@ const OrganizationManager = () => {
                       </span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-xl bg-emerald-600 text-white font-black flex items-center justify-center overflow-hidden shrink-0">
+                      <div className="h-10 w-10 rounded-xl bg-primary text-white font-black flex items-center justify-center overflow-hidden shrink-0">
                         {logoPreview ? (
                           <img src={logoPreview} alt="Logo" className="h-full w-full object-cover" />
                         ) : (
@@ -2048,7 +2110,7 @@ const OrganizationManager = () => {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-md cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 transition-all"
+                    className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-extrabold shadow-md shadow-primary/20 cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2 transition-all"
                   >
                     {submitting && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
                     <span>{submitting ? 'Creating Company...' : 'Create Company'}</span>
@@ -2172,7 +2234,7 @@ const OrganizationManager = () => {
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 rounded-xl bg-emerald-600 text-xs font-bold text-white hover:bg-emerald-700 transition-all cursor-pointer"
+                    className="px-5 py-2 rounded-xl bg-primary text-xs font-bold text-white hover:bg-primary-hover shadow-xs shadow-primary/20 transition-all cursor-pointer"
                   >
                     Add Administrator
                   </button>
@@ -2624,7 +2686,7 @@ const OrganizationManager = () => {
                             onClick={() => handleChangeSubscriptionPlan(selectedCompany.id, p.code)}
                             className={`flex-1 py-1.5 rounded-xl text-[11px] font-extrabold border transition-all cursor-pointer ${
                               active
-                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                ? 'bg-primary text-white border-primary shadow-sm'
                                 : 'bg-background hover:bg-muted text-foreground border-border'
                             }`}
                           >
@@ -2640,7 +2702,7 @@ const OrganizationManager = () => {
                     <button
                       onClick={() => setDrawerTab('overview')}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        drawerTab === 'overview' ? 'bg-emerald-600 text-white' : 'text-muted-foreground hover:bg-muted'
+                        drawerTab === 'overview' ? 'bg-primary text-white' : 'text-muted-foreground hover:bg-muted'
                       }`}
                     >
                       Usage Metrics
@@ -2648,7 +2710,7 @@ const OrganizationManager = () => {
                     <button
                       onClick={() => setDrawerTab('audit')}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        drawerTab === 'audit' ? 'bg-emerald-600 text-white' : 'text-muted-foreground hover:bg-muted'
+                        drawerTab === 'audit' ? 'bg-primary text-white' : 'text-muted-foreground hover:bg-muted'
                       }`}
                     >
                       Audit Timeline
@@ -2967,7 +3029,7 @@ const OrganizationManager = () => {
                           type="button"
                           onClick={() => setSettingsData(prev => ({ ...prev, autoClockOutEnabled: !prev.autoClockOutEnabled }))}
                           className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                            settingsData.autoClockOutEnabled ? 'bg-emerald-600' : 'bg-muted-foreground/30'
+                            settingsData.autoClockOutEnabled ? 'bg-primary' : 'bg-muted-foreground/30'
                           }`}
                         >
                           <span
@@ -3001,7 +3063,7 @@ const OrganizationManager = () => {
                     <button
                       type="submit"
                       disabled={submitting}
-                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer shadow-lg shadow-emerald-600/20 disabled:opacity-50"
+                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded-2xl bg-primary hover:bg-primary-hover text-white text-xs font-bold transition-all cursor-pointer shadow-lg shadow-primary/20 disabled:opacity-50"
                     >
                       {submitting ? (
                         <>
@@ -3133,7 +3195,7 @@ const OrganizationManager = () => {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50 flex items-center gap-1.5"
+                    className="px-5 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold shadow-md shadow-primary/20 cursor-pointer transition-all disabled:opacity-50 flex items-center gap-1.5"
                   >
                     {submitting && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
                     <span>{editingPos ? 'Update Position' : 'Create Position'}</span>
@@ -3241,7 +3303,7 @@ const OrganizationManager = () => {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50 flex items-center gap-1.5"
+                    className="px-5 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold shadow-md shadow-primary/20 cursor-pointer transition-all disabled:opacity-50 flex items-center gap-1.5"
                   >
                     {submitting && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
                     <span>{editingDept ? 'Update Department' : 'Create Department'}</span>
@@ -3436,7 +3498,7 @@ const OrganizationManager = () => {
                     type="button"
                     disabled={saveDeptLoading}
                     onClick={handleSaveAllDeptChanges}
-                    className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold shadow-md shadow-primary/20 cursor-pointer transition-all disabled:opacity-50"
                   >
                     <Save className="h-4 w-4" />
                     <span>{saveDeptLoading ? 'Saving...' : 'Save Changes'}</span>

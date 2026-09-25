@@ -3,9 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
+import { useTheme } from '../../context/ThemeContext';
 import api, { getSocket } from '../../services/api';
 import UserAvatar from '../common/UserAvatar';
-import TeamLeaderLeaveWidget from './TeamLeaderLeaveWidget';
 import LeaveOverviewCard from './LeaveOverviewCard';
 import ClockInModal from '../attendance/ClockInModal';
 import ApplyLeaveModal from '../leave/ApplyLeaveModal';
@@ -15,6 +15,8 @@ import ClockOutReminderModal from '../worklog/ClockOutReminderModal';
 import useClockOutWithReminder from '../../hooks/useClockOutWithReminder';
 import ClockInToast from '../common/ClockInToast';
 import TeamRosterStatus from './TeamRosterStatus';
+import TeamLeaderShiftWidget from './TeamLeaderShiftWidget';
+import TeamLeaderPerformanceView from '../intelligence/TeamLeaderPerformanceView';
 import TimeRollSuccessBanner from '../common/TimeRollSuccessBanner';
 import {
   Clock,
@@ -112,6 +114,7 @@ const getRollingWeekDays = () => {
 export const TeamLeaderDashboard = () => {
   const { user } = useAuth();
   const { onlineUsers, notifications } = useSocket();
+  const { userChatEnabled } = useTheme();
   const navigate = useNavigate();
 
   // Time & Live Clock State
@@ -210,15 +213,12 @@ export const TeamLeaderDashboard = () => {
   });
   const [leaveSuccess, setLeaveSuccess] = useState(null);
   const [leaveBalances, setLeaveBalances] = useState({
-    casualRemaining: 12,
-    sickRemaining: 12,
-    emergencyRemaining: 6,
-    approvedCasual: 0,
-    approvedSick: 0,
-    approvedEmergency: 0,
+    allocationMode: 'ANNUAL',
+    leaveTypes: [],
     pendingRequests: 0,
     approvedRequests: 0
   });
+
 
   // Chart View Toggle (1W vs 1M) & Dynamic Theme Primary Color
   const [chartView, setChartView] = useState('1W');
@@ -257,9 +257,9 @@ export const TeamLeaderDashboard = () => {
   const lastFetchTimestampRef = useRef(0);
   const debounceFetchTimerRef = useRef(null);
 
-  const safeRefreshTLDashboard = useCallback(() => {
+  const safeRefreshTLDashboard = useCallback((force = false) => {
     const now = Date.now();
-    if (now - lastFetchTimestampRef.current < 2000) {
+    if (!force && now - lastFetchTimestampRef.current < 1500) {
       return;
     }
     if (debounceFetchTimerRef.current) {
@@ -269,12 +269,18 @@ export const TeamLeaderDashboard = () => {
       lastFetchTimestampRef.current = Date.now();
       console.log('[AutoClockOut] Executing single TL attendance state refresh');
       fetchTLDashboardData();
-    }, 150);
+    }, 100);
   }, []);
 
   useEffect(() => {
     fetchTLDashboardData();
 
+    const handleShiftEvent = (payload) => {
+      console.log('[Socket/Window] Shift update received on Team Leader Dashboard:', payload);
+      safeRefreshTLDashboard(true);
+    };
+
+    window.addEventListener('shift_updated', handleShiftEvent);
     const socket = getSocket();
     if (socket) {
       const handleAttendanceEvent = (payload) => {
@@ -286,17 +292,28 @@ export const TeamLeaderDashboard = () => {
       socket.off('attendance_clock_out', handleAttendanceEvent);
       socket.off('attendance_updated', handleAttendanceEvent);
       socket.off('settings_updated', handleAttendanceEvent);
+      socket.off('shift_updated', handleShiftEvent);
+      socket.off('schedule_updated', handleShiftEvent);
 
       socket.on('attendance_clock_in', handleAttendanceEvent);
       socket.on('attendance_clock_out', handleAttendanceEvent);
       socket.on('attendance_updated', handleAttendanceEvent);
       socket.on('settings_updated', handleAttendanceEvent);
+      socket.on('shift_updated', handleShiftEvent);
+      socket.on('schedule_updated', handleShiftEvent);
 
       return () => {
+        window.removeEventListener('shift_updated', handleShiftEvent);
         socket.off('attendance_clock_in', handleAttendanceEvent);
         socket.off('attendance_clock_out', handleAttendanceEvent);
         socket.off('attendance_updated', handleAttendanceEvent);
         socket.off('settings_updated', handleAttendanceEvent);
+        socket.off('shift_updated', handleShiftEvent);
+        socket.off('schedule_updated', handleShiftEvent);
+      };
+    } else {
+      return () => {
+        window.removeEventListener('shift_updated', handleShiftEvent);
       };
     }
   }, [user, safeRefreshTLDashboard]);
@@ -305,8 +322,11 @@ export const TeamLeaderDashboard = () => {
     try {
       const res = await api.get('/leaves/balances');
       if (res.data) {
+        const formattedTypes = Array.isArray(res.data.leaveTypes) ? res.data.leaveTypes : [];
+        
         setLeaveBalances({
-          ...res.data,
+          allocationMode: res.data.allocationMode || 'ANNUAL',
+          leaveTypes: formattedTypes,
           pendingRequests: res.data.pendingRequests ?? res.data.pendingRequestsCount ?? 0,
           approvedRequests: res.data.approvedRequests ?? res.data.approvedRequestsCount ?? 0
         });
@@ -331,14 +351,17 @@ export const TeamLeaderDashboard = () => {
       }
     };
     socket.on('organization_leave_policy_updated', handlePolicyUpdate);
+    socket.on('leave_balance_updated', handlePolicyUpdate);
     return () => {
       socket.off('organization_leave_policy_updated', handlePolicyUpdate);
+      socket.off('leave_balance_updated', handlePolicyUpdate);
     };
   }, [user?.organizationId]);
 
   const fetchTLDashboardData = async () => {
     try {
       setLoading(true);
+      fetchLeaveBalances();
 
       const [
         tasksRes,
@@ -824,9 +847,16 @@ export const TeamLeaderDashboard = () => {
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: -4 }}
                     transition={{ duration: 0.25, ease: 'easeInOut' }}
-                    className="w-full flex items-center justify-center text-center p-1.5 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/15 border border-emerald-500/25 text-emerald-700 dark:text-emerald-300 shadow-sm"
+                    className="w-full flex items-center justify-center text-center p-1.5 rounded-xl bg-primary/10 border border-primary/20 text-primary shadow-sm"
                   >
-                    <span className="inline-flex items-center justify-center px-3 py-1 rounded-full text-[10px] font-mono font-extrabold bg-emerald-500/20 text-emerald-800 dark:text-emerald-200 border border-emerald-500/30">
+                    <span
+                      className="inline-flex items-center justify-center px-3 py-1 rounded-full text-[10px] font-mono font-extrabold border"
+                      style={{
+                        backgroundColor: 'var(--brand-primary-light)',
+                        borderColor: 'var(--brand-primary)',
+                        color: 'var(--brand-primary)'
+                      }}
+                    >
                       Worked Today: {getWorkedDurationText(clockedRecord) || '0h 0m'}
                     </span>
                   </motion.div>
@@ -893,7 +923,7 @@ export const TeamLeaderDashboard = () => {
           { to: '/leaves', icon: Calendar, label: 'Leave Management', color: 'text-amber-500' },
           { to: '/attendance', icon: Clock, label: 'Attendance', color: 'text-success' },
           { to: '/employees', icon: Users, label: 'Team Members', color: 'text-purple-500' },
-          { to: '/messages', icon: MessageSquare, label: 'Chat Room', color: 'text-indigo-500' },
+          ...(userChatEnabled ? [{ to: '/messages', icon: MessageSquare, label: 'Chat Room', color: 'text-indigo-500' }] : []),
           { to: '/announcements', icon: Megaphone, label: 'Announcements', color: 'text-rose-500' },
           { to: '/profile', icon: UserIcon, label: 'My Profile', color: 'text-blue-500' }
         ].map(item => (
@@ -1326,42 +1356,56 @@ export const TeamLeaderDashboard = () => {
 
         {/* RIGHT SIDEBAR (4 cols): Leave Balances, Schedule, Team Roster, Announcements */}
         <div className="lg:col-span-4 space-y-6">
-          {/* 1. Leave Balances Card (Identical to Employee Dashboard) */}
-          <div className="rounded-[28px] border border-border/70 bg-card p-6 shadow-sm space-y-4 text-left">
+          {/* 1. Leave Balances Card */}
+          <div className="rounded-[24px] border border-border/70 bg-card p-6 shadow-sm space-y-5 text-left">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <h3 className="text-base font-bold text-foreground">Leave Balances</h3>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-foreground tracking-tight">Leave Balances</h3>
+                <span className="inline-flex items-center rounded-full bg-primary/10 border border-primary/20 px-2 py-0.5 text-[10px] font-bold text-primary">
+                  {(leaveBalances.allocationMode || '').toUpperCase() === 'MONTHLY' ? 'Monthly Credit' : 'Annual Allocation'}
+                </span>
+              </div>
               <button
                 onClick={() => setIsLeaveModalOpen(true)}
-                className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer bg-primary/10 px-2.5 py-1 rounded-xl transition-all"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Apply</span>
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="p-3 rounded-2xl bg-muted/40 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">Casual</span>
-                <span className="text-xl font-black text-foreground block mt-1">{leaveBalances.casualRemaining ?? 12}</span>
-                <span className="text-[9px] text-muted-foreground font-semibold">Days left</span>
-              </div>
-
-              <div className="p-3 rounded-2xl bg-muted/40 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">Sick</span>
-                <span className="text-xl font-black text-foreground block mt-1">{leaveBalances.sickRemaining ?? 12}</span>
-                <span className="text-[9px] text-muted-foreground font-semibold">Days left</span>
-              </div>
-
-              <div className="p-3 rounded-2xl bg-muted/40 border border-border/40">
-                <span className="text-[10px] font-extrabold uppercase text-muted-foreground block">Emergency</span>
-                <span className="text-xl font-black text-foreground block mt-1">{leaveBalances.emergencyRemaining ?? 6}</span>
-                <span className="text-[9px] text-muted-foreground font-semibold">Days left</span>
-              </div>
+            {/* Dynamic Leave Cards */}
+            <div className={`grid gap-3 text-center ${
+              (leaveBalances.leaveTypes || []).length === 1 ? 'grid-cols-1' :
+              (leaveBalances.leaveTypes || []).length === 2 ? 'grid-cols-2' :
+              (leaveBalances.leaveTypes || []).length === 3 ? 'grid-cols-3' :
+              'grid-cols-2 sm:grid-cols-4'
+            }`}>
+              {(leaveBalances.leaveTypes || []).length === 0 ? (
+                <div className="col-span-full p-4 text-xs text-muted-foreground">No leave balances available.</div>
+              ) : (
+                leaveBalances.leaveTypes.map((type) => (
+                  <div
+                    key={type.id || type.code}
+                    className="p-3.5 rounded-2xl bg-muted/30 border border-border/50 flex flex-col items-center justify-center text-center min-h-[95px] transition-all hover:bg-muted/50 hover:border-border/70"
+                  >
+                    <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block text-center leading-tight w-full truncate" title={type.name || type.code}>
+                      {type.name || type.code}
+                    </span>
+                    <span className="text-2xl font-black text-foreground block text-center leading-none my-1.5">
+                      {type.available ?? 0}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground font-medium block text-center">
+                      Days Left
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
 
-            <div className="flex items-center justify-between text-xs font-bold pt-1">
-              <span className="text-muted-foreground">Pending: <strong className="text-amber-500">{leaveBalances.pendingRequests ?? 0}</strong></span>
-              <span className="text-muted-foreground">Approved: <strong className="text-success">{leaveBalances.approvedRequests ?? 0}</strong></span>
+            <div className="flex items-center justify-between text-xs font-semibold pt-1 border-t border-border/40">
+              <span className="text-muted-foreground">Pending Requests: <strong className="text-amber-500 font-bold">{leaveBalances.pendingRequests ?? 0}</strong></span>
+              <span className="text-muted-foreground">Approved: <strong className="text-success font-bold">{leaveBalances.approvedRequests ?? 0}</strong></span>
             </div>
           </div>
 
@@ -1435,6 +1479,12 @@ export const TeamLeaderDashboard = () => {
 
           {/* 4. Team Roster & Status Widget */}
           <TeamRosterStatus members={enrichedTeamMembers} />
+
+          {/* Phase 7: Team Leader Shift & Exception Widget */}
+          <TeamLeaderShiftWidget organizationId={user?.organizationId} />
+
+          {/* Phase 8: Team Leader Performance & Intelligence View */}
+          <TeamLeaderPerformanceView />
 
           {/* 5. Recent Announcements Widget */}
           <div className="rounded-3xl border border-border/70 bg-card p-6 shadow-sm space-y-4">

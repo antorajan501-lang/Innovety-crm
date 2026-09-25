@@ -321,8 +321,8 @@ const AdminManagement = () => {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     {admin.organization?.name ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 text-[11px] font-bold uppercase tracking-wider shrink-0 shadow-2xs">
-                        <Building2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 text-[11px] font-bold uppercase tracking-wider shrink-0 shadow-2xs">
+                        <Building2 className="h-3.5 w-3.5 text-primary shrink-0" />
                         <span>{admin.organization.name}</span>
                       </span>
                     ) : (
@@ -354,7 +354,7 @@ const AdminManagement = () => {
 
                       <button
                         onClick={() => handleToggleStatus(admin)}
-                        className={`p-1.5 rounded-lg transition-all ${admin.status === 'ACTIVE' ? 'text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10' : 'text-muted-foreground hover:text-emerald-600 hover:bg-emerald-500/10'}`}
+                        className={`p-1.5 rounded-lg transition-all ${admin.status === 'ACTIVE' ? 'text-muted-foreground hover:text-rose-600 hover:bg-rose-500/10' : 'text-muted-foreground hover:text-primary hover:bg-primary/10'}`}
                         title={admin.status === 'ACTIVE' ? 'Disable Admin' : 'Activate Admin'}
                       >
                         {admin.status === 'ACTIVE' ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}

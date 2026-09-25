@@ -44,6 +44,36 @@ export const isManualLogout = () => {
   return isManualLogoutInProgress;
 };
 
+// Clear authentication and session data while preserving saved company login themes
+export const clearAuthStorage = () => {
+  try {
+    const preserved = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (
+        key === 'mrf_login_primary_color' ||
+        key === 'mrf_selected_company_id' ||
+        key.startsWith('mrf_login_theme_') ||
+        key.startsWith('mrf_theme_') ||
+        key.startsWith('mrf_mode_') ||
+        key === 'sidebar_pinned'
+      ) {
+        preserved[key] = localStorage.getItem(key);
+      }
+    }
+    localStorage.clear();
+    sessionStorage.clear();
+    Object.entries(preserved).forEach(([k, v]) => {
+      if (v !== null) {
+        localStorage.setItem(k, v);
+      }
+    });
+  } catch (e) {
+    console.warn('Error clearing auth storage:', e);
+  }
+};
+
 // Intercept 401 Unauthorized responses to attempt silent token renewal
 api.interceptors.response.use(
   (response) => response,
@@ -96,8 +126,7 @@ api.interceptors.response.use(
       // If token renewal failed or no token exists, log out user
       if (!isManualLogoutInProgress) {
         console.log('Session expired or unauthorized. Logging out...');
-        localStorage.clear();
-        sessionStorage.clear();
+        clearAuthStorage();
         if (!isRedirecting && !window.location.search.includes('expired=true')) {
           isRedirecting = true;
           if (window.location.pathname.includes('/login')) {
@@ -256,7 +285,9 @@ export const getSocket = () => {
 export const disconnectSocket = () => {
   if (socketInstance) {
     try {
-      socketInstance.emit('logout');
+      if (socketInstance.connected) {
+        socketInstance.emit('logout');
+      }
       socketInstance.disconnect();
     } catch (e) {
       console.warn('Socket disconnect error:', e);

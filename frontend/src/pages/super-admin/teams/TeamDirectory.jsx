@@ -53,7 +53,7 @@ const TeamDirectory = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-border/30 pb-4">
         <div>
-          <div className="inline-flex items-center gap-2 rounded-full bg-amber-500/10 px-3 py-1 text-xs font-bold text-amber-600 dark:text-amber-400 border border-amber-500/20 mb-2">
+          <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-bold text-primary border border-primary/20 mb-2">
             <Lock className="h-3.5 w-3.5" />
             <span>Platform Team Directory • Read-Only View</span>
           </div>
@@ -84,11 +84,11 @@ const TeamDirectory = () => {
       </div>
 
       {/* Read-Only Notice Banner */}
-      <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs flex items-center justify-between gap-3">
+      <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/20 text-foreground text-xs flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 shrink-0 text-amber-600" />
+          <ShieldCheck className="h-4 w-4 shrink-0 text-primary" />
           <span>
-            <strong>Read-Only Access:</strong> Super Admin has inspection access to team organization. Team creation, editing, and leader assignments remain managed by operational administration in Team Hub.
+            <strong className="text-primary">Read-Only Access:</strong> Super Admin has inspection access to team organization. Team creation, editing, and leader assignments remain managed by operational administration in Team Hub.
           </span>
         </div>
       </div>
@@ -144,7 +144,7 @@ const TeamDirectory = () => {
               {/* Stats Footer */}
               <div className="flex items-center justify-between border-t border-border/20 pt-3 text-xs">
                 <div className="flex items-center gap-1.5 text-muted-foreground font-semibold">
-                  <Users className="h-3.5 w-3.5 text-indigo-500" />
+                  <Users className="h-3.5 w-3.5 text-primary" />
                   <span>{team.memberCount} Members</span>
                 </div>
 
@@ -180,8 +180,8 @@ const TeamDirectory = () => {
             </div>
 
             {/* Team Leader Details */}
-            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-1">
-              <span className="text-[10px] font-bold text-amber-700 dark:text-amber-300 uppercase">Assigned Team Leader</span>
+            <div className="p-4 rounded-xl bg-primary/5 border border-primary/20 space-y-1">
+              <span className="text-[10px] font-bold text-primary uppercase">Assigned Team Leader</span>
               <p className="text-sm font-extrabold text-foreground">{selectedTeam.leader?.name || 'Unassigned'}</p>
               <p className="text-xs text-muted-foreground font-mono">{selectedTeam.leader?.email} • {selectedTeam.leader?.employeeId}</p>
             </div>

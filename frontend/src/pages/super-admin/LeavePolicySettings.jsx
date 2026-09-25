@@ -24,9 +24,11 @@ import {
   Stethoscope,
   Award,
   DollarSign,
-  Building2
+  Building2,
+  Users
 } from 'lucide-react';
 import api from '../../services/api';
+import ConfirmModal from '../../components/common/ConfirmModal';
 
 const extractCompanyList = (responseData) => {
   if (Array.isArray(responseData)) return responseData;
@@ -95,17 +97,26 @@ const LeavePolicySettings = () => {
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
 
+  // Leave Type deletion confirm modal
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [typeToDelete, setTypeToDelete] = useState(null);
+  const [deletingType, setDeletingType] = useState(false);
+
   const isProtectedLeaveType = (lt) => {
     if (!lt) return false;
-    const protectedCodes = ['WFH', 'CL', 'SL'];
+    const protectedCodes = ['CL', 'SL'];
     return protectedCodes.includes((lt.code || '').toUpperCase());
   };
 
-  const fetchPolicyData = async (orgId = effectiveOrgId) => {
+  const [selectedRole, setSelectedRole] = useState('ALL'); // 'ALL' | 'TEAM_LEADER' | 'EMPLOYEE' | 'INTERN'
+
+  const fetchPolicyData = async (orgId = effectiveOrgId, role = selectedRole) => {
     const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
     try {
       setLoading(true);
-      const params = targetOrg ? { organizationId: targetOrg } : {};
+      const params = {};
+      if (targetOrg) params.organizationId = targetOrg;
+      if (role && role !== 'ALL') params.role = role;
       const polRes = await api.get('/leave-policy', { params });
 
       if (polRes.data?.policy) {
@@ -122,8 +133,8 @@ const LeavePolicySettings = () => {
   };
 
   useEffect(() => {
-    fetchPolicyData(effectiveOrgId);
-  }, [effectiveOrgId, user?.organizationId]);
+    fetchPolicyData(effectiveOrgId, selectedRole);
+  }, [effectiveOrgId, user?.organizationId, selectedRole]);
 
   const handleSavePolicy = async (e) => {
     e.preventDefault();
@@ -131,13 +142,25 @@ const LeavePolicySettings = () => {
     setAlert({ type: '', text: '' });
 
     try {
+      const allowances = {};
+      leaveTypes.forEach((lt) => {
+        allowances[lt.code] = {
+          annualDays: parseFloat(lt.annualDays) || 0,
+          monthlyCreditDays: parseFloat(lt.monthlyCreditDays) || 0
+        };
+      });
+
       const res = await api.put('/leave-policy', {
         ...policy,
-        organizationId: selectedOrgId
+        organizationId: selectedOrgId,
+        role: selectedRole !== 'ALL' ? selectedRole : undefined,
+        allowances: allowances
       });
       setPolicy(res.data.policy);
       const currentCompName = safeCompanies.find((c) => c.id === selectedOrgId)?.name || 'Company';
-      setAlert({ type: 'success', text: `${currentCompName} Leave Policy updated successfully!` });
+      const roleText = selectedRole !== 'ALL' ? ` (${selectedRole.replace('_', ' ')})` : '';
+      setAlert({ type: 'success', text: `${currentCompName}${roleText} Leave Policy updated successfully!` });
+      fetchPolicyData(selectedOrgId, selectedRole);
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to update leave policy.' });
     } finally {
@@ -163,19 +186,25 @@ const LeavePolicySettings = () => {
   const openTypeModal = (lt = null) => {
     if (lt) {
       setEditingType(lt);
+      const annualVal = lt.annualDays !== undefined && lt.annualDays !== null ? lt.annualDays : 0;
+      const monthlyVal = lt.monthlyCreditDays !== undefined && lt.monthlyCreditDays !== null
+        ? lt.monthlyCreditDays
+        : (lt.monthlyCredit !== undefined && lt.monthlyCredit !== null ? lt.monthlyCredit : 0);
+
       setTypeFormData({
-        name: lt.name,
-        code: lt.code,
+        name: lt.name || '',
+        code: lt.code || '',
         description: lt.description || '',
         color: lt.color || '#3B82F6',
         icon: lt.icon || 'Calendar',
-        displayOrder: lt.displayOrder || 0,
-        isPaid: lt.isPaid,
-        annualDays: lt.annualDays,
-        monthlyCreditDays: lt.monthlyCreditDays,
-        allowCarryForward: lt.allowCarryForward,
-        requireDoc: lt.requireDoc,
-        allowHalfDay: lt.allowHalfDay
+        displayOrder: lt.displayOrder !== undefined ? lt.displayOrder : 0,
+        isPaid: lt.isPaid ?? true,
+        annualDays: annualVal,
+        monthlyCreditDays: monthlyVal,
+        monthlyCredit: monthlyVal,
+        allowCarryForward: lt.allowCarryForward ?? false,
+        requireDoc: lt.requireDoc ?? false,
+        allowHalfDay: lt.allowHalfDay ?? true
       });
     } else {
       setEditingType(null);
@@ -189,6 +218,7 @@ const LeavePolicySettings = () => {
         isPaid: true,
         annualDays: 12,
         monthlyCreditDays: 1,
+        monthlyCredit: 1,
         allowCarryForward: false,
         requireDoc: false,
         allowHalfDay: true
@@ -199,22 +229,55 @@ const LeavePolicySettings = () => {
 
   const handleSaveLeaveType = async (e) => {
     e.preventDefault();
+    const annualDaysNum = typeFormData.annualDays === '' ? 0 : Number(typeFormData.annualDays);
+    const monthlyCreditRaw = typeFormData.monthlyCreditDays !== undefined && typeFormData.monthlyCreditDays !== ''
+      ? typeFormData.monthlyCreditDays
+      : typeFormData.monthlyCredit;
+    const monthlyCreditNum = (monthlyCreditRaw === '' || monthlyCreditRaw === undefined) ? 0 : Number(monthlyCreditRaw);
+
+    if (isNaN(annualDaysNum) || isNaN(monthlyCreditNum) || annualDaysNum < 0 || monthlyCreditNum < 0) {
+      setAlert({ type: 'error', text: 'Leave allowances cannot be negative or invalid numbers.' });
+      return;
+    }
+
+    const payload = {
+      ...typeFormData,
+      annualDays: annualDaysNum,
+      monthlyCredit: monthlyCreditNum,
+      monthlyCreditDays: monthlyCreditNum,
+      organizationId: selectedOrgId,
+      role: selectedRole !== 'ALL' ? selectedRole : undefined
+    };
+
+    console.log("Before Save", payload);
+
     try {
       if (editingType) {
-        await api.put(`/leave-policy/types/${editingType.id}`, {
-          ...typeFormData,
-          organizationId: selectedOrgId
-        });
-        setAlert({ type: 'success', text: `Leave Type ${typeFormData.name} updated successfully!` });
+        const res = await api.put(`/leave-policy/types/${editingType.id}`, payload);
+        const updated = res.data?.leaveType || {
+          ...editingType,
+          ...payload,
+          id: editingType.id
+        };
+
+        // Update React state immediately
+        setLeaveTypes(prev =>
+          prev.map(type =>
+            type.id === updated.id ? { ...type, ...updated } : type
+          )
+        );
+
+        const roleLabel = selectedRole !== 'ALL' ? ` for ${selectedRole.replace('_', ' ')}` : '';
+        setAlert({ type: 'success', text: `Leave Type ${typeFormData.name} updated successfully${roleLabel}!` });
       } else {
-        await api.post('/leave-policy/types', {
-          ...typeFormData,
-          organizationId: selectedOrgId
-        });
+        const res = await api.post('/leave-policy/types', payload);
+        if (res.data?.leaveType) {
+          setLeaveTypes(prev => [...prev, res.data.leaveType]);
+        }
         setAlert({ type: 'success', text: `Leave Type ${typeFormData.name} created successfully!` });
       }
       setTypeModalOpen(false);
-      fetchPolicyData(selectedOrgId);
+      fetchPolicyData(selectedOrgId, selectedRole);
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to save leave type.' });
     }
@@ -224,25 +287,41 @@ const LeavePolicySettings = () => {
     try {
       const res = await api.put(`/leave-policy/types/${lt.id}/status`);
       setAlert({ type: 'success', text: res.data.message });
-      fetchPolicyData(selectedOrgId);
+      fetchPolicyData(selectedOrgId, selectedRole);
     } catch (err) {
       setAlert({ type: 'error', text: 'Failed to toggle leave type status.' });
     }
   };
 
-  const handleDeleteLeaveType = async (lt) => {
-    if (isProtectedLeaveType(lt)) {
-      setAlert({ type: 'error', text: 'System leave types cannot be deleted.' });
-      return;
-    }
-    if (!window.confirm(`Are you sure you want to delete custom leave type "${lt.name}"?`)) return;
+  const handleDeleteClick = (lt) => {
+    setTypeToDelete(lt);
+    setDeleteConfirmOpen(true);
+  };
 
+  const handleConfirmDelete = async () => {
+    if (!typeToDelete) return;
+    const deletedId = typeToDelete.id;
+    const deletedName = typeToDelete.name;
     try {
-      await api.delete(`/leave-policy/types/${lt.id}`);
-      setAlert({ type: 'success', text: `Leave Type ${lt.name} deleted.` });
-      fetchPolicyData(selectedOrgId);
+      setDeletingType(true);
+      const res = await api.delete(`/leave-policy/types/${deletedId}`);
+      // Remove the deleted policy from React state immediately after a successful API response
+      setLeaveTypes((prev) => prev.filter((lt) => lt.id !== deletedId));
+      setDeleteConfirmOpen(false);
+      setTypeToDelete(null);
+      setAlert({
+        type: 'success',
+        text: res.data?.message || `Leave policy "${deletedName}" deleted successfully.`
+      });
+      // Refresh policy list automatically in the background
+      fetchPolicyData(selectedOrgId, selectedRole);
     } catch (err) {
-      setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to delete leave type.' });
+      const errMsg = err.response?.data?.message || err.message || 'Failed to delete leave policy.';
+      setAlert({ type: 'error', text: errMsg });
+      setDeleteConfirmOpen(false);
+      setTypeToDelete(null);
+    } finally {
+      setDeletingType(false);
     }
   };
 
@@ -265,7 +344,7 @@ const LeavePolicySettings = () => {
       await api.post('/leave-policy/adjust-balance', payload);
       setAlert({ type: 'success', text: 'User leave balance adjusted successfully!' });
       setAdjustModalOpen(false);
-      fetchPolicyData(selectedOrgId);
+      fetchPolicyData(selectedOrgId, selectedRole);
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to adjust user leave balance.' });
     } finally {
@@ -279,7 +358,7 @@ const LeavePolicySettings = () => {
       const res = await api.post('/leave-policy/annual-reset', { organizationId: selectedOrgId });
       setAlert({ type: 'success', text: res.data.message || 'Annual leave reset executed!' });
       setResetModalOpen(false);
-      fetchPolicyData(selectedOrgId);
+      fetchPolicyData(selectedOrgId, selectedRole);
     } catch (err) {
       setAlert({ type: 'error', text: err.response?.data?.message || 'Failed to execute annual reset.' });
     } finally {
@@ -300,7 +379,7 @@ const LeavePolicySettings = () => {
             </div>
             <h1 className="text-2xl font-black tracking-tight text-foreground flex items-center gap-2">
               <span>{currentCompany ? `${currentCompany.name} Leave Policy` : 'Company Leave Policy'}</span>
-              <Sparkles className="h-5 w-5 text-amber-500" />
+              <Sparkles className="h-5 w-5 text-primary" />
             </h1>
           </div>
           <p className="text-xs text-muted-foreground font-medium">
@@ -311,7 +390,7 @@ const LeavePolicySettings = () => {
         <div className="flex items-center gap-3">
           <button
             onClick={() => setResetModalOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 border border-amber-500/30 text-xs font-bold transition-all cursor-pointer shadow-xs"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 text-xs font-bold transition-all cursor-pointer shadow-xs"
           >
             <RotateCcw className="h-4 w-4" />
             <span>Run Annual Reset</span>
@@ -327,7 +406,47 @@ const LeavePolicySettings = () => {
       </div>
 
       {/* Shared Company Selector Bar */}
-      <CompanyScopeSelector onScopeChange={(newId) => fetchPolicyData(newId)} />
+      <CompanyScopeSelector onScopeChange={(newId) => fetchPolicyData(newId, selectedRole)} />
+
+      {/* Role Scope Selector Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 p-3.5 bg-card border border-border/70 rounded-2xl shadow-xs text-left">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 rounded-xl bg-primary/10 text-primary border border-primary/20">
+            <Users className="w-4 h-4" />
+          </div>
+          <div>
+            <h4 className="text-xs font-bold text-foreground">Target Role Scope</h4>
+            <p className="text-[10px] text-muted-foreground font-medium">Configure policies specifically for Team Leaders, Employees, or Interns</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1 p-1 bg-muted/60 border border-border/50 rounded-xl">
+          {[
+            { id: 'ALL', label: 'All Roles' },
+            { id: 'TEAM_LEADER', label: 'Team Leader' },
+            { id: 'EMPLOYEE', label: 'Employee' },
+            { id: 'INTERN', label: 'Intern' }
+          ].map((r) => {
+            const isSelected = selectedRole === r.id;
+            return (
+              <button
+                key={r.id}
+                onClick={() => {
+                  setSelectedRole(r.id);
+                  fetchPolicyData(selectedOrgId, r.id);
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  isSelected
+                    ? 'bg-primary text-white shadow-xs font-extrabold'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/80'
+                }`}
+              >
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
 
       {/* Alert Banner */}
       {alert.text && (
@@ -356,7 +475,14 @@ const LeavePolicySettings = () => {
         <div className="flex items-center justify-between border-b border-border/40 pb-4">
           <div className="flex items-center gap-2.5">
             <Calendar className="h-5 w-5 text-primary" />
-            <h2 className="text-base font-extrabold text-foreground">{currentCompany?.name || 'Company'} Leave Policy</h2>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-extrabold text-foreground">{currentCompany?.name || 'Company'} Leave Policy</h2>
+              {selectedRole !== 'ALL' && (
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-primary/10 text-primary border border-primary/20">
+                  {selectedRole.replace('_', ' ')}
+                </span>
+              )}
+            </div>
           </div>
           <button
             onClick={handleSavePolicy}
@@ -364,7 +490,7 @@ const LeavePolicySettings = () => {
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold shadow-md cursor-pointer transition-all disabled:opacity-50"
           >
             <Check className="h-4 w-4" />
-            <span>{savingPolicy ? 'Saving...' : 'Save Policy'}</span>
+            <span>{savingPolicy ? 'Saving...' : `Save ${selectedRole !== 'ALL' ? selectedRole.replace('_', ' ') + ' ' : ''}Policy`}</span>
           </button>
         </div>
 
@@ -489,11 +615,11 @@ const LeavePolicySettings = () => {
                     <div className="pt-3 border-t border-border/40 grid grid-cols-2 gap-3 text-center text-xs">
                       <div className="bg-muted/40 p-3 rounded-2xl border border-border/40">
                         <span className="text-[10px] text-muted-foreground font-extrabold block uppercase tracking-wider">Annual Allowance</span>
-                        <span className="font-black text-sm text-foreground mt-0.5 block">{lt.isPaid ? `${lt.annualDays} Days` : 'Unpaid'}</span>
+                        <span className="font-black text-sm text-foreground mt-0.5 block">{lt.isPaid ? `${lt.annualDays ?? 0} Days` : 'Unpaid'}</span>
                       </div>
                       <div className="bg-muted/40 p-3 rounded-2xl border border-border/40">
                         <span className="text-[10px] text-muted-foreground font-extrabold block uppercase tracking-wider">Monthly Credit</span>
-                        <span className="font-black text-sm text-foreground mt-0.5 block">{lt.isPaid ? `${lt.monthlyCreditDays} Days` : 'N/A'}</span>
+                        <span className="font-black text-sm text-foreground mt-0.5 block">{lt.isPaid ? `${lt.monthlyCreditDays ?? lt.monthlyCredit ?? 0} Days` : 'N/A'}</span>
                       </div>
                     </div>
                   </div>
@@ -507,14 +633,9 @@ const LeavePolicySettings = () => {
                       <Edit2 className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => handleDeleteLeaveType(lt)}
-                      disabled={isProtected}
-                      className={`p-2 rounded-xl transition-colors ${
-                        isProtected
-                          ? 'text-muted-foreground/30 cursor-not-allowed'
-                          : 'text-muted-foreground hover:bg-muted hover:text-rose-600 cursor-pointer'
-                      }`}
-                      title={isProtected ? 'System leave types cannot be deleted.' : 'Delete Leave Type'}
+                      onClick={() => handleDeleteClick(lt)}
+                      className="p-2 rounded-xl text-muted-foreground hover:bg-muted hover:text-rose-600 transition-colors cursor-pointer"
+                      title="Delete Leave Policy"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
@@ -561,10 +682,14 @@ const LeavePolicySettings = () => {
                   <input
                     type="text"
                     required
+                    disabled={Boolean(editingType?.isSystem || isProtectedLeaveType(editingType))}
+                    title={editingType?.isSystem || isProtectedLeaveType(editingType) ? "System leave code cannot be modified" : ""}
                     placeholder="e.g. ML"
                     value={typeFormData.code}
                     onChange={(e) => setTypeFormData({ ...typeFormData, code: e.target.value.toUpperCase() })}
-                    className="w-full px-3 py-2 text-xs font-bold uppercase rounded-xl border border-border bg-background outline-none focus:ring-2 focus:ring-primary/20"
+                    className={`w-full px-3 py-2 text-xs font-bold uppercase rounded-xl border border-border bg-background outline-none focus:ring-2 focus:ring-primary/20 ${
+                      (editingType?.isSystem || isProtectedLeaveType(editingType)) ? 'opacity-60 cursor-not-allowed bg-muted/40' : ''
+                    }`}
                   />
                 </div>
               </div>
@@ -603,23 +728,34 @@ const LeavePolicySettings = () => {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-foreground mb-1">Annual Allowance (Days)</label>
+                  <label className="block text-xs font-bold text-foreground mb-1">Annual Allowance (Days) *</label>
                   <input
                     type="number"
-                    step="0.5"
+                    step="any"
+                    min="0"
+                    required
                     value={typeFormData.annualDays}
-                    onChange={(e) => setTypeFormData({ ...typeFormData, annualDays: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-border bg-background outline-none"
+                    onChange={(e) => setTypeFormData({ ...typeFormData, annualDays: e.target.value })}
+                    className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-border bg-background outline-none focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-foreground mb-1">Monthly Credit (Days)</label>
+                  <label className="block text-xs font-bold text-foreground mb-1">Monthly Credit (Days) *</label>
                   <input
                     type="number"
-                    step="0.5"
-                    value={typeFormData.monthlyCreditDays}
-                    onChange={(e) => setTypeFormData({ ...typeFormData, monthlyCreditDays: parseFloat(e.target.value) || 0 })}
-                    className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-border bg-background outline-none"
+                    step="any"
+                    min="0"
+                    required
+                    value={typeFormData.monthlyCredit !== undefined ? typeFormData.monthlyCredit : (typeFormData.monthlyCreditDays ?? '')}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setTypeFormData({
+                        ...typeFormData,
+                        monthlyCredit: val,
+                        monthlyCreditDays: val
+                      });
+                    }}
+                    className="w-full px-3 py-2 text-xs font-bold rounded-xl border border-border bg-background outline-none focus:ring-2 focus:ring-primary/20"
                   />
                 </div>
               </div>
@@ -688,7 +824,7 @@ const LeavePolicySettings = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs">
           <div className="bg-card border border-border/80 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 text-left">
             <div className="flex items-center gap-3">
-              <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
+              <div className="p-3 rounded-2xl bg-primary/10 text-primary border border-primary/20">
                 <RotateCcw className="h-6 w-6" />
               </div>
               <div>
@@ -709,7 +845,7 @@ const LeavePolicySettings = () => {
               <button
                 onClick={handleRunAnnualReset}
                 disabled={resetting}
-                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
+                className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-bold shadow-md cursor-pointer disabled:opacity-50"
               >
                 {resetting ? 'Executing Reset...' : 'Confirm Reset'}
               </button>
@@ -717,6 +853,23 @@ const LeavePolicySettings = () => {
           </div>
         </div>
       )}
+
+      {/* DELETE CONFIRM MODAL */}
+      <ConfirmModal
+        isOpen={deleteConfirmOpen}
+        title="Delete Leave Policy"
+        message={`Are you sure you want to delete the "${typeToDelete?.name}" leave policy? Employees will no longer be able to request this leave type. Existing leave history remains unaffected.`}
+        confirmText="Delete Policy"
+        cancelText="Cancel"
+        loading={deletingType}
+        onConfirm={handleConfirmDelete}
+        onClose={() => {
+          if (!deletingType) {
+            setDeleteConfirmOpen(false);
+            setTypeToDelete(null);
+          }
+        }}
+      />
     </div>
   );
 };

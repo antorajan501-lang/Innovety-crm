@@ -16,6 +16,7 @@
     --primary: 5, 122, 85;
     --primary-hover: 4, 106, 74;
     --primary-foreground: 255, 255, 255;
+    --primary-light: 236, 253, 245;
     
     --secondary: 16, 185, 129;
     --accent: 5, 150, 105;
@@ -34,9 +35,18 @@
     --chat-outgoing-bg-hover: rgb(var(--primary-hover));
     --chat-outgoing-text: #ffffff;
     --chat-area-bg: rgba(var(--primary), 0.08);
+
+    /* Dynamic Brand Variables */
+    --brand-primary: rgb(var(--primary));
+    --brand-accent: rgb(var(--accent));
+    --brand-primary-light: rgb(var(--primary-light));
+    --brand-primary-hover: rgb(var(--primary-hover));
+    --brand-ring: rgba(var(--primary), 0.35);
   }
 
-  .dark {
+  .dark,
+  html.dark,
+  :root.dark {
     --background: 13, 19, 16;
     --foreground: 241, 245, 249;
     
@@ -65,6 +75,7 @@
     --chat-outgoing-bg-hover: #004d3e;
     --chat-outgoing-text: #e9edef;
     --chat-area-bg: rgb(13, 19, 16);
+    --brand-primary-light: rgba(var(--primary), 0.18);
   }
 
   /* Predefined Theme Presets with High Specificity */
@@ -203,10 +214,53 @@
     --app-background-to: 254, 226, 226 !important;
     --button-gradient-start: 136, 19, 55 !important;
     --button-gradient-end: 190, 18, 60 !important;
-    --button-gradient-hover-start: 112, 16, 46 !important;
     --button-gradient-hover-end: 159, 18, 57 !important;
     --login-start: 136, 19, 55 !important;
     --login-end: 15, 23, 42 !important;
+  }
+  html[data-theme="rose"],
+  :root[data-theme="rose"] {
+    --primary: 244, 63, 94 !important;
+    --primary-hover: 225, 29, 72 !important;
+    --primary-light: 255, 241, 242 !important;
+    --primary-dark: 159, 18, 57 !important;
+    --secondary: 244, 63, 94 !important;
+    --accent: 225, 29, 72 !important;
+    --chat-outgoing-bg: rgb(244, 63, 94) !important;
+    --chat-outgoing-bg-hover: rgb(225, 29, 72) !important;
+    --chat-outgoing-text: #ffffff !important;
+    --chat-area-bg: #fff1f2 !important;
+    --app-background-from: 255, 241, 242 !important;
+    --app-background-via: 255, 245, 245 !important;
+    --app-background-to: 254, 226, 226 !important;
+    --button-gradient-start: 225, 29, 72 !important;
+    --button-gradient-end: 244, 63, 94 !important;
+    --button-gradient-hover-start: 190, 18, 60 !important;
+    --button-gradient-hover-end: 225, 29, 72 !important;
+    --login-start: 136, 19, 55 !important;
+    --login-end: 15, 23, 42 !important;
+  }
+  html[data-theme="slate"],
+  :root[data-theme="slate"] {
+    --primary: 100, 116, 139 !important;
+    --primary-hover: 71, 85, 105 !important;
+    --primary-light: 248, 250, 252 !important;
+    --primary-dark: 30, 41, 59 !important;
+    --secondary: 100, 116, 139 !important;
+    --accent: 56, 189, 248 !important;
+    --chat-outgoing-bg: rgb(100, 116, 139) !important;
+    --chat-outgoing-bg-hover: rgb(71, 85, 105) !important;
+    --chat-outgoing-text: #ffffff !important;
+    --chat-area-bg: #f8fafc !important;
+    --app-background-from: 248, 250, 252 !important;
+    --app-background-via: 241, 245, 249 !important;
+    --app-background-to: 226, 232, 240 !important;
+    --button-gradient-start: 71, 85, 105 !important;
+    --button-gradient-end: 100, 116, 139 !important;
+    --button-gradient-hover-start: 51, 65, 85 !important;
+    --button-gradient-hover-end: 71, 85, 105 !important;
+    --login-start: 15, 23, 42 !important;
+    --login-end: 30, 41, 59 !important;
   }
 }
 

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import api, { getSocket } from '../services/api';
 import { useAuth } from './AuthContext';
+import { useCompanyScope } from './CompanyScopeContext';
 
 const ThemeContext = createContext();
 
@@ -10,19 +11,38 @@ const parseBoolVal = (value) => {
   return undefined;
 };
 
+const getTenantThemeKey = (orgId) => (orgId && orgId !== 'all') ? `mrf_theme_${orgId}` : 'mrf_theme_default';
+const getTenantModeKey = (orgId) => (orgId && orgId !== 'all') ? `mrf_mode_${orgId}` : 'mrf_mode_default';
+
 export const ThemeProvider = ({ children }) => {
   const { user } = useAuth();
+  const scopeContext = useCompanyScope();
+  const selectedOrgId = scopeContext?.selectedOrgId;
+  const effectiveOrgId = scopeContext?.effectiveOrgId;
+
+  const activeOrgId = user?.role === 'SUPER_ADMIN'
+    ? (selectedOrgId && selectedOrgId !== 'all' ? selectedOrgId : (effectiveOrgId && effectiveOrgId !== 'all' ? effectiveOrgId : null))
+    : (user?.organizationId || user?.organization?.id);
+
   const [companyName, setCompanyName] = useState('Innoviety Enterprise');
   const [companyLogo, setCompanyLogo] = useState(null);
-  const [selectedTheme, setSelectedTheme] = useState(localStorage.getItem('selectedTheme') || 'emerald');
-  const [themeMode, setThemeMode] = useState(localStorage.getItem('themeMode') || 'light');
+
+  const [selectedTheme, setSelectedTheme] = useState(() => {
+    const savedCompanyId = localStorage.getItem('mrf_selected_company_id');
+    return localStorage.getItem(getTenantThemeKey(savedCompanyId)) || 'emerald';
+  });
+
+  const [themeMode, setThemeMode] = useState(() => {
+    const savedCompanyId = localStorage.getItem('mrf_selected_company_id');
+    return localStorage.getItem(getTenantModeKey(savedCompanyId)) || 'light';
+  });
   
   // Platform & Tenant Chat Settings
   const [platformChatEnabledForAdmins, setPlatformChatEnabledForAdmins] = useState(true);
   const [platformChatEnabledForUsers, setPlatformChatEnabledForUsers] = useState(true);
   const [tenantChatEnabledForAdmins, setTenantChatEnabledForAdmins] = useState(true);
   const [tenantChatEnabledForUsers, setTenantChatEnabledForUsers] = useState(true);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
 
   // Apply data-theme & dark mode attributes on document root
@@ -43,66 +63,63 @@ export const ThemeProvider = ({ children }) => {
     applyThemeToDOM(selectedTheme, themeMode);
   }, [selectedTheme, themeMode]);
 
-  const fetchPlatformSettings = useCallback(async () => {
+  const fetchPlatformSettings = useCallback(async (targetOrgId) => {
+    if (!user) return;
     try {
-      const userRole = user?.role;
-      const savedCompanyId = localStorage.getItem('mrf_selected_company_id');
-      const userOrgId = userRole === 'SUPER_ADMIN'
-        ? (savedCompanyId && savedCompanyId !== 'all' ? savedCompanyId : null)
-        : (user?.organizationId || user?.organization?.id);
-
-      const params = userOrgId ? { organizationId: userOrgId } : {};
+      const orgToFetch = targetOrgId !== undefined ? targetOrgId : activeOrgId;
+      const params = (orgToFetch && orgToFetch !== 'all') ? { organizationId: orgToFetch } : {};
       const res = await api.get('/platform/settings', { params });
-
-      console.log('[DEBUG Trace Step 2 - GET /api/platform/settings Response]', res.data);
 
       if (res.data) {
         if (res.data.companyName) setCompanyName(res.data.companyName);
         if (res.data.companyLogo !== undefined) setCompanyLogo(res.data.companyLogo);
-        if (res.data.selectedTheme) {
-          setSelectedTheme(res.data.selectedTheme);
-          localStorage.setItem('selectedTheme', res.data.selectedTheme);
-        }
-        if (res.data.themeMode) {
-          setThemeMode(res.data.themeMode);
-          localStorage.setItem('themeMode', res.data.themeMode);
+
+        const newTheme = res.data.selectedTheme || 'emerald';
+        const newMode = res.data.themeMode || 'light';
+
+        setSelectedTheme(newTheme);
+        setThemeMode(newMode);
+
+        if (orgToFetch && orgToFetch !== 'all') {
+          localStorage.setItem(getTenantThemeKey(orgToFetch), newTheme);
+          localStorage.setItem(getTenantModeKey(orgToFetch), newMode);
         }
 
         // Platform level settings
         if (res.data.platform) {
-          const pAdmin = parseBoolVal(res.data.platform.chatEnabledForAdmins);
+          const pAdmin = parseBoolVal(res.data.platform.adminChatEnabled !== undefined ? res.data.platform.adminChatEnabled : res.data.platform.chatEnabledForAdmins);
           if (pAdmin !== undefined) setPlatformChatEnabledForAdmins(pAdmin);
-          const pUser = parseBoolVal(res.data.platform.chatEnabledForUsers);
+          const pUser = parseBoolVal(res.data.platform.userChatEnabled !== undefined ? res.data.platform.userChatEnabled : res.data.platform.chatEnabledForUsers);
           if (pUser !== undefined) setPlatformChatEnabledForUsers(pUser);
         } else {
-          const pAdmin = parseBoolVal(res.data.chatEnabledForAdmins);
+          const pAdmin = parseBoolVal(res.data.adminChatEnabled !== undefined ? res.data.adminChatEnabled : res.data.chatEnabledForAdmins);
           if (pAdmin !== undefined) setPlatformChatEnabledForAdmins(pAdmin);
-          const pUser = parseBoolVal(res.data.chatEnabledForUsers);
+          const pUser = parseBoolVal(res.data.userChatEnabled !== undefined ? res.data.userChatEnabled : res.data.chatEnabledForUsers);
           if (pUser !== undefined) setPlatformChatEnabledForUsers(pUser);
         }
 
         // Tenant (Organization) level settings
         if (res.data.organization) {
-          const tAdmin = parseBoolVal(res.data.organization.chatEnabledForAdmins);
+          const tAdmin = parseBoolVal(res.data.organization.adminChatEnabled !== undefined ? res.data.organization.adminChatEnabled : res.data.organization.chatEnabledForAdmins);
           if (tAdmin !== undefined) setTenantChatEnabledForAdmins(tAdmin);
-          const tUser = parseBoolVal(res.data.organization.chatEnabledForUsers);
+          const tUser = parseBoolVal(res.data.organization.userChatEnabled !== undefined ? res.data.organization.userChatEnabled : res.data.organization.chatEnabledForUsers);
           if (tUser !== undefined) setTenantChatEnabledForUsers(tUser);
         } else {
-          const tAdmin = parseBoolVal(res.data.chatEnabledForAdmins);
+          const tAdmin = parseBoolVal(res.data.adminChatEnabled !== undefined ? res.data.adminChatEnabled : res.data.chatEnabledForAdmins);
           if (tAdmin !== undefined) setTenantChatEnabledForAdmins(tAdmin);
-          const tUser = parseBoolVal(res.data.chatEnabledForUsers);
+          const tUser = parseBoolVal(res.data.userChatEnabled !== undefined ? res.data.userChatEnabled : res.data.chatEnabledForUsers);
           if (tUser !== undefined) setTenantChatEnabledForUsers(tUser);
         }
 
-        applyThemeToDOM(res.data.selectedTheme || selectedTheme, res.data.themeMode || themeMode);
+        applyThemeToDOM(newTheme, newMode);
       }
     } catch (err) {
-      console.warn('Failed to load platform settings on boot:', err);
+      console.warn('Failed to load platform settings:', err);
     } finally {
       setLoading(false);
       setPermissionsLoaded(true);
     }
-  }, [user]);
+  }, [user, activeOrgId]);
 
   useEffect(() => {
     if (!user) {
@@ -111,9 +128,19 @@ export const ThemeProvider = ({ children }) => {
     }
   }, [user]);
 
+  // When active company scope changes, immediately load its cached theme and fetch updated settings
   useEffect(() => {
-    fetchPlatformSettings();
-  }, [fetchPlatformSettings]);
+    if (!user) return;
+    if (activeOrgId && activeOrgId !== 'all') {
+      const cachedTheme = localStorage.getItem(getTenantThemeKey(activeOrgId));
+      const cachedMode = localStorage.getItem(getTenantModeKey(activeOrgId));
+      if (cachedTheme) {
+        setSelectedTheme(cachedTheme);
+        applyThemeToDOM(cachedTheme, cachedMode || 'light');
+      }
+    }
+    fetchPlatformSettings(activeOrgId);
+  }, [activeOrgId, user, fetchPlatformSettings]);
 
   // Real-time socket listener for chat_settings_updated
   useEffect(() => {
@@ -122,16 +149,18 @@ export const ThemeProvider = ({ children }) => {
     if (!socket) return;
 
     const handleChatSettingsUpdated = () => {
-      fetchPlatformSettings();
+      fetchPlatformSettings(activeOrgId);
     };
 
     socket.on('chat_settings_updated', handleChatSettingsUpdated);
     return () => {
       socket.off('chat_settings_updated', handleChatSettingsUpdated);
     };
-  }, [user, fetchPlatformSettings]);
+  }, [user, activeOrgId, fetchPlatformSettings]);
 
-  const updateThemeSettings = (newSettings) => {
+  const updateThemeSettings = useCallback((newSettings, targetOrgId) => {
+    const orgId = targetOrgId !== undefined ? targetOrgId : activeOrgId;
+
     if (newSettings.companyName !== undefined) setCompanyName(newSettings.companyName);
     if (newSettings.companyLogo !== undefined) setCompanyLogo(newSettings.companyLogo);
 
@@ -165,16 +194,20 @@ export const ThemeProvider = ({ children }) => {
     if (newSettings.selectedTheme !== undefined) {
       updatedTheme = newSettings.selectedTheme;
       setSelectedTheme(updatedTheme);
-      localStorage.setItem('selectedTheme', updatedTheme);
+      if (orgId && orgId !== 'all') {
+        localStorage.setItem(getTenantThemeKey(orgId), updatedTheme);
+      }
     }
     if (newSettings.themeMode !== undefined) {
       updatedMode = newSettings.themeMode;
       setThemeMode(updatedMode);
-      localStorage.setItem('themeMode', updatedMode);
+      if (orgId && orgId !== 'all') {
+        localStorage.setItem(getTenantModeKey(orgId), updatedMode);
+      }
     }
 
     applyThemeToDOM(updatedTheme, updatedMode);
-  };
+  }, [activeOrgId, selectedTheme, themeMode]);
 
   /**
    * Final Permission Hierarchy:
@@ -182,59 +215,68 @@ export const ThemeProvider = ({ children }) => {
    * ADMIN -> platformChatEnabledForAdmins AND tenantChatEnabledForAdmins
    * TEAM_LEADER / EMPLOYEE / INTERN -> platformChatEnabledForUsers AND tenantChatEnabledForUsers
    */
+  const userChatEnabled = useMemo(() => {
+    if (user?.role === 'SUPER_ADMIN') return true;
+    const pUser = platformChatEnabledForUsers !== false;
+    const tUser = tenantChatEnabledForUsers !== false;
+    return pUser && tUser;
+  }, [user, platformChatEnabledForUsers, tenantChatEnabledForUsers]);
+
+  const adminChatEnabled = useMemo(() => {
+    if (user?.role === 'SUPER_ADMIN') return true;
+    const pAdmin = platformChatEnabledForAdmins !== false;
+    const tAdmin = tenantChatEnabledForAdmins !== false;
+    return pAdmin && tAdmin;
+  }, [user, platformChatEnabledForAdmins, tenantChatEnabledForAdmins]);
+
   const canUseChat = useMemo(() => {
     if (!user) return false;
     const roleUpper = String(user.role || '').toUpperCase();
     if (roleUpper === 'SUPER_ADMIN') return true;
+    if (roleUpper === 'ADMIN') return adminChatEnabled;
+    return userChatEnabled;
+  }, [user, adminChatEnabled, userChatEnabled]);
 
-    const pAdmin = platformChatEnabledForAdmins !== false;
-    const pUser = platformChatEnabledForUsers !== false;
-    const tAdmin = tenantChatEnabledForAdmins !== false;
-    const tUser = tenantChatEnabledForUsers !== false;
-
-    let computed = false;
-    if (roleUpper === 'ADMIN') {
-      computed = pAdmin && tAdmin;
-    } else {
-      computed = pUser && tUser;
-    }
-
-    console.log('[DEBUG Trace Step 3 - ThemeContext State]', {
-      role: roleUpper,
-      platformChatEnabledForAdmins,
-      platformChatEnabledForUsers,
-      tenantChatEnabledForAdmins,
-      tenantChatEnabledForUsers,
-      canUseChat: computed,
-      permissionsLoaded
-    });
-
-    return computed;
-  }, [user, platformChatEnabledForAdmins, platformChatEnabledForUsers, tenantChatEnabledForAdmins, tenantChatEnabledForUsers, permissionsLoaded]);
+  const contextValue = useMemo(() => ({
+    companyName,
+    companyLogo,
+    selectedTheme,
+    themeMode,
+    chatEnabledForAdmins: platformChatEnabledForAdmins,
+    chatEnabledForUsers: platformChatEnabledForUsers,
+    platformChatEnabledForAdmins,
+    platformChatEnabledForUsers,
+    tenantChatEnabledForAdmins,
+    tenantChatEnabledForUsers,
+    adminChatEnabled,
+    userChatEnabled,
+    setPlatformChatEnabledForAdmins,
+    setPlatformChatEnabledForUsers,
+    setTenantChatEnabledForAdmins,
+    setTenantChatEnabledForUsers,
+    refreshPlatformSettings: fetchPlatformSettings,
+    canUseChat,
+    updateThemeSettings,
+    loading
+  }), [
+    companyName,
+    companyLogo,
+    selectedTheme,
+    themeMode,
+    platformChatEnabledForAdmins,
+    platformChatEnabledForUsers,
+    tenantChatEnabledForAdmins,
+    tenantChatEnabledForUsers,
+    adminChatEnabled,
+    userChatEnabled,
+    fetchPlatformSettings,
+    canUseChat,
+    updateThemeSettings,
+    loading
+  ]);
 
   return (
-    <ThemeContext.Provider
-      value={{
-        companyName,
-        companyLogo,
-        selectedTheme,
-        themeMode,
-        chatEnabledForAdmins: platformChatEnabledForAdmins,
-        chatEnabledForUsers: platformChatEnabledForUsers,
-        platformChatEnabledForAdmins,
-        platformChatEnabledForUsers,
-        tenantChatEnabledForAdmins,
-        tenantChatEnabledForUsers,
-        setPlatformChatEnabledForAdmins,
-        setPlatformChatEnabledForUsers,
-        setTenantChatEnabledForAdmins,
-        setTenantChatEnabledForUsers,
-        refreshPlatformSettings: fetchPlatformSettings,
-        canUseChat,
-        updateThemeSettings,
-        loading
-      }}
-    >
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   );

@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import api, { getUploadUrl } from '../services/api';
+import api, { getUploadUrl, getSocket } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
 import CompanyBadge from '../components/common/CompanyBadge';
 import {
@@ -25,7 +25,9 @@ import {
   Zap,
   TrendingUp,
   Eye,
-  EyeOff
+  EyeOff,
+  Calendar,
+  Clock
 } from 'lucide-react';
 
 const Profile = () => {
@@ -62,33 +64,49 @@ const Profile = () => {
   const [positionHistory, setPositionHistory] = useState([]);
   const [promotionHistory, setPromotionHistory] = useState([]);
   const [fullUserDetails, setFullUserDetails] = useState(null);
+  const [userShift, setUserShift] = useState(null);
+  const [upcomingSchedule, setUpcomingSchedule] = useState(null);
+  const [shiftTimeline, setShiftTimeline] = useState([]);
   const [loading, setLoading] = useState(false);
 
+  const fetchUserDetails = useCallback(async () => {
+    try {
+      if (user?.id) {
+        const [uRes, hRes, promoRes, sRes, schedRes, timeRes] = await Promise.all([
+          api.get(`/users/${user.id}`),
+          api.get(`/positions/history/${user.id}`).catch(() => ({ data: [] })),
+          api.get(`/users/${user.id}/promotion-history`).catch(() => ({ data: [] })),
+          api.get('/shifts/my-shift').catch(() => ({ data: {} })),
+          api.get('/shifts/my-schedule').catch(() => ({ data: {} })),
+          api.get('/workforce/timeline').catch(() => ({ data: { timeline: [] } }))
+        ]);
+        setFullUserDetails(uRes.data);
+        setAssignedAssets(uRes.data.assignedAssets || []);
+        setPositionHistory(hRes.data || []);
+        setPromotionHistory(promoRes.data || []);
+        if (sRes.data?.shift) {
+          setUserShift(sRes.data.shift);
+        } else if (sRes.data?.startTime && sRes.data?.endTime) {
+          setUserShift(sRes.data);
+        }
+        const schedData = schedRes.data?.data || (schedRes.data?.today ? schedRes.data : null);
+        if (schedData) {
+          setUpcomingSchedule(schedData);
+        }
+        if (timeRes.data?.success && timeRes.data?.timeline) {
+          setShiftTimeline(timeRes.data.timeline);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, [user?.id]);
+
   useEffect(() => {
-    // Check url search query for change password triggers
     const query = new URLSearchParams(location.search);
     if (query.get('changePassword') === 'true') {
       setTempPassWarning(true);
     }
-
-    // Fetch user details including assigned assets, position history & promotion history
-    const fetchUserDetails = async () => {
-      try {
-        if (user?.id) {
-          const [uRes, hRes, promoRes] = await Promise.all([
-            api.get(`/users/${user.id}`),
-            api.get(`/positions/history/${user.id}`).catch(() => ({ data: [] })),
-            api.get(`/users/${user.id}/promotion-history`).catch(() => ({ data: [] }))
-          ]);
-          setFullUserDetails(uRes.data);
-          setAssignedAssets(uRes.data.assignedAssets || []);
-          setPositionHistory(hRes.data || []);
-          setPromotionHistory(promoRes.data || []);
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    };
 
     fetchUserDetails();
 
@@ -110,7 +128,28 @@ const Profile = () => {
       }
     };
     fetchUserLogs();
-  }, [location, user]);
+
+    // Real-time synchronization for shift schedule changes
+    const handleShiftEvent = (e) => {
+      console.log('[Profile] Shift update event detected, refreshing profile schedule:', e);
+      fetchUserDetails();
+    };
+
+    window.addEventListener('shift_updated', handleShiftEvent);
+    const socket = getSocket();
+    if (socket) {
+      socket.on('shift_updated', handleShiftEvent);
+      socket.on('schedule_updated', handleShiftEvent);
+    }
+
+    return () => {
+      window.removeEventListener('shift_updated', handleShiftEvent);
+      if (socket) {
+        socket.off('shift_updated', handleShiftEvent);
+        socket.off('schedule_updated', handleShiftEvent);
+      }
+    };
+  }, [location, user, fetchUserDetails]);
 
   useEffect(() => {
     if (user) {
@@ -351,6 +390,108 @@ const Profile = () => {
               <span className="text-foreground font-semibold">
                 {user?.joiningDate ? new Date(user.joiningDate).toLocaleDateString() : '01/01/2023'}
               </span>
+            </div>
+            <div className="flex flex-col gap-2 pt-2 border-t border-border/40">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-muted-foreground">Current Shift</span>
+                <span className="text-foreground font-semibold flex items-center gap-1.5">
+                  <span>{upcomingSchedule?.today?.shiftName || userShift?.name || fullUserDetails?.shiftAssignment?.shift?.name || 'Company Default'}</span>
+                  {(upcomingSchedule?.today?.startTime || userShift?.startTime) && (
+                    <span className="text-xs text-muted-foreground">
+                      ({upcomingSchedule?.today?.startTime || userShift?.startTime} – {upcomingSchedule?.today?.endTime || userShift?.endTime})
+                    </span>
+                  )}
+                </span>
+              </div>
+
+              {upcomingSchedule?.today?.scheduleType && upcomingSchedule.today.scheduleType !== 'PERMANENT' && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-muted-foreground">Active Override</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded bg-purple-500/10 text-purple-600 border border-purple-500/20">
+                    <Zap className="h-2.5 w-2.5" />
+                    <span>{upcomingSchedule.today.scheduleType}</span>
+                    {upcomingSchedule.today.scheduleReason && (
+                      <span className="text-muted-foreground font-normal">({upcomingSchedule.today.scheduleReason})</span>
+                    )}
+                  </span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-bold text-muted-foreground">Today's Status</span>
+                <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase border ${
+                  (upcomingSchedule?.today?.status || userShift?.todayStatus) === 'Holiday'
+                    ? 'bg-rose-500/10 text-rose-600 border-rose-500/20'
+                    : (upcomingSchedule?.today?.status || userShift?.todayStatus) === 'WFH'
+                    ? 'bg-purple-500/10 text-purple-600 border-purple-500/20'
+                    : 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
+                }`}>
+                  {upcomingSchedule?.today?.status || userShift?.todayStatus || 'Working'}
+                </span>
+              </div>
+
+              {upcomingSchedule?.tomorrow && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-muted-foreground">Tomorrow</span>
+                  <span className="text-foreground font-semibold flex items-center gap-1.5">
+                    <span>{upcomingSchedule.tomorrow.shiftName}</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      ({upcomingSchedule.tomorrow.formattedStart} – {upcomingSchedule.tomorrow.formattedEnd})
+                    </span>
+                    <span className={`text-[9px] font-black px-1.5 py-0.2 rounded uppercase ${
+                      upcomingSchedule.tomorrow.status === 'Holiday'
+                        ? 'bg-rose-500/10 text-rose-600'
+                        : upcomingSchedule.tomorrow.status === 'WFH'
+                        ? 'bg-purple-500/10 text-purple-600'
+                        : 'bg-emerald-500/10 text-emerald-600'
+                    }`}>
+                      {upcomingSchedule.tomorrow.status}
+                    </span>
+                  </span>
+                </div>
+              )}
+
+              {userShift?.nextWorkingDay && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-muted-foreground">Next Working Day</span>
+                  <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                    {userShift.nextWorkingDay.formattedText}
+                  </span>
+                </div>
+              )}
+
+              {/* 7-Day Mini Schedule Strip */}
+              {upcomingSchedule?.upcomingDays && upcomingSchedule.upcomingDays.length > 0 && (
+                <div className="pt-2 border-t border-border/30 space-y-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground block">
+                    Upcoming 7 Days
+                  </span>
+                  <div className="grid grid-cols-7 gap-1 text-center">
+                    {upcomingSchedule.upcomingDays.map((dItem, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-1 rounded-lg border text-center ${
+                          dItem.isToday
+                            ? 'border-emerald-500/50 bg-emerald-500/10'
+                            : 'border-border/40 bg-muted/10'
+                        }`}
+                      >
+                        <div className="text-[9px] font-black text-foreground">{dItem.dayName?.substring(0, 3)}</div>
+                        <div className="text-[8px] text-muted-foreground font-mono">{dItem.date?.split('-')[2]}</div>
+                        <div className={`text-[7px] font-black uppercase mt-0.5 px-0.5 rounded ${
+                          dItem.status === 'Holiday'
+                            ? 'text-rose-600'
+                            : dItem.status === 'WFH'
+                            ? 'text-purple-600'
+                            : 'text-emerald-600'
+                        }`}>
+                          {dItem.status === 'Working' ? 'Work' : dItem.status === 'Holiday' ? 'Off' : 'WFH'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -626,6 +767,46 @@ const Profile = () => {
                     <span className="text-[10px] text-muted-foreground">{new Date(item.effectiveDate).toLocaleDateString()}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground font-medium">Reason: {item.reason || 'Career advancement'}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <h3 className="text-sm font-extrabold uppercase tracking-wide text-foreground pt-4 border-t border-border/40 pb-3 flex items-center gap-2">
+            <Clock className="h-4 w-4 text-primary" />
+            <span>Shift Change Timeline</span>
+          </h3>
+
+          {shiftTimeline.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic font-semibold py-4 text-center">
+              No shift adjustments or overrides recorded. Currently on default assignment.
+            </p>
+          ) : (
+            <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+              {shiftTimeline.map((item) => (
+                <div key={item.id} className="p-3.5 rounded-2xl border border-border/40 bg-muted/20 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-foreground flex items-center gap-1.5">
+                      <span>{item.title}</span>
+                      <span className="px-1.5 py-0.2 rounded text-[9px] font-black uppercase bg-primary/10 text-primary border border-primary/20">
+                        {item.type}
+                      </span>
+                    </span>
+                    <span className="text-[10px] font-mono text-muted-foreground">
+                      {new Date(item.date).toLocaleDateString()} {new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-muted-foreground">
+                    <span>Shift: <strong className="text-foreground">{item.shiftName}</strong> ({item.timings})</span>
+                    <span className="text-[11px]">By: <strong className="text-foreground">{item.actor}</strong></span>
+                  </div>
+
+                  {item.reason && (
+                    <p className="text-[11px] text-muted-foreground font-medium italic">
+                      "{item.reason}"
+                    </p>
+                  )}
                 </div>
               ))}
             </div>

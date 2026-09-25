@@ -35,7 +35,11 @@ const getEffectiveSettings = async (organizationId) => {
     allowedRadiusMeters: 200.0,
     officeLocationName: 'Innoveity Headquarters',
     earlyWindowMinutes: 30,
-    gracePeriodMinutes: 15
+    gracePeriodMinutes: 15,
+    latePolicyEnabled: globalSettings?.latePolicyEnabled !== undefined ? globalSettings.latePolicyEnabled : true,
+    warningLateLimit: globalSettings?.warningLateLimit ?? 3,
+    deductionPerLate: globalSettings?.deductionPerLate || '1_DAY_SALARY',
+    latePolicyAppliesTo: globalSettings?.latePolicyAppliesTo || 'INTERN,EMPLOYEE,TEAM_LEADER'
   };
 
   if (!organizationId) {
@@ -85,7 +89,13 @@ const getEffectiveSettings = async (organizationId) => {
     allowedRadiusMeters: sysSettingsForOrg?.allowedRadiusMeters ?? defaultGlobal.allowedRadiusMeters ?? 200.0,
     officeLocationName: sysSettingsForOrg?.officeLocationName || defaultGlobal.officeLocationName || 'Innoveity Headquarters',
     earlyWindowMinutes: sysSettingsForOrg?.earlyWindowMinutes ?? defaultGlobal.earlyWindowMinutes ?? 30,
-    gracePeriodMinutes: sysSettingsForOrg?.gracePeriodMinutes ?? defaultGlobal.gracePeriodMinutes ?? 15
+    gracePeriodMinutes: sysSettingsForOrg?.gracePeriodMinutes ?? defaultGlobal.gracePeriodMinutes ?? 15,
+    latePolicyEnabled: sysSettingsForOrg?.latePolicyEnabled !== undefined
+      ? sysSettingsForOrg.latePolicyEnabled
+      : (orgSettings?.latePolicy?.enabled !== undefined ? orgSettings.latePolicy.enabled : defaultGlobal.latePolicyEnabled),
+    warningLateLimit: sysSettingsForOrg?.warningLateLimit ?? orgSettings?.latePolicy?.warningLateLimit ?? defaultGlobal.warningLateLimit,
+    deductionPerLate: sysSettingsForOrg?.deductionPerLate || orgSettings?.latePolicy?.deductionPerLate || defaultGlobal.deductionPerLate,
+    latePolicyAppliesTo: sysSettingsForOrg?.latePolicyAppliesTo || orgSettings?.latePolicy?.appliesTo || defaultGlobal.latePolicyAppliesTo
   };
 };
 

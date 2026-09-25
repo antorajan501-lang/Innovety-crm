@@ -1,63 +1,63 @@
 const os = require('os');
-const prisma = require('../utils/db');
-const { getOnlineCount } = require('../socket');
+const { getSystemHealth } = require('./healthService');
 
 /**
- * Measures PostgreSQL database response latency in milliseconds
+ * Monitoring Service for Innoveity CRM
+ * Maintains time-series telemetry buffer for real-time graphs and alerts.
  */
-async function measureDatabaseLatency() {
-  const start = Date.now();
+
+const timeSeriesHistory = [];
+const MAX_HISTORY_POINTS = 60; // Up to 60 snapshots
+
+const recordSnapshot = async () => {
   try {
-    await prisma.$queryRaw`SELECT 1`;
-    return Date.now() - start;
-  } catch (err) {
-    console.error('Database latency test failed:', err);
-    return -1;
-  }
-}
+    const health = await getSystemHealth();
+    const point = {
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      heapUsedMb: health.memory.heapUsedMb,
+      latencyMs: health.database.latencyMs >= 0 ? health.database.latencyMs : 0,
+      activeUsers: health.telemetry.activeUsers24h
+    };
 
-/**
- * Collects system health metrics
- */
-async function getPlatformHealthMetrics() {
-  const dbLatency = await measureDatabaseLatency();
-  const activeSockets = getOnlineCount ? getOnlineCount() : 0;
-
-  // Memory calculations
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
-  const memoryPercentage = Math.round((usedMem / totalMem) * 100);
-
-  // CPU Load average / calculation
-  const cpus = os.cpus();
-  let totalIdle = 0;
-  let totalTick = 0;
-  cpus.forEach((cpu) => {
-    for (const type in cpu.times) {
-      totalTick += cpu.times[type];
+    timeSeriesHistory.push(point);
+    if (timeSeriesHistory.length > MAX_HISTORY_POINTS) {
+      timeSeriesHistory.shift();
     }
-    totalIdle += cpu.times.idle;
-  });
-  const cpuPercentage = Math.min(100, Math.round(100 - (totalIdle / (totalTick || 1)) * 100));
+  } catch (e) {
+    // Ignore snapshot error
+  }
+};
 
-  // Node process memory usage
-  const processMemory = process.memoryUsage();
-  const heapUsedMB = Math.round(processMemory.heapUsed / (1024 * 1024));
+// Seed initial history point
+recordSnapshot();
+setInterval(recordSnapshot, 30 * 1000); // 30-second interval
 
+const getMonitoringData = async () => {
+  const currentHealth = await getSystemHealth();
   return {
-    uptimeSeconds: Math.floor(process.uptime()),
-    uptimeFormatted: `${Math.floor(process.uptime() / 3600)}h ${Math.floor((process.uptime() % 3600) / 60)}m`,
-    cpuPercentage: cpuPercentage || 12,
-    memoryPercentage,
-    heapUsedMB,
-    databaseLatencyMs: dbLatency,
-    socketConnections: activeSockets,
-    timestamp: new Date().toISOString()
+    current: currentHealth,
+    history: timeSeriesHistory,
+    alerts: [
+      {
+        id: 'ALT-1',
+        type: 'PERFORMANCE',
+        severity: currentHealth.database.latencyMs > 200 ? 'WARNING' : 'INFO',
+        message: currentHealth.database.latencyMs > 200
+          ? 'Database query latency exceeds 200ms threshold.'
+          : 'Database latency is optimal (< 50ms).',
+        timestamp: new Date()
+      },
+      {
+        id: 'ALT-2',
+        type: 'MEMORY',
+        severity: currentHealth.memory.heapUsedMb > 800 ? 'WARNING' : 'INFO',
+        message: `Node.js Heap usage is ${currentHealth.memory.heapUsedMb} MB.`,
+        timestamp: new Date()
+      }
+    ]
   };
-}
+};
 
 module.exports = {
-  measureDatabaseLatency,
-  getPlatformHealthMetrics
+  getMonitoringData
 };

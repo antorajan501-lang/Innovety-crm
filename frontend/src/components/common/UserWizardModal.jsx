@@ -1072,7 +1072,7 @@ const UserWizardModal = ({
                 ) : (
                   <div className="p-3 rounded-2xl bg-card border border-border/80 flex items-center justify-between shadow-xs">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600">
+                      <div className="p-2 rounded-xl bg-primary/10 text-primary">
                         <FileText className="h-5 w-5" />
                       </div>
                       <div className="text-left">
@@ -1246,7 +1246,7 @@ const UserWizardModal = ({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex items-center gap-1.5 px-6 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-md cursor-pointer disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-6 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-extrabold shadow-md shadow-primary/20 cursor-pointer disabled:opacity-50"
                 >
                   <CheckCircle2 className="h-4 w-4" />
                   <span>{isEdit ? 'Save Changes' : 'Complete Onboarding'}</span>

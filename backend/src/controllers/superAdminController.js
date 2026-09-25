@@ -262,14 +262,40 @@ const getPlatformSettings = async (req, res) => {
           themeMode: stored.themeMode || dbTheme.themeMode || dbBranding.themeMode || 'light',
           chatEnabledForAdmins: orgObj.chatEnabledForAdmins,
           chatEnabledForUsers: orgObj.chatEnabledForUsers,
+          loginPrimaryColor: stored.loginPrimaryColor || dbBranding.loginPrimaryColor || '#F97316',
+          loginBackgroundType: stored.loginBackgroundType || dbBranding.loginBackgroundType || 'gradient',
+          loginBackgroundColor: stored.loginBackgroundColor || dbBranding.loginBackgroundColor || '#0F172A',
+          loginGradientStart: stored.loginGradientStart || dbBranding.loginGradientStart || '#0F172A',
+          loginGradientEnd: stored.loginGradientEnd || dbBranding.loginGradientEnd || '#1E293B',
+          loginGradientDirection: stored.loginGradientDirection || dbBranding.loginGradientDirection || 'to bottom right',
+          loginBackgroundImage: stored.loginBackgroundImage || dbBranding.loginBackgroundImage || null,
+          loginCardStyle: stored.loginCardStyle || dbBranding.loginCardStyle || 'glass',
+          loginButtonStyle: stored.loginButtonStyle || dbBranding.loginButtonStyle || 'rounded',
+          showLoginLogo: stored.showLoginLogo !== undefined ? stored.showLoginLogo : (dbBranding.showLoginLogo !== undefined ? dbBranding.showLoginLogo : true),
+          loginWelcomeTitle: stored.loginWelcomeTitle || dbBranding.loginWelcomeTitle || `Welcome to ${stored.companyName || org.name}`,
+          loginWelcomeSubtitle: stored.loginWelcomeSubtitle || dbBranding.loginWelcomeSubtitle || 'Sign in to continue to your workspace',
           platform: platformObj,
           organization: orgObj
         });
       }
     }
 
+    const globalStored = getCompanyBranding('GLOBAL') || {};
+
     res.json({
       ...platform,
+      loginPrimaryColor: globalStored.loginPrimaryColor || '#F97316',
+      loginBackgroundType: globalStored.loginBackgroundType || 'gradient',
+      loginBackgroundColor: globalStored.loginBackgroundColor || '#0F172A',
+      loginGradientStart: globalStored.loginGradientStart || '#0F172A',
+      loginGradientEnd: globalStored.loginGradientEnd || '#1E293B',
+      loginGradientDirection: globalStored.loginGradientDirection || 'to bottom right',
+      loginBackgroundImage: globalStored.loginBackgroundImage || null,
+      loginCardStyle: globalStored.loginCardStyle || 'glass',
+      loginButtonStyle: globalStored.loginButtonStyle || 'rounded',
+      showLoginLogo: globalStored.showLoginLogo !== undefined ? globalStored.showLoginLogo : true,
+      loginWelcomeTitle: globalStored.loginWelcomeTitle || 'Welcome to Innoveity Tech',
+      loginWelcomeSubtitle: globalStored.loginWelcomeSubtitle || 'Sign in to continue to your workspace',
       platform: platformObj,
       organization: null
     });
@@ -286,7 +312,12 @@ const updatePlatformSettings = async (req, res) => {
   try {
     const {
       companyName, companyLogo, selectedTheme, themeMode, removeLogo, organizationId,
-      chatEnabledForAdmins, chatEnabledForUsers
+      chatEnabledForAdmins, chatEnabledForUsers,
+      loginPrimaryColor, loginBackgroundType, loginBackgroundColor,
+      loginGradientStart, loginGradientEnd, loginGradientDirection,
+      loginBackgroundImage, removeBackgroundImage,
+      loginCardStyle, loginButtonStyle, showLoginLogo,
+      loginWelcomeTitle, loginWelcomeSubtitle
     } = req.body;
 
     const parseBool = (val, fallback) => {
@@ -295,13 +326,8 @@ const updatePlatformSettings = async (req, res) => {
       return fallback;
     };
 
-    console.log('[TRACE B1] Controller entered');
-    console.log('[TRACE B2] Raw req.body:', req.body);
-    console.log('[TRACE B3] organizationId:', organizationId || null);
-
     const parsedAdmins = parseBool(chatEnabledForAdmins, undefined);
     const parsedUsers = parseBool(chatEnabledForUsers, undefined);
-    console.log('[TRACE B4] Parsed booleans:', { chatEnabledForAdmins: parsedAdmins, chatEnabledForUsers: parsedUsers });
 
     if (organizationId) {
       const org = await prisma.organization.findUnique({
@@ -319,12 +345,6 @@ const updatePlatformSettings = async (req, res) => {
         });
       } catch (e) {}
 
-      console.log('[TRACE B5] DB before update:', dbOrgSettings ? {
-        organizationId: dbOrgSettings.organizationId,
-        chatEnabledForAdmins: dbOrgSettings.chatEnabledForAdmins,
-        chatEnabledForUsers: dbOrgSettings.chatEnabledForUsers
-      } : null);
-
       const currentTenantAdmins = dbOrgSettings?.chatEnabledForAdmins ?? true;
       const currentTenantUsers = dbOrgSettings?.chatEnabledForUsers ?? true;
 
@@ -333,13 +353,25 @@ const updatePlatformSettings = async (req, res) => {
 
       const stored = getCompanyBranding(organizationId) || {};
 
+      const logoFile = req.files?.logo?.[0] || req.file;
+      const bgFile = req.files?.backgroundImage?.[0];
+
       let newLogo = stored.companyLogo || org.logo || null;
-      if (req.file) {
-        newLogo = `/uploads/branding/${req.file.filename}`;
+      if (logoFile) {
+        newLogo = `/uploads/branding/${logoFile.filename}`;
       } else if (removeLogo === 'true' || removeLogo === true) {
         newLogo = null;
       } else if (companyLogo !== undefined) {
         newLogo = companyLogo;
+      }
+
+      let newBgImage = stored.loginBackgroundImage || null;
+      if (bgFile) {
+        newBgImage = `/uploads/branding/${bgFile.filename}`;
+      } else if (removeBackgroundImage === 'true' || removeBackgroundImage === true) {
+        newBgImage = null;
+      } else if (loginBackgroundImage !== undefined) {
+        newBgImage = loginBackgroundImage;
       }
 
       const newName = companyName || stored.companyName || org.name;
@@ -352,10 +384,23 @@ const updatePlatformSettings = async (req, res) => {
         selectedTheme: newTheme,
         themeMode: newMode,
         chatEnabledForAdmins: newTenantChatAdmins,
-        chatEnabledForUsers: newTenantChatUsers
+        chatEnabledForUsers: newTenantChatUsers,
+        loginPrimaryColor: loginPrimaryColor || stored.loginPrimaryColor || '#F97316',
+        loginBackgroundType: loginBackgroundType || stored.loginBackgroundType || 'gradient',
+        loginBackgroundColor: loginBackgroundColor || stored.loginBackgroundColor || '#0F172A',
+        loginGradientStart: loginGradientStart || stored.loginGradientStart || '#0F172A',
+        loginGradientEnd: loginGradientEnd || stored.loginGradientEnd || '#1E293B',
+        loginGradientDirection: loginGradientDirection || stored.loginGradientDirection || 'to bottom right',
+        loginBackgroundImage: newBgImage,
+        loginCardStyle: loginCardStyle || stored.loginCardStyle || 'glass',
+        loginButtonStyle: loginButtonStyle || stored.loginButtonStyle || 'rounded',
+        showLoginLogo: showLoginLogo !== undefined ? parseBool(showLoginLogo, true) : (stored.showLoginLogo !== undefined ? stored.showLoginLogo : true),
+        loginWelcomeTitle: loginWelcomeTitle || stored.loginWelcomeTitle || `Welcome to ${newName}`,
+        loginWelcomeSubtitle: loginWelcomeSubtitle || stored.loginWelcomeSubtitle || 'Sign in to continue to your workspace'
       };
 
       setCompanyBranding(organizationId, brandingData);
+      setCompanyBranding('GLOBAL', brandingData);
 
       try {
         await prisma.organization.update({
@@ -502,6 +547,10 @@ const updatePlatformSettings = async (req, res) => {
       }
     });
 
+    if (loginPrimaryColor) {
+      setCompanyBranding('GLOBAL', { loginPrimaryColor });
+    }
+
     const dbAfterSaveGlobal = await prisma.platformSettings.findUnique({
       where: { id: 'PLATFORM' }
     });
@@ -535,8 +584,37 @@ const updatePlatformSettings = async (req, res) => {
       console.warn('Failed to emit chat_settings_updated:', errSocket.message);
     }
 
+    // Persist global login theme customization
+    const globalStored = getCompanyBranding('GLOBAL') || {};
+    const globalBgFile = req.files?.backgroundImage?.[0];
+    let newGlobalBgImage = globalStored.loginBackgroundImage || null;
+    if (globalBgFile) {
+      newGlobalBgImage = `/uploads/branding/${globalBgFile.filename}`;
+    } else if (removeBackgroundImage === 'true' || removeBackgroundImage === true) {
+      newGlobalBgImage = null;
+    } else if (loginBackgroundImage !== undefined) {
+      newGlobalBgImage = loginBackgroundImage;
+    }
+
+    const globalLoginData = {
+      loginPrimaryColor: loginPrimaryColor || globalStored.loginPrimaryColor || '#F97316',
+      loginBackgroundType: loginBackgroundType || globalStored.loginBackgroundType || 'gradient',
+      loginBackgroundColor: loginBackgroundColor || globalStored.loginBackgroundColor || '#0F172A',
+      loginGradientStart: loginGradientStart || globalStored.loginGradientStart || '#0F172A',
+      loginGradientEnd: loginGradientEnd || globalStored.loginGradientEnd || '#1E293B',
+      loginGradientDirection: loginGradientDirection || globalStored.loginGradientDirection || 'to bottom right',
+      loginBackgroundImage: newGlobalBgImage,
+      loginCardStyle: loginCardStyle || globalStored.loginCardStyle || 'glass',
+      loginButtonStyle: loginButtonStyle || globalStored.loginButtonStyle || 'rounded',
+      showLoginLogo: showLoginLogo !== undefined ? parseBool(showLoginLogo, true) : (globalStored.showLoginLogo !== undefined ? globalStored.showLoginLogo : true),
+      loginWelcomeTitle: loginWelcomeTitle || globalStored.loginWelcomeTitle || 'Welcome to Innoveity Tech',
+      loginWelcomeSubtitle: loginWelcomeSubtitle || globalStored.loginWelcomeSubtitle || 'Sign in to continue to your workspace'
+    };
+    setCompanyBranding('GLOBAL', globalLoginData);
+
     res.json({
       ...updated,
+      ...globalLoginData,
       platform: {
         chatEnabledForAdmins: updated.chatEnabledForAdmins,
         chatEnabledForUsers: updated.chatEnabledForUsers
@@ -554,9 +632,13 @@ const updatePlatformSettings = async (req, res) => {
  */
 const getUsersDirectory = async (req, res) => {
   try {
-    const { search, role, status, page = 1, limit = 20 } = req.query;
+    const { search, role, status, page = 1, limit = 20, organizationId } = req.query;
 
     const where = {};
+
+    if (organizationId && organizationId !== 'all') {
+      where.organizationId = organizationId;
+    }
 
     if (search) {
       where.OR = [
@@ -574,6 +656,8 @@ const getUsersDirectory = async (req, res) => {
     if (status && status !== 'ALL') {
       where.status = status;
     }
+
+    const orgScope = (organizationId && organizationId !== 'all') ? { organizationId } : {};
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
     const take = parseInt(limit);
@@ -611,11 +695,11 @@ const getUsersDirectory = async (req, res) => {
         take
       }),
       prisma.user.count({ where }),
-      prisma.user.count({ where: { role: 'SUPER_ADMIN' } }),
-      prisma.user.count({ where: { role: 'ADMIN' } }),
-      prisma.user.count({ where: { role: 'TEAM_LEADER' } }),
-      prisma.user.count({ where: { role: 'EMPLOYEE' } }),
-      prisma.user.count({ where: { role: 'INTERN' } })
+      prisma.user.count({ where: { role: 'SUPER_ADMIN', ...orgScope } }),
+      prisma.user.count({ where: { role: 'ADMIN', ...orgScope } }),
+      prisma.user.count({ where: { role: 'TEAM_LEADER', ...orgScope } }),
+      prisma.user.count({ where: { role: 'EMPLOYEE', ...orgScope } }),
+      prisma.user.count({ where: { role: 'INTERN', ...orgScope } })
     ]);
 
     res.json({

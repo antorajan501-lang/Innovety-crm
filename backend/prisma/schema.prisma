@@ -246,6 +246,22 @@ model User {
   requestedStageAudits     TaskStageApprovalAudit[] @relation("StageAuditRequestedBy")
   approvedStageAudits      TaskStageApprovalAudit[] @relation("StageAuditApprovedBy")
   createdWorkCalendars     WorkCalendar[]           @relation("WorkCalendarCreator")
+  shiftAssignment          ShiftMember?
+  shiftHistories           ShiftHistory[]
+  shiftSchedules           ShiftSchedule[]          @relation("UserShiftSchedules")
+  swapShiftSchedules       ShiftSchedule[]          @relation("UserSwapSchedules")
+  createdShiftSchedules    ShiftSchedule[]          @relation("ShiftScheduleCreator")
+  shiftNotifications       ShiftNotification[]
+  shiftApprovalsRequested  ShiftApproval[]          @relation("ShiftApprovalRequester")
+  shiftApprovalsDecided    ShiftApproval[]          @relation("ShiftApprovalApprover")
+  shiftExceptions          ShiftException[]         @relation("UserShiftExceptions")
+  shiftExceptionsResolved  ShiftException[]         @relation("ResolvedShiftExceptions")
+  hostedVisitors           Visitor[]                @relation("HostVisitors")
+  documents                EmployeeDocument[]       @relation("UserDocuments")
+  uploadedDocuments        EmployeeDocument[]       @relation("UploadedByDocuments")
+  connectedIntegrations    ExternalIntegration[]    @relation("ConnectedIntegrations")
+  performedAuditLogs       OrganizationAuditLog[]   @relation("AuditPerformedBy")
+  targetAuditLogs          OrganizationAuditLog[]   @relation("AuditTargetUser")
 }
 
 model Position {
@@ -314,16 +330,28 @@ model PromotionHistory {
 }
 
 model OrgBranch {
-  id        String   @id @default(uuid())
-  name      String   @unique
-  code      String   @unique
-  city      String?
-  country   String?  @default("India")
-  status    String   @default("ACTIVE")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String        @id @default(uuid())
+  organizationId   String?
+  name             String
+  code             String
+  address          String?
+  city             String?
+  country          String?       @default("India")
+  timezone         String        @default("Asia/Kolkata")
+  workingHoursRef  String?       @default("09:00 - 18:00")
+  status           String        @default("ACTIVE")
+  isArchived       Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  users     User[]   @relation("UserBranch")
+  organization     Organization? @relation("CompanyBranches", fields: [organizationId], references: [id], onDelete: Cascade)
+  users            User[]        @relation("UserBranch")
+  assets           Asset[]       @relation("BranchAssets")
+  visitors         Visitor[]     @relation("BranchVisitors")
+  events           OrganizationEvent[] @relation("BranchEvents")
+
+  @@index([organizationId])
+  @@index([organizationId, status])
 }
 
 model DepartmentMaster {
@@ -442,6 +470,10 @@ model Attendance {
   shiftEndAt       DateTime?
   autoClockOut     Boolean          @default(false)
   clockOutReason   String?
+  shiftId          String?
+  shiftName        String?
+  scheduledStartTime String?
+  scheduledEndTime   String?
 
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -564,6 +596,9 @@ enum AssetCategory {
   DESKTOP
   MONITOR
   MOBILE
+  PHONE
+  ID_CARD
+  ACCESSORIES
   KEYBOARD
   MOUSE
   HEADSET
@@ -588,6 +623,11 @@ model Asset {
   cost           Float?
   vendor         String?
   location       String?
+  branchId       String?
+  branch         OrgBranch?      @relation("BranchAssets", fields: [branchId], references: [id], onDelete: SetNull)
+  condition      String?         @default("EXCELLENT") // EXCELLENT, GOOD, FAIR, DAMAGED
+  issueDate      DateTime?
+  returnDate     DateTime?
   billPhoto      String?         // File path / URL for bill/invoice photocopy
   status         AssetStatus     @default(AVAILABLE)
   description    String?
@@ -608,6 +648,7 @@ model Asset {
   tickets        Ticket[]
 
   @@index([organizationId])
+  @@index([branchId])
 }
 
 model AssetAssignment {
@@ -711,6 +752,10 @@ model SystemSettings {
   clockInTime         String        @default("09:00") // Format HH:MM
   clockOutTime        String        @default("18:00") // Format HH:MM
   autoClockOutEnabled Boolean       @default(true)
+  latePolicyEnabled   Boolean       @default(true)
+  warningLateLimit    Int           @default(3)
+  deductionPerLate    String        @default("1_DAY_SALARY")
+  latePolicyAppliesTo String        @default("INTERN,EMPLOYEE,TEAM_LEADER")
   updatedAt           DateTime      @updatedAt
 }
 
@@ -1409,6 +1454,10 @@ model PayrollSettings {
   companyLogo           String?
   companyAddress        String        @default("100 Innovation Towers, Cyber City, Bangalore - 560001")
   authorizedSignature   String        @default("Authorized HR Signatory")
+  latePolicyEnabled     Boolean       @default(true)
+  warningLateLimit      Int           @default(3)
+  deductionPerLate      String        @default("1_DAY_SALARY")
+  latePolicyAppliesTo   String        @default("INTERN,EMPLOYEE,TEAM_LEADER")
   updatedAt             DateTime      @updatedAt
 }
 
@@ -1541,13 +1590,24 @@ model WorkCalendar {
 model OrganizationAuditLog {
   id             String       @id @default(cuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   action         String
+  category       String?      @default("GENERAL") // SECURITY, WORKFORCE, FINANCE, ORGANIZATION, ASSET
+  entityType     String?
+  entityId       String?
   details        Json?
   performedById  String?
+  targetUserId   String?
+  ipAddress      String?
+  userAgent      String?
   createdAt      DateTime     @default(now())
 
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  performedBy    User?        @relation("AuditPerformedBy", fields: [performedById], references: [id], onDelete: SetNull)
+  targetUser     User?        @relation("AuditTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
   @@index([organizationId])
+  @@index([organizationId, createdAt])
+  @@index([action])
 }
 
 model Organization {
@@ -1592,6 +1652,19 @@ model Organization {
   payrollSettings PayrollSettings? @relation("CompanyPayrollSettings")
   systemSettings  SystemSettings?  @relation("CompanySystemSettings")
   settings       OrganizationSettings?
+  shifts         Shift[]
+  shiftSchedules ShiftSchedule[]
+  shiftNotifications      ShiftNotification[]
+  shiftApprovals          ShiftApproval[]
+  recurringShiftTemplates RecurringShiftTemplate[]
+  shiftAutomationSetting  ShiftAutomationSetting?
+  shiftExceptions         ShiftException[]
+  workforceInsights       WorkforceInsight[]
+  branches                OrgBranch[]               @relation("CompanyBranches")
+  visitors                Visitor[]
+  documents               EmployeeDocument[]
+  events                  OrganizationEvent[]
+  integrations            ExternalIntegration[]
   activityLogs   ActivityLog[]
   auditLogs      OrganizationAuditLog[]
 }
@@ -1624,6 +1697,321 @@ model SubscriptionPlan {
   createdAt       DateTime       @default(now())
 
   organizations   Organization[]
+}
+
+model Shift {
+  id             String        @id @default(cuid())
+  organizationId String
+  name           String
+  startTime      String        // HH:mm format, e.g. "09:00"
+  endTime        String        // HH:mm format, e.g. "18:00"
+  workingDays    Json          // e.g. ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
+  status         String        @default("ACTIVE") // ACTIVE, INACTIVE
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  members        ShiftMember[]
+  history        ShiftHistory[]
+  schedules      ShiftSchedule[]
+  recurringTemplates RecurringShiftTemplate[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+}
+
+model ShiftMember {
+  id        String   @id @default(cuid())
+  shiftId   String
+  userId    String   @unique
+  createdAt DateTime @default(now())
+
+  shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([shiftId])
+  @@index([userId])
+}
+
+model ShiftHistory {
+  id        String   @id @default(cuid())
+  shiftId   String
+  userId    String?
+  action    String   // SHIFT_CREATED, SHIFT_EDITED, MEMBERS_ASSIGNED, MEMBERS_REMOVED, SHIFT_ACTIVATED, SHIFT_DEACTIVATED, SHIFT_DUPLICATED
+  details   String?
+  createdAt DateTime @default(now())
+
+  shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([shiftId])
+  @@index([shiftId, createdAt])
+}
+
+model ShiftSchedule {
+  id             String    @id @default(cuid())
+  organizationId String
+  userId         String
+  shiftId        String
+  startDate      DateTime
+  endDate        DateTime
+  type           String    // PLANNED, OVERRIDE, SWAP
+  status         String    @default("ACTIVE") // ACTIVE, EXPIRED, CANCELLED
+  reason         String?
+  swapWithUserId String?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation("UserShiftSchedules", fields: [userId], references: [id], onDelete: Cascade)
+  swapWithUser   User?        @relation("UserSwapSchedules", fields: [swapWithUserId], references: [id], onDelete: SetNull)
+  shift          Shift        @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  createdBy      User?        @relation("ShiftScheduleCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([userId, startDate, endDate])
+  @@index([organizationId, startDate, endDate])
+  @@index([status])
+}
+
+model ShiftNotification {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  type           String       // SHIFT_START_1H, SHIFT_CHANGED, OVERRIDE_ASSIGNED, SWAP_APPROVED, TOMORROW_SUMMARY, LATE_ALERT
+  title          String
+  message        String
+  isRead         Boolean      @default(false)
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([userId, isRead])
+  @@index([userId, createdAt])
+}
+
+model ShiftApproval {
+  id             String       @id @default(cuid())
+  organizationId String
+  requesterId    String
+  approverId     String?
+  requestType    String       // SHIFT_SWAP, TEMPORARY_OVERRIDE, WEEKEND_OVERRIDE, HOLIDAY_WORK
+  status         String       @default("PENDING_TL_APPROVAL") // PENDING_TL_APPROVAL, PENDING_ADMIN_APPROVAL, APPROVED, REJECTED
+  reason         String?
+  details        Json?        // { shiftId, targetDate, startDate, endDate, swapWithUserId, overrideReason, etc. }
+  adminNote      String?
+  tlNote         String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  requester      User         @relation("ShiftApprovalRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  approver       User?        @relation("ShiftApprovalApprover", fields: [approverId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([requesterId])
+  @@index([status])
+}
+
+model RecurringShiftTemplate {
+  id                String       @id @default(cuid())
+  organizationId    String
+  name              String       // e.g. "Every Monday Morning", "Every Weekend Coverage", "Alternate Saturdays", "Night Rotation"
+  shiftId           String
+  recurrencePattern String       // WEEKLY, EVERY_WEEKEND, ALTERNATE_SATURDAYS, CUSTOM_ROTATION
+  config            Json?        // { daysOfWeek: ["MONDAY"], intervalWeeks: 2, targetDepartments: [] }
+  status            String       @default("ACTIVE")
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  shift             Shift        @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model ShiftAutomationSetting {
+  id                       String       @id @default(cuid())
+  organizationId           String       @unique
+  shiftReminder1h          Boolean      @default(true)
+  tomorrowReminder         Boolean      @default(true)
+  overrideApprovalRequired Boolean      @default(false)
+  swapApprovalRequired     Boolean      @default(true)
+  weekendApprovalRequired  Boolean      @default(true)
+  holidayApprovalRequired  Boolean      @default(true)
+  lateAlert                Boolean      @default(true)
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+
+  organization             Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model ShiftException {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  attendanceId   String?
+  type           String       // LATE_ARRIVAL, MISSED_CLOCK_IN, MISSED_CLOCK_OUT, HOLIDAY_ATTENDANCE, UNAUTHORIZED_OVERTIME
+  date           DateTime
+  status         String       @default("OPEN") // OPEN, RESOLVED, DISMISSED
+  resolutionNote String?
+  resolvedById   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation("UserShiftExceptions", fields: [userId], references: [id], onDelete: Cascade)
+  resolvedBy     User?        @relation("ResolvedShiftExceptions", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([userId, date])
+  @@index([status])
+}
+
+model WorkforceInsight {
+  id             String       @id @default(cuid())
+  organizationId String
+  type           String       // OVERTIME_SPIKE, ATTENDANCE_IMPROVEMENT, CONSECUTIVE_DAYS, SHIFT_PUNCTUALITY, BURNOUT_RISK, FREQUENT_LATE
+  category       String?      @default("GENERAL") // PRODUCTIVITY, ATTENDANCE, COMPLIANCE, WELLNESS
+  title          String
+  message        String
+  severity       String       @default("INFO") // INFO, WARNING, CRITICAL, SUCCESS
+  metadata       Json?
+  isDismissed    Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+}
+
+model Visitor {
+  id             String        @id @default(cuid())
+  organizationId String
+  hostId         String
+  visitorName    String
+  email          String?
+  phone          String?
+  companyName    String?
+  purpose        String
+  qrCode         String        @unique
+  badgeNumber    String?
+  status         String        @default("PENDING_APPROVAL") // PENDING_APPROVAL, APPROVED, CHECKED_IN, CHECKED_OUT, REJECTED
+  approvalStatus String        @default("PENDING") // PENDING, APPROVED, REJECTED
+  checkIn        DateTime?
+  checkOut       DateTime?
+  branchId       String?
+  idProofType    String?
+  idProofNumber  String?
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  host           User          @relation("HostVisitors", fields: [hostId], references: [id], onDelete: Cascade)
+  branch         OrgBranch?    @relation("BranchVisitors", fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([hostId])
+}
+
+model EmployeeDocument {
+  id             String                    @id @default(cuid())
+  organizationId String
+  userId         String
+  documentType   String                    // AADHAAR, PAN, RESUME, OFFER_LETTER, CERTIFICATES, AGREEMENTS, OTHER
+  title          String
+  fileName       String
+  filePath       String
+  fileSize       Int?
+  mimeType       String?
+  version        Int                       @default(1)
+  status         String                    @default("VERIFIED") // PENDING, VERIFIED, REJECTED
+  notes          String?
+  uploadedById   String?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  organization   Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User                      @relation("UserDocuments", fields: [userId], references: [id], onDelete: Cascade)
+  uploadedBy     User?                     @relation("UploadedByDocuments", fields: [uploadedById], references: [id], onDelete: SetNull)
+  history        EmployeeDocumentHistory[]
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([documentType])
+}
+
+model EmployeeDocumentHistory {
+  id           String           @id @default(cuid())
+  documentId   String
+  document     EmployeeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  version      Int
+  fileName     String
+  filePath     String
+  fileSize     Int?
+  changeNotes  String?
+  uploadedById String?
+  createdAt    DateTime         @default(now())
+
+  @@index([documentId])
+}
+
+model OrganizationEvent {
+  id             String        @id @default(cuid())
+  organizationId String
+  branchId       String?
+  department     String?
+  title          String
+  description    String?
+  eventType      String        // TOWN_HALL, ALL_HANDS, TRAINING, CELEBRATION, DEADLINE, GENERAL
+  startDate      DateTime
+  endDate        DateTime
+  location       String?
+  isAllDay       Boolean       @default(false)
+  createdById    String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch         OrgBranch?    @relation("BranchEvents", fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([startDate, endDate])
+}
+
+model ExternalIntegration {
+  id             String        @id @default(cuid())
+  organizationId String
+  provider       String        // GMAIL, GOOGLE_CALENDAR, SLACK, MS_TEAMS, OUTLOOK
+  name           String
+  status         String        @default("DISCONNECTED") // CONNECTED, DISCONNECTED, ERROR, SYNCING
+  authType       String        @default("OAUTH2")
+  clientId       String?
+  clientSecret   String?
+  accessToken    String?
+  refreshToken   String?
+  tokenExpiresAt DateTime?
+  webhookUrl     String?
+  settings       Json?
+  lastSyncAt     DateTime?
+  lastSyncStatus String?       @default("IDLE") // SUCCESS, FAILED, IN_PROGRESS, IDLE
+  errorMessage   String?
+  connectedById  String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  connectedBy    User?         @relation("ConnectedIntegrations", fields: [connectedById], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, provider])
+  @@index([organizationId])
 }
 
 

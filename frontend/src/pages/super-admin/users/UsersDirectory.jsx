@@ -6,8 +6,11 @@ import {
 import api from '../../../services/api';
 import UserAvatar from '../../../components/common/UserAvatar';
 import CompanyBadge from '../../../components/common/CompanyBadge';
+import CompanyScopeSelector from '../../../components/common/CompanyScopeSelector';
+import { useCompanyScope } from '../../../context/CompanyScopeContext';
 
 const UsersDirectory = () => {
+  const { selectedOrgId } = useCompanyScope();
   const [users, setUsers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [roleCounts, setRoleCounts] = useState({
@@ -42,13 +45,17 @@ const UsersDirectory = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const params = new URLSearchParams({
+      const queryParams = {
         page,
         limit: 15,
         search,
         role: roleFilter,
         status: statusFilter
-      });
+      };
+      if (selectedOrgId && selectedOrgId !== 'all') {
+        queryParams.organizationId = selectedOrgId;
+      }
+      const params = new URLSearchParams(queryParams);
 
       const res = await api.get(`/super-admin/users?${params.toString()}`);
       setUsers(res.data.users || []);
@@ -66,7 +73,7 @@ const UsersDirectory = () => {
 
   useEffect(() => {
     fetchUsers();
-  }, [page, roleFilter, statusFilter]);
+  }, [page, roleFilter, statusFilter, selectedOrgId]);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -211,6 +218,9 @@ const UsersDirectory = () => {
         </div>
       </div>
 
+      {/* Shared Company Scope Selector Bar */}
+      <CompanyScopeSelector allowAllCompanies={true} />
+
       {toast.text && (
         <div className={`p-4 rounded-xl text-xs font-bold flex items-center gap-2 ${toast.type === 'success' ? 'bg-primary/10 text-primary border border-primary/30' : 'bg-red-500/10 text-red-500 border border-red-500/30'}`}>
           {toast.type === 'success' ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
@@ -240,14 +250,14 @@ const UsersDirectory = () => {
                 className={`flex items-center gap-2.5 px-5 py-2.5 rounded-full text-xs font-bold transition-all shrink-0 ${
                   isActive
                     ? 'bg-primary text-white shadow-sm'
-                    : 'bg-[#f1f5f9] dark:bg-slate-800 text-[#2d3748] dark:text-slate-200 hover:bg-[#e2e8f0] dark:hover:bg-slate-700'
+                    : 'bg-muted text-muted-foreground hover:bg-muted/80'
                 }`}
               >
                 <span>{tab.label}</span>
                 <span className={`px-2 py-0.5 rounded-full text-[11px] font-black min-w-[20px] text-center ${
                   isActive
                     ? 'bg-primary-hover text-white'
-                    : 'bg-[#dce4ec] dark:bg-slate-700 text-[#4a5568] dark:text-slate-300'
+                    : 'bg-muted/60 text-muted-foreground'
                 }`}>
                   {count}
                 </span>
@@ -261,7 +271,7 @@ const UsersDirectory = () => {
           <select
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-            className="rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-5 py-2.5 text-xs font-bold text-[#2d3748] dark:text-slate-200 focus:outline-none cursor-pointer shadow-2xs"
+            className="rounded-full border border-border bg-card px-5 py-2.5 text-xs font-bold text-foreground focus:outline-none cursor-pointer shadow-2xs"
           >
             <option value="ALL">All Statuses</option>
             <option value="ACTIVE">Active Only</option>
@@ -317,7 +327,7 @@ const UsersDirectory = () => {
                       type="checkbox"
                       checked={selectedUserIds.has(u.id)}
                       onChange={() => toggleSelectUser(u.id)}
-                      className="rounded border-border accent-emerald-600 cursor-pointer"
+                      className="rounded border-border accent-primary cursor-pointer"
                     />
                   </td>
                   <td className="px-4 py-4 whitespace-nowrap">

@@ -108,9 +108,6 @@ const ApplyLeaveModal = ({
       isPaid: true
     }));
 
-    if (!list.some((o) => o.id === 'WFH')) {
-      list.push({ id: 'WFH', name: 'Work From Home', label: 'Work From Home (WFH)', available: Infinity, isPaid: false });
-    }
     if (!list.some((o) => o.id === 'UNPAID' || o.id === 'LOP')) {
       list.push({ id: 'UNPAID', name: 'Loss of Pay / Unpaid Leave', label: 'Loss of Pay / Unpaid Leave (LOP)', available: Infinity, isPaid: false });
     }

@@ -39,6 +39,12 @@ export const CompanyScopeProvider = ({ children }) => {
   const safeCompanies = Array.isArray(companies) ? companies : [];
 
   const fetchCompanies = useCallback(async () => {
+    if (!user) {
+      setCompanies([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const res = await api.get('/organizations');
@@ -47,12 +53,12 @@ export const CompanyScopeProvider = ({ children }) => {
 
       if (isSuperAdmin) {
         if (comps.length > 0) {
-          const targetId = selectedOrgIdState || localStorage.getItem('mrf_selected_company_id');
-          const isValidTarget = targetId && (targetId === 'all' || comps.some((c) => (c.id || c._id) === targetId));
+          const storedId = localStorage.getItem('mrf_selected_company_id');
+          const isValidTarget = storedId && (storedId === 'all' || comps.some((c) => (c.id || c._id) === storedId));
 
           if (isValidTarget) {
-            setSelectedOrgIdState(targetId);
-            return targetId;
+            setSelectedOrgIdState(storedId);
+            return storedId;
           }
 
           // If target company was deleted or invalid, fallback to userOrg or innoveity or comps[0]
@@ -61,7 +67,6 @@ export const CompanyScopeProvider = ({ children }) => {
 
           if (defaultOrg) {
             const defId = defaultOrg.id || defaultOrg._id;
-            console.log('[CompanyScopeContext] Selected organization no longer exists. Switching to default:', defId);
             setSelectedOrgIdState(defId);
             localStorage.setItem('mrf_selected_company_id', defId);
             return defId;
@@ -83,7 +88,7 @@ export const CompanyScopeProvider = ({ children }) => {
       setLoading(false);
     }
     return selectedOrgId;
-  }, [userOrgId, isSuperAdmin, selectedOrgIdState, selectedOrgId]);
+  }, [user, userOrgId, isSuperAdmin, selectedOrgId]);
 
   useEffect(() => {
     fetchCompanies();
@@ -122,7 +127,6 @@ export const CompanyScopeProvider = ({ children }) => {
   useEffect(() => {
     if (!user) {
       setSelectedOrgIdState('');
-      localStorage.removeItem('mrf_selected_company_id');
       setCompanies([]);
       return;
     }
@@ -133,7 +137,10 @@ export const CompanyScopeProvider = ({ children }) => {
       }
       localStorage.removeItem('mrf_selected_company_id');
     } else {
-      if (!selectedOrgIdState && userOrgId) {
+      const stored = localStorage.getItem('mrf_selected_company_id');
+      if (stored) {
+        setSelectedOrgIdState(stored);
+      } else if (userOrgId) {
         setSelectedOrgIdState(userOrgId);
       }
     }

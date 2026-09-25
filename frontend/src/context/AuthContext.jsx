@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
-import api, { disconnectSocket, setManualLogoutFlag } from '../services/api';
+import api, { disconnectSocket, setManualLogoutFlag, clearAuthStorage } from '../services/api';
 import { setPlatformBranding } from '../utils/branding';
 
 const AuthContext = createContext(null);
@@ -14,16 +14,22 @@ export const AuthProvider = ({ children }) => {
     if (isManual) {
       setManualLogoutFlag(true);
     }
-    disconnectSocket();
+    // 1. Drop authorization header immediately
     if (api.defaults.headers.common) {
       delete api.defaults.headers.common['Authorization'];
     }
-    localStorage.clear();
-    sessionStorage.clear();
+
+    // 2. Clear auth state in React
     setToken(null);
     setUser(null);
     setIsTempPassword(false);
-    setPlatformBranding();
+
+    // 3. Asynchronously perform storage cleanup and socket disconnection in background
+    setTimeout(() => {
+      clearAuthStorage();
+      disconnectSocket();
+      setPlatformBranding();
+    }, 0);
   };
 
   useEffect(() => {
@@ -75,8 +81,7 @@ export const AuthProvider = ({ children }) => {
       if (api.defaults.headers.common) {
         delete api.defaults.headers.common['Authorization'];
       }
-      localStorage.clear();
-      sessionStorage.clear();
+      clearAuthStorage();
       setToken(null);
       setUser(null);
 

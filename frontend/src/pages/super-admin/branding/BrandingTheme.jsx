@@ -3,7 +3,8 @@ import { motion } from 'framer-motion';
 import {
   Palette, Upload, Image as ImageIcon, Trash2, CheckCircle2,
   Building2, Save, Sun, Moon, Sparkles, RefreshCw, AlertCircle,
-  MessageSquare, MessageCircle, Shield, Users, Info, Loader2
+  MessageSquare, MessageCircle, Shield, Users, Info, Loader2,
+  Sliders, Undo2
 } from 'lucide-react';
 import api, { getUploadUrl } from '../../../services/api';
 import { useTheme } from '../../../context/ThemeContext';
@@ -55,9 +56,9 @@ const THEME_PRESETS = [
     id: 'dark-corporate',
     name: 'Dark Corporate',
     description: 'Sleek dark slate with sky cyan accents',
-    sidebarColor: 'bg-slate-950',
-    headerColor: 'bg-slate-900',
-    buttonColor: 'bg-sky-500 text-slate-950',
+    sidebarColor: 'bg-primary-dark',
+    headerColor: 'bg-card',
+    buttonColor: 'bg-sky-500 text-foreground',
     accentColor: 'bg-cyan-400',
     cardBorder: 'border-sky-500/40'
   },
@@ -70,6 +71,81 @@ const THEME_PRESETS = [
     buttonColor: 'bg-rose-900 text-white',
     accentColor: 'bg-rose-600',
     cardBorder: 'border-rose-900/40'
+  }
+];
+
+const LOGIN_COLOR_THEMES = [
+  {
+    id: 'orange',
+    name: 'Innoveity Orange (Default)',
+    description: 'Energetic brand signature with vivid warm orange highlights',
+    primaryColor: '#F97316',
+    accentColor: '#EA580C',
+    buttonColor: 'bg-orange-500 text-white',
+    cardBorder: 'border-orange-500/50'
+  },
+  {
+    id: 'emerald',
+    name: 'Emerald Green',
+    description: 'Clean mint and deep emerald tones for natural corporate poise',
+    primaryColor: '#10B981',
+    accentColor: '#059669',
+    buttonColor: 'bg-emerald-600 text-white',
+    cardBorder: 'border-emerald-500/50'
+  },
+  {
+    id: 'blue',
+    name: 'Royal Blue',
+    description: 'Authoritative royal blue palette with dynamic blue undertones',
+    primaryColor: '#2563EB',
+    accentColor: '#1D4ED8',
+    buttonColor: 'bg-blue-600 text-white',
+    cardBorder: 'border-blue-500/50'
+  },
+  {
+    id: 'purple',
+    name: 'Modern Violet',
+    description: 'Contemporary deep violet with radiant purple energy',
+    primaryColor: '#8B5CF6',
+    accentColor: '#7C3AED',
+    buttonColor: 'bg-purple-600 text-white',
+    cardBorder: 'border-purple-500/50'
+  },
+  {
+    id: 'rose',
+    name: 'Rose Red',
+    description: 'Sophisticated ruby rose theme tailored for high-contrast clarity',
+    primaryColor: '#F43F5E',
+    accentColor: '#E11D48',
+    buttonColor: 'bg-rose-600 text-white',
+    cardBorder: 'border-rose-500/50'
+  },
+  {
+    id: 'amber',
+    name: 'Warm Amber',
+    description: 'Rich amber and warm ochre tones for an inviting aesthetic',
+    primaryColor: '#D97706',
+    accentColor: '#B45309',
+    buttonColor: 'bg-amber-600 text-white',
+    cardBorder: 'border-amber-500/50'
+  },
+  {
+    id: 'cyan',
+    name: 'Deep Cyan',
+    description: 'Crisp turquoise and deep ocean cyan for tech-forward enterprises',
+    primaryColor: '#06B6D4',
+    accentColor: '#0891B2',
+    buttonColor: 'bg-cyan-600 text-white',
+    cardBorder: 'border-cyan-500/50'
+  },
+  {
+    id: 'slate',
+    name: 'Charcoal Slate',
+    description: 'Refined dark slate and minimalist charcoal executive styling',
+    primaryColor: '#334155',
+    accentColor: '#1E293B',
+    buttonColor: 'bg-slate-700 text-white',
+    cardBorder: 'border-slate-500/50'
   }
 ];
 
@@ -138,6 +214,9 @@ const BrandingTheme = () => {
   const [logoPreview, setLogoPreview] = useState(ctxLogo ? getUploadUrl(ctxLogo) : null);
   const [removeLogo, setRemoveLogo] = useState(false);
 
+  // Login Page Theme Customization State
+  const [loginPrimaryColor, setLoginPrimaryColor] = useState('#F97316');
+
   const [saving, setSaving] = useState(false);
   const [loadingBranding, setLoadingBranding] = useState(true);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -159,6 +238,18 @@ const BrandingTheme = () => {
         const userVal = res.data.organization?.chatEnabledForUsers ?? res.data.chatEnabledForUsers ?? true;
         setChatEnabledForAdmins(adminVal);
         setChatEnabledForUsers(userVal);
+
+        // Login Page Theme customization fields
+        const fetchedLoginColor = res.data.loginPrimaryColor || '#F97316';
+        setLoginPrimaryColor(fetchedLoginColor);
+        try {
+          localStorage.setItem('mrf_login_primary_color', fetchedLoginColor);
+          if (orgId && orgId !== 'all') {
+            localStorage.setItem(`mrf_login_theme_${orgId}`, fetchedLoginColor);
+          }
+        } catch (e) {
+          // ignore localStorage error
+        }
 
         updateThemeSettings({
           companyName: res.data.companyName,
@@ -196,6 +287,100 @@ const BrandingTheme = () => {
       setLogoFile(file);
       setRemoveLogo(false);
       setLogoPreview(URL.createObjectURL(file));
+    }
+  };
+
+  const handleBgImageChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setLoginBgFile(file);
+      setRemoveBgImage(false);
+      setLoginBgPreview(URL.createObjectURL(file));
+    }
+  };
+
+  const handleRemoveBgImage = () => {
+    setLoginBgFile(null);
+    setLoginBgPreview(null);
+    setRemoveBgImage(true);
+  };
+
+  const handleResetLoginTheme = () => {
+    const defaultColor = '#F97316';
+    setLoginPrimaryColor(defaultColor);
+    try {
+      localStorage.setItem('mrf_login_primary_color', defaultColor);
+      if (selectedOrgId && selectedOrgId !== 'all') {
+        localStorage.setItem(`mrf_login_theme_${selectedOrgId}`, defaultColor);
+      }
+      window.dispatchEvent(new CustomEvent('mrf_login_theme_changed', {
+        detail: { primaryColor: defaultColor, organizationId: selectedOrgId }
+      }));
+    } catch (e) {
+      // ignore localStorage error
+    }
+    setMessage({ type: 'success', text: 'Login theme reset to Innoveity Orange (Default). Click "Save Theme" to persist.' });
+    setTimeout(() => setMessage({ type: '', text: '' }), 4000);
+  };
+
+  const handleSave = async (e) => {
+    if (e) e.preventDefault();
+    setSaving(true);
+    setMessage({ type: '', text: '' });
+
+    try {
+      const formData = new FormData();
+      formData.append('companyName', companyName);
+      formData.append('selectedTheme', selectedTheme);
+      formData.append('themeMode', themeMode);
+      formData.append('chatEnabledForAdmins', String(chatEnabledForAdmins));
+      formData.append('chatEnabledForUsers', String(chatEnabledForUsers));
+      if (selectedOrgId) {
+        formData.append('organizationId', selectedOrgId);
+      }
+      if (removeLogo) {
+        formData.append('removeLogo', 'true');
+      }
+      if (logoFile) {
+        formData.append('logo', logoFile);
+      }
+
+      // Append Login Page Theme Primary Color
+      formData.append('loginPrimaryColor', loginPrimaryColor);
+
+      const res = await api.put('/super-admin/branding', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+
+      updateThemeSettings({
+        companyName: res.data.companyName,
+        companyLogo: res.data.companyLogo,
+        selectedTheme: res.data.selectedTheme,
+        themeMode: res.data.themeMode,
+        chatEnabledForAdmins: res.data.chatEnabledForAdmins,
+        chatEnabledForUsers: res.data.chatEnabledForUsers
+      });
+
+      // Sync login theme to localStorage and dispatch event
+      try {
+        localStorage.setItem('mrf_login_primary_color', loginPrimaryColor);
+        if (selectedOrgId && selectedOrgId !== 'all') {
+          localStorage.setItem(`mrf_login_theme_${selectedOrgId}`, loginPrimaryColor);
+        }
+        window.dispatchEvent(new CustomEvent('mrf_login_theme_changed', {
+          detail: { primaryColor: loginPrimaryColor, organizationId: selectedOrgId }
+        }));
+      } catch (e) {
+        // ignore localStorage error
+      }
+
+      setMessage({ type: 'success', text: 'Branding, login theme, and feature settings saved successfully!' });
+      setTimeout(() => setMessage({ type: '', text: '' }), 4000);
+    } catch (err) {
+      console.error('Failed to save branding settings:', err);
+      setMessage({ type: 'error', text: err.response?.data?.message || 'Failed to save settings.' });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -295,51 +480,6 @@ const BrandingTheme = () => {
     } finally {
       console.log('[TRACE F9] Finally block');
       setToggling(false);
-    }
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    setMessage({ type: '', text: '' });
-
-    try {
-      const formData = new FormData();
-      formData.append('companyName', companyName);
-      formData.append('selectedTheme', selectedTheme);
-      formData.append('themeMode', themeMode);
-      formData.append('chatEnabledForAdmins', String(chatEnabledForAdmins));
-      formData.append('chatEnabledForUsers', String(chatEnabledForUsers));
-      if (selectedOrgId) {
-        formData.append('organizationId', selectedOrgId);
-      }
-      if (removeLogo) {
-        formData.append('removeLogo', 'true');
-      }
-      if (logoFile) {
-        formData.append('logo', logoFile);
-      }
-
-      const res = await api.put('/super-admin/branding', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
-
-      updateThemeSettings({
-        companyName: res.data.companyName,
-        companyLogo: res.data.companyLogo,
-        selectedTheme: res.data.selectedTheme,
-        themeMode: res.data.themeMode,
-        chatEnabledForAdmins: res.data.chatEnabledForAdmins,
-        chatEnabledForUsers: res.data.chatEnabledForUsers
-      });
-
-      setMessage({ type: 'success', text: 'Branding and feature settings saved successfully!' });
-      setTimeout(() => setMessage({ type: '', text: '' }), 4000);
-    } catch (err) {
-      console.error('Failed to save branding settings:', err);
-      setMessage({ type: 'error', text: err.response?.data?.message || 'Failed to save settings.' });
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -558,8 +698,142 @@ const BrandingTheme = () => {
         </div>
       </div>
 
+      {/* ─── MODULE: LOGIN PAGE THEME (COLOR THEME ONLY) ─── */}
+      <div className="rounded-2xl border border-border/40 bg-card p-6 shadow-sm space-y-6">
+        <div className="border-b border-border/30 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
+              <Sliders className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-foreground">Login Page Theme</h3>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-full border border-border/40">
+                  Color Theme Only
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Customize the company login screen colors. Select a predefined color theme below.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleResetLoginTheme}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border border-border/80 hover:bg-muted text-foreground transition-all"
+              title="Reset login screen customizations to default"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+              <span>Reset to Default</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-primary text-white hover:bg-primary-hover shadow-md transition-all disabled:opacity-50"
+            >
+              {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              <span>{saving ? 'Saving...' : 'Save Theme'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* The 8 Predefined Theme Cards Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          {LOGIN_COLOR_THEMES.map((theme) => {
+            const isSelected = (loginPrimaryColor || '#F97316').toLowerCase() === theme.primaryColor.toLowerCase();
+
+            return (
+              <div
+                key={theme.id}
+                onClick={() => setLoginPrimaryColor(theme.primaryColor)}
+                className={`cursor-pointer rounded-2xl border-2 p-5 transition-all relative overflow-hidden flex flex-col justify-between space-y-4 hover:shadow-md ${
+                  isSelected
+                    ? `${theme.cardBorder} bg-primary/5 ring-2 ring-primary/30`
+                    : 'border-border/60 bg-card hover:border-border'
+                }`}
+              >
+                {isSelected && (
+                  <div className="absolute top-3.5 right-3.5 text-primary">
+                    <CheckCircle2 className="h-5 w-5 fill-primary text-white" />
+                  </div>
+                )}
+
+                <div className="space-y-1 pr-6">
+                  <h4 className="text-sm font-bold text-foreground">{theme.name}</h4>
+                  <p className="text-[11px] text-muted-foreground line-clamp-2">{theme.description}</p>
+                </div>
+
+                {/* Swatches Preview Box */}
+                <div className="space-y-2 bg-muted/30 p-3 rounded-xl border border-border/40">
+                  <span className="text-[9px] font-extrabold uppercase tracking-wider text-muted-foreground block">
+                    Swatches Preview
+                  </span>
+
+                  <div className="flex items-center gap-2">
+                    {/* Primary Color Swatch */}
+                    <div className="flex flex-col items-center gap-1">
+                      <div
+                        className="h-6 w-6 rounded-md shadow-2xs border border-border/40"
+                        style={{ backgroundColor: theme.primaryColor }}
+                      />
+                      <span className="text-[8px] text-muted-foreground">Primary</span>
+                    </div>
+
+                    {/* Accent Color Swatch */}
+                    <div className="flex flex-col items-center gap-1">
+                      <div
+                        className="h-6 w-6 rounded-md shadow-2xs border border-border/40"
+                        style={{ backgroundColor: theme.accentColor }}
+                      />
+                      <span className="text-[8px] text-muted-foreground">Accent</span>
+                    </div>
+
+                    {/* Login Button Preview */}
+                    <div className="flex flex-col items-center gap-1 ml-auto">
+                      <span
+                        className="px-2.5 py-1 rounded-lg text-[9px] font-bold shadow-2xs text-white"
+                        style={{ backgroundColor: theme.primaryColor }}
+                      >
+                        Log In
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Row */}
+                <div className="pt-1 flex items-center justify-between">
+                  <button
+                    type="button"
+                    className={`text-[11px] font-bold px-3 py-1 rounded-lg transition-all ${
+                      isSelected
+                        ? 'bg-primary text-white shadow-2xs'
+                        : 'bg-muted text-muted-foreground hover:text-foreground hover:bg-muted/80'
+                    }`}
+                  >
+                    {isSelected ? 'Active Theme' : 'Select Theme'}
+                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <div
+                      className="w-3.5 h-3.5 rounded-full border border-border/70"
+                      style={{ backgroundColor: theme.primaryColor }}
+                    />
+                    <div
+                      className="w-3.5 h-3.5 rounded-full border border-border/70"
+                      style={{ backgroundColor: theme.accentColor }}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* ─── CHAT ACCESS CONTROLS (SUPER ADMIN FEATURE TOGGLES) ─── */}
-      <div className="bg-card dark:bg-slate-900 border border-border/70 rounded-3xl p-6 shadow-md space-y-5">
+      <div className="bg-card border border-border/70 rounded-3xl p-6 shadow-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/40 pb-5">
           <div className="flex items-center gap-3.5">
             <div className="h-11 w-11 rounded-full bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
@@ -581,7 +855,7 @@ const BrandingTheme = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
           {/* Switch 1: Admin Chat */}
-          <div className="flex items-center justify-between p-5 rounded-[20px] border border-border/60 dark:border-slate-800/80 bg-background/50 hover:bg-background/80 hover:border-primary/30 transition-all duration-200 ease-in-out hover:-translate-y-[2px] hover:shadow-sm group">
+          <div className="flex items-center justify-between p-5 rounded-[20px] border border-border/60 bg-background/50 hover:bg-background/80 hover:border-primary/30 transition-all duration-200 ease-in-out hover:-translate-y-[2px] hover:shadow-sm group">
             <div className="flex items-center gap-3.5 pr-3 min-w-0">
               <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/15 text-primary flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-200">
                 <Shield className="h-5 w-5" />
@@ -589,7 +863,7 @@ const BrandingTheme = () => {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h4 className="text-base font-medium text-foreground truncate">Admin Chat</h4>
-                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${chatEnabledForAdmins ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 'bg-muted text-muted-foreground'}`}>
+                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${chatEnabledForAdmins ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-muted text-muted-foreground'}`}>
                     {chatEnabledForAdmins ? 'Enabled' : 'Disabled'}
                   </span>
                 </div>
@@ -605,7 +879,7 @@ const BrandingTheme = () => {
               aria-checked={chatEnabledForAdmins}
               onClick={() => handleToggleClick('ADMIN')}
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
-                chatEnabledForAdmins ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-700'
+                chatEnabledForAdmins ? 'bg-primary' : 'bg-muted border border-border'
               }`}
             >
               <span
@@ -617,7 +891,7 @@ const BrandingTheme = () => {
           </div>
 
           {/* Switch 2: User Chat */}
-          <div className="flex items-center justify-between p-5 rounded-[20px] border border-border/60 dark:border-slate-800/80 bg-background/50 hover:bg-background/80 hover:border-primary/30 transition-all duration-200 ease-in-out hover:-translate-y-[2px] hover:shadow-sm group">
+          <div className="flex items-center justify-between p-5 rounded-[20px] border border-border/60 bg-background/50 hover:bg-background/80 hover:border-primary/30 transition-all duration-200 ease-in-out hover:-translate-y-[2px] hover:shadow-sm group">
             <div className="flex items-center gap-3.5 pr-3 min-w-0">
               <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/15 text-primary flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform duration-200">
                 <Users className="h-5 w-5" />
@@ -625,7 +899,7 @@ const BrandingTheme = () => {
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h4 className="text-base font-medium text-foreground truncate">User Chat</h4>
-                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${chatEnabledForUsers ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' : 'bg-muted text-muted-foreground'}`}>
+                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${chatEnabledForUsers ? 'bg-primary/10 text-primary border border-primary/20' : 'bg-muted text-muted-foreground'}`}>
                     {chatEnabledForUsers ? 'Enabled' : 'Disabled'}
                   </span>
                 </div>
@@ -641,7 +915,7 @@ const BrandingTheme = () => {
               aria-checked={chatEnabledForUsers}
               onClick={() => handleToggleClick('USER')}
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 ${
-                chatEnabledForUsers ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-700'
+                chatEnabledForUsers ? 'bg-primary' : 'bg-muted border border-border'
               }`}
             >
               <span
@@ -666,7 +940,7 @@ const BrandingTheme = () => {
       {/* Confirmation Modal */}
       {showConfirmModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
-          <div className="bg-card dark:bg-slate-900 border border-border rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+          <div className="bg-card border border-border rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-3 text-primary">
               <AlertCircle className="h-6 w-6 shrink-0" />
               <h3 className="text-lg font-bold text-foreground">Confirm Feature Toggle</h3>
