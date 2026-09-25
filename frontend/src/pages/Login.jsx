@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { setPlatformBranding } from '../utils/branding';
 import api, { isManualLogout } from '../services/api';
 import { resolveLoginTheme, DEFAULT_LOGIN_THEME } from '../utils/loginTheme';
+import loginLogo from '../assets/login_logo.png';
 import {
   User,
   Lock,
@@ -450,7 +451,6 @@ const Login = () => {
   };
 
   const displayName = 'INNOVEITY';
-  const logoSrc = '/v-logo.png';
 
   const formatTimer = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -575,12 +575,9 @@ const Login = () => {
               {/* CENTER LOGO: Dynamic Transparent Company Logo */}
               <div className="relative z-20 flex items-center justify-center transition-transform duration-300 hover:scale-105">
                 <img
-                  src={logoSrc}
-                  alt={displayName}
-                  className="h-24 sm:h-32 w-auto object-contain mix-blend-multiply drop-shadow-md"
-                  onError={(e) => {
-                    e.target.src = '/v-logo.png';
-                  }}
+                  src={loginLogo}
+                  alt="Innoveity Logo"
+                  className="w-[220px] sm:w-[245px] h-auto object-contain drop-shadow-md"
                 />
               </div>
             </div>
