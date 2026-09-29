@@ -65,6 +65,104 @@
       "workingDaysOnly": true,
       "autoApproval": false,
       "updatedAt": "2026-09-17T03:09:20.921Z"
+    },
+    "all": {
+      "roles": {
+        "TEAM_LEADER": {
+          "role": "TEAM_LEADER",
+          "allocationType": "MONTHLY",
+          "carryForwardEnabled": true,
+          "maxCarryForwardDays": 5,
+          "halfDayAllowed": true,
+          "workingDaysOnly": true,
+          "autoApproval": false,
+          "updatedAt": "2026-09-29T08:38:11.454Z",
+          "allowances": {
+            "WFH": {
+              "annualDays": 24,
+              "monthlyCreditDays": 2
+            },
+            "CL": {
+              "annualDays": 12,
+              "monthlyCreditDays": 1
+            },
+            "SL": {
+              "annualDays": 10,
+              "monthlyCreditDays": 1
+            }
+          }
+        }
+      },
+      "allocationType": "MONTHLY",
+      "carryForwardEnabled": true,
+      "maxCarryForwardDays": 5,
+      "halfDayAllowed": true,
+      "workingDaysOnly": true,
+      "autoApproval": false,
+      "updatedAt": "2026-09-29T08:38:11.450Z",
+      "allowances": {
+        "WFH": {
+          "annualDays": 24,
+          "monthlyCreditDays": 2
+        },
+        "CL": {
+          "annualDays": 12,
+          "monthlyCreditDays": 1
+        },
+        "SL": {
+          "annualDays": 10,
+          "monthlyCreditDays": 1
+        }
+      }
+    },
+    "cmu5e48x30001bv4bpytsye40": {
+      "roles": {
+        "TEAM_LEADER": {
+          "role": "TEAM_LEADER",
+          "allocationType": "MONTHLY",
+          "carryForwardEnabled": true,
+          "maxCarryForwardDays": 5,
+          "halfDayAllowed": true,
+          "workingDaysOnly": true,
+          "autoApproval": false,
+          "updatedAt": "2026-09-29T08:48:55.679Z",
+          "allowances": {
+            "WFH": {
+              "annualDays": 24,
+              "monthlyCreditDays": 2
+            },
+            "CL": {
+              "annualDays": 12,
+              "monthlyCreditDays": 1
+            },
+            "SL": {
+              "annualDays": 10,
+              "monthlyCreditDays": 1
+            }
+          }
+        }
+      },
+      "allocationType": "MONTHLY",
+      "carryForwardEnabled": true,
+      "maxCarryForwardDays": 5,
+      "halfDayAllowed": true,
+      "workingDaysOnly": true,
+      "autoApproval": false,
+      "updatedAt": "2026-09-29T08:48:55.674Z",
+      "allowances": {
+        "WFH": {
+          "annualDays": 24,
+          "monthlyCreditDays": 2
+        },
+        "CL": {
+          "annualDays": 12,
+          "monthlyCreditDays": 1
+        },
+        "SL": {
+          "annualDays": 10,
+          "monthlyCreditDays": 1
+        }
+      }
     }
   },
   "types": {
@@ -100,6 +198,11 @@
       "1dbeb453-3a15-4bb2-99ed-7946cd40c743"
     ],
     "cmu43zvwm0000exne7d53m25e": [
+      "863bc442-2683-43c1-ba34-6b2fa2a4b287",
+      "c85a1293-178b-4b88-8641-c8286bea4090",
+      "724b5ecc-9f91-4f04-84c9-07abc322f261"
+    ],
+    "cmu5e48x30001bv4bpytsye40": [
       "863bc442-2683-43c1-ba34-6b2fa2a4b287",
       "c85a1293-178b-4b88-8641-c8286bea4090",
       "724b5ecc-9f91-4f04-84c9-07abc322f261"
