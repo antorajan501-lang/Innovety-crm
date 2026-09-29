@@ -31,7 +31,7 @@ const formatDistance = (meters) => {
   return `${km} km`;
 };
 
-export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
+export default function ClockInModal({ isOpen, onClose, onSuccess, onError, user }) {
   // Geofence & Location states: 'IDLE' | 'DETECTING' | 'PERMISSION_DENIED' | 'GPS_ERROR' | 'INSIDE' | 'OUTSIDE'
   const [geoState, setGeoState] = useState('IDLE');
   const [coords, setCoords] = useState({ latitude: null, longitude: null });
@@ -92,7 +92,7 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
 
     if (!navigator.geolocation) {
       setGeoState('GPS_ERROR');
-      setErrorMsg('Unable to determine your current location. Please enable location services and try again.');
+      setErrorMsg('Unable to get your current location. Please retry.');
       return;
     }
 
@@ -120,10 +120,10 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
         console.warn('GPS position error:', error);
         if (error.code === 1) { // PERMISSION_DENIED
           setGeoState('PERMISSION_DENIED');
-          setErrorMsg('Location permission is denied by your browser. Please allow location access in your browser settings and refresh to verify clock-in.');
+          setErrorMsg('Location permission is required for office clock-in.');
         } else {
           setGeoState('GPS_ERROR');
-          setErrorMsg('Unable to determine your current location. Please enable device GPS/location services and try again.');
+          setErrorMsg('Unable to get your current location. Please retry.');
         }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -137,7 +137,8 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
   const targetOfficeLat = clockStatus?.geofence?.officeLatitude;
   const targetOfficeLon = clockStatus?.geofence?.officeLongitude;
 
-  const isOtherInvalid = geoState === 'OUTSIDE' && outsideWorkLocation === 'OTHER' && !workLocationOther.trim();
+  const isOtherInvalid = (geoState === 'OUTSIDE' || geoState === 'PERMISSION_DENIED' || geoState === 'GPS_ERROR') &&
+    outsideWorkLocation === 'OTHER' && !workLocationOther.trim();
   const calculatedStatus = clockStatus?.state === 'OPEN_LATE' ? 'LATE' : 'PRESENT';
   const lateMinutes = clockStatus?.lateMinutes || 0;
   const currentTimeDisplay = clockStatus?.currentTimeFormatted || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -145,17 +146,20 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (geoState === 'PERMISSION_DENIED') {
-      setErrorMsg('Location permission is required to verify your location. Please enable location access in your browser and try again.');
+    if (geoState === 'DETECTING') {
+      setErrorMsg('Location verification is in progress. Please wait.');
       return;
     }
 
-    if (geoState === 'GPS_ERROR' || geoState === 'DETECTING') {
-      setErrorMsg('Location verification is in progress or unavailable. Please enable device location services and try again.');
+    const isInside = geoState === 'INSIDE';
+    const workLoc = isInside ? 'OFFICE' : outsideWorkLocation;
+
+    if (workLoc === 'OFFICE' && (geoState === 'PERMISSION_DENIED' || geoState === 'GPS_ERROR')) {
+      setErrorMsg('Location permission is required for office clock-in. Please retry location or select Home / Other below.');
       return;
     }
 
-    if (isOtherInvalid) {
+    if (workLoc === 'OTHER' && !workLocationOther.trim()) {
       setErrorMsg('Location or reason is required when "Other" is selected.');
       return;
     }
@@ -163,8 +167,6 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
     try {
       setLoading(true);
       setErrorMsg('');
-
-      const workLoc = geoState === 'INSIDE' ? 'OFFICE' : outsideWorkLocation;
 
       const payload = {
         latitude: coords.latitude,
@@ -182,18 +184,31 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
     } catch (err) {
       console.error('Clock in error:', err);
       const errRes = err.response?.data;
+      const status = err.response?.status;
 
-      if (errRes?.reason === 'OUTSIDE_GEOFENCE') {
+      let userMessage = '';
+      if (status === 401) {
+        userMessage = 'Your session has expired. Please log in again.';
+      } else if (status === 403) {
+        userMessage = errRes?.message || 'Access denied: You do not have permission to clock in.';
+      } else if (status === 429) {
+        userMessage = 'Too many requests. Please wait a moment and try again.';
+      } else if (status >= 500) {
+        userMessage = errRes?.message || 'The server or database is temporarily unavailable. Please retry.';
+      } else if (errRes?.reason === 'OUTSIDE_GEOFENCE') {
         setGeoState('OUTSIDE');
         if (errRes.distanceMeters) {
           setDistanceMeters(errRes.distanceMeters);
         }
-        setErrorMsg((errRes.message || 'You are currently outside the permitted location.') + ' If working offsite, please select "Home (Remote)" or provide details under "Other".');
+        userMessage = (errRes.message || 'You are currently outside the permitted location.') +
+          ' If working offsite, please select "Home (Remote)" or provide details under "Other".';
       } else {
-        setErrorMsg(errRes?.message || err.message || 'Clock in failed. Please try again.');
+        userMessage = errRes?.message || errRes?.reason || err.message || 'Clock in failed. Please try again.';
       }
+
+      setErrorMsg(userMessage);
       if (onError) {
-        onError(errRes?.message || 'Clock-In Failed. Please try again.');
+        onError(userMessage);
       }
     } finally {
       setLoading(false);
@@ -271,27 +286,59 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
             </div>
           )}
 
-          {/* STATE 2: GPS PERMISSION DENIED OR ERROR */}
-          {(geoState === 'PERMISSION_DENIED' || geoState === 'GPS_ERROR') && (
-            <div className="p-5 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-left space-y-3 animate-in fade-in">
-              <div className="flex items-start gap-3">
-                <ShieldAlert className="w-6 h-6 text-rose-500 shrink-0 mt-0.5" />
-                <div className="space-y-1">
+          {/* STATE 2A: GPS PERMISSION DENIED */}
+          {geoState === 'PERMISSION_DENIED' && (
+            <div className="p-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-left space-y-2 animate-in fade-in">
+              <div className="flex items-start gap-2.5">
+                <ShieldAlert className="w-5 h-5 text-rose-500 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
                   <h4 className="text-xs font-black text-rose-600 dark:text-rose-400 uppercase tracking-wider">
-                    {geoState === 'PERMISSION_DENIED' ? 'Location Access Required' : 'GPS Unavailable'}
+                    Location Permission Required
                   </h4>
-                  <p className="text-xs text-rose-700 dark:text-rose-300 font-medium leading-relaxed">
-                    {errorMsg || 'Location permission is required to verify your location before Clock-In.'}
+                  <p className="text-xs text-rose-700 dark:text-rose-300 font-medium">
+                    Location permission is required for office clock-in.
                   </p>
                 </div>
               </div>
-              <div className="pt-2 flex justify-end">
+              <p className="text-[11px] text-muted-foreground">
+                Please allow location access in your browser to verify office attendance, or select an offsite location below.
+              </p>
+              <div className="pt-1 flex justify-end">
                 <button
                   type="button"
                   onClick={() => requestGPSLocation()}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-extrabold shadow-sm transition-all cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" /> Try Again
+                  <RefreshCw className="w-3.5 h-3.5" /> Retry Permission
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STATE 2B: GPS ERROR / TIMEOUT */}
+          {geoState === 'GPS_ERROR' && (
+            <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 text-left space-y-2 animate-in fade-in">
+              <div className="flex items-start gap-2.5">
+                <Navigation className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <h4 className="text-xs font-black text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+                    GPS Unavailable
+                  </h4>
+                  <p className="text-xs text-amber-700 dark:text-amber-300 font-medium">
+                    Unable to get your current location. Please retry.
+                  </p>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Ensure device location services are turned on, or select Home / Other below if working offsite.
+              </p>
+              <div className="pt-1 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => requestGPSLocation()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Retry Location
                 </button>
               </div>
             </div>
@@ -333,100 +380,99 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
             </div>
           )}
 
-          {/* STATE 4: OUTSIDE GEOFENCE (SHOW HOME / OTHER ONLY — NO OFFICE) */}
+          {/* STATE 4: OUTSIDE GEOFENCE CARD */}
           {geoState === 'OUTSIDE' && (
-            <div className="space-y-4 animate-in fade-in">
-              <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 space-y-2 text-left">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
-                  <h4 className="text-xs font-black uppercase text-amber-700 dark:text-amber-300 tracking-wider">
-                    Outside Permitted Location
-                  </h4>
-                </div>
-                <p className="text-xs text-amber-800/90 dark:text-amber-200/90 font-medium">
-                  You are currently outside the permitted location.
-                </p>
+            <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 space-y-2 text-left animate-in fade-in">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <h4 className="text-xs font-black uppercase text-amber-700 dark:text-amber-300 tracking-wider">
+                  Outside Permitted Location
+                </h4>
+              </div>
+              <p className="text-xs text-amber-800/90 dark:text-amber-200/90 font-medium">
+                You are currently outside the office permitted location.
+              </p>
 
-                <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-xs">
-                  <div className="bg-background/70 rounded-xl p-2.5 border border-amber-500/20 text-center">
-                    <span className="text-[10px] text-muted-foreground font-sans uppercase font-bold block">Distance</span>
-                    <span className="font-black text-amber-600 dark:text-amber-400">{formatDistance(distanceMeters)}</span>
-                  </div>
-                  <div className="bg-background/70 rounded-xl p-2.5 border border-amber-500/20 text-center">
-                    <span className="text-[10px] text-muted-foreground font-sans uppercase font-bold block">Allowed Radius</span>
-                    <span className="font-black text-foreground">{allowedRadius} m</span>
-                  </div>
+              <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-xs">
+                <div className="bg-background/70 rounded-xl p-2.5 border border-amber-500/20 text-center">
+                  <span className="text-[10px] text-muted-foreground font-sans uppercase font-bold block">Distance</span>
+                  <span className="font-black text-amber-600 dark:text-amber-400">{formatDistance(distanceMeters)}</span>
                 </div>
-
-                {/* Diagnostics Preview Card */}
-                {coords.latitude && (
-                  <div className="mt-2 p-2 rounded-lg bg-background/60 text-[10px] text-muted-foreground font-mono border border-amber-500/10 space-y-0.5">
-                    <div className="flex justify-between">
-                      <span>Your GPS:</span>
-                      <span className="font-bold text-foreground">{coords.latitude}, {coords.longitude}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Target Office:</span>
-                      <span className="font-bold text-foreground">{targetOfficeLat ?? '—'}, {targetOfficeLon ?? '—'}</span>
-                    </div>
-                  </div>
-                )}
+                <div className="bg-background/70 rounded-xl p-2.5 border border-amber-500/20 text-center">
+                  <span className="text-[10px] text-muted-foreground font-sans uppercase font-bold block">Allowed Radius</span>
+                  <span className="font-black text-foreground">{allowedRadius} m</span>
+                </div>
               </div>
 
-              {/* OUTSIDE LOCATION FORM: HOME / OTHER ONLY (NO OFFICE OPTION) */}
-              <div className="space-y-3 text-left">
+              {coords.latitude && (
+                <div className="mt-2 p-2 rounded-lg bg-background/60 text-[10px] text-muted-foreground font-mono border border-amber-500/10 space-y-0.5">
+                  <div className="flex justify-between">
+                    <span>Your GPS:</span>
+                    <span className="font-bold text-foreground">{coords.latitude}, {coords.longitude}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Target Office:</span>
+                    <span className="font-bold text-foreground">{targetOfficeLat ?? '—'}, {targetOfficeLon ?? '—'}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* OFFSITE WORK LOCATION SELECTOR (WHEN OUTSIDE OR GPS DENIED/UNAVAILABLE) */}
+          {(geoState === 'OUTSIDE' || geoState === 'PERMISSION_DENIED' || geoState === 'GPS_ERROR') && (
+            <div className="space-y-3 text-left animate-in fade-in">
+              <label className="text-xs font-bold text-foreground block">
+                Where are you working from? <span className="text-rose-500">*</span>
+              </label>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setOutsideWorkLocation('HOME')}
+                  className={`p-3.5 rounded-2xl border flex items-center justify-center gap-2 text-center transition-all cursor-pointer ${
+                    outsideWorkLocation === 'HOME'
+                      ? 'bg-primary/10 border-primary text-primary font-black shadow-sm ring-2 ring-primary/20'
+                      : 'bg-background border-border/80 text-muted-foreground hover:bg-muted/50 font-medium'
+                  }`}
+                >
+                  <Home className="w-4 h-4" />
+                  <span className="text-xs font-bold">Home (Remote)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setOutsideWorkLocation('OTHER')}
+                  className={`p-3.5 rounded-2xl border flex items-center justify-center gap-2 text-center transition-all cursor-pointer ${
+                    outsideWorkLocation === 'OTHER'
+                      ? 'bg-primary/10 border-primary text-primary font-black shadow-sm ring-2 ring-primary/20'
+                      : 'bg-background border-border/80 text-muted-foreground hover:bg-muted/50 font-medium'
+                  }`}
+                >
+                  <MapPin className="w-4 h-4" />
+                  <span className="text-xs font-bold">Other</span>
+                </button>
+              </div>
+
+              {/* Reason Input */}
+              <div className="space-y-1 pt-1">
                 <label className="text-xs font-bold text-foreground block">
-                  Where are you working from? <span className="text-rose-500">*</span>
+                  Location / Reason {outsideWorkLocation === 'OTHER' && <span className="text-rose-500">*</span>}
                 </label>
-                
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setOutsideWorkLocation('HOME')}
-                    className={`p-3.5 rounded-2xl border flex items-center justify-center gap-2 text-center transition-all cursor-pointer ${
-                      outsideWorkLocation === 'HOME'
-                        ? 'bg-primary/10 border-primary text-primary font-black shadow-sm ring-2 ring-primary/20'
-                        : 'bg-background border-border/80 text-muted-foreground hover:bg-muted/50 font-medium'
-                    }`}
-                  >
-                    <Home className="w-4 h-4" />
-                    <span className="text-xs font-bold">Home</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setOutsideWorkLocation('OTHER')}
-                    className={`p-3.5 rounded-2xl border flex items-center justify-center gap-2 text-center transition-all cursor-pointer ${
-                      outsideWorkLocation === 'OTHER'
-                        ? 'bg-primary/10 border-primary text-primary font-black shadow-sm ring-2 ring-primary/20'
-                        : 'bg-background border-border/80 text-muted-foreground hover:bg-muted/50 font-medium'
-                    }`}
-                  >
-                    <MapPin className="w-4 h-4" />
-                    <span className="text-xs font-bold">Other</span>
-                  </button>
-                </div>
-
-                {/* Reason Input */}
-                <div className="space-y-1 pt-1">
-                  <label className="text-xs font-bold text-foreground block">
-                    Reason {outsideWorkLocation === 'OTHER' && <span className="text-rose-500">*</span>}
-                  </label>
-                  <input
-                    type="text"
-                    value={workLocationOther}
-                    onChange={(e) => setWorkLocationOther(e.target.value)}
-                    placeholder={outsideWorkLocation === 'OTHER' ? 'Enter location or reason (required)' : 'Working from home today (optional)'}
-                    className="w-full bg-background border border-border rounded-xl px-3.5 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
-                    required={outsideWorkLocation === 'OTHER'}
-                  />
-                </div>
+                <input
+                  type="text"
+                  value={workLocationOther}
+                  onChange={(e) => setWorkLocationOther(e.target.value)}
+                  placeholder={outsideWorkLocation === 'OTHER' ? 'Enter specific location or reason (required)' : 'Working remotely / from home today (optional)'}
+                  className="w-full bg-background border border-border rounded-xl px-3.5 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20"
+                  required={outsideWorkLocation === 'OTHER'}
+                />
               </div>
             </div>
           )}
 
           {/* Inline Error Message */}
-          {errorMsg && geoState !== 'PERMISSION_DENIED' && geoState !== 'GPS_ERROR' && (
+          {errorMsg && (
             <div className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400">
               {errorMsg}
             </div>
@@ -443,21 +489,23 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
               Cancel
             </button>
 
-            {(geoState === 'INSIDE' || geoState === 'OUTSIDE') && (
-              <button
-                type="submit"
-                disabled={loading || isOtherInvalid}
-                className="px-5 py-2.5 text-xs font-bold bg-primary hover:bg-primary-hover text-white rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" /> Clocking In...
-                  </>
-                ) : (
-                  'Confirm Clock In'
-                )}
-              </button>
-            )}
+            <button
+              type="submit"
+              disabled={loading || geoState === 'DETECTING' || isOtherInvalid}
+              className="px-5 py-2.5 text-xs font-bold bg-primary hover:bg-primary-hover text-white rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Clocking In...
+                </>
+              ) : geoState === 'DETECTING' ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" /> Verifying Location...
+                </>
+              ) : (
+                'Confirm Clock In'
+              )}
+            </button>
           </div>
         </form>
       </div>

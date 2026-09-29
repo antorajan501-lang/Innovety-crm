@@ -43,6 +43,8 @@ const Attendance = () => {
   const [settings, setSettings] = useState(null);
   const [currentCoords, setCurrentCoords] = useState(null);
   const [clockInStatus, setClockInStatus] = useState(null);
+  const [clockInStatusError, setClockInStatusError] = useState(null);
+  const consecutiveAuthErrorsRef = useRef(0);
   const [clockInToast, setClockInToast] = useState(null);
 
   const handleClockInSuccess = (resData) => {
@@ -138,15 +140,52 @@ const Attendance = () => {
     device: 'Desktop'
   });
 
-  const fetchClockInStatus = async () => {
+  const fetchClockInStatus = useCallback(async () => {
     try {
       const params = selectedOrgId ? { organizationId: selectedOrgId } : {};
       const res = await api.get('/attendance/status', { params });
       setClockInStatus(res.data);
+      setClockInStatusError(null);
+      consecutiveAuthErrorsRef.current = 0;
+      return res.data;
     } catch (err) {
       console.error('Fetch clock in status error:', err);
+      const status = err.response?.status;
+      if (status === 401 || status === 403) {
+        consecutiveAuthErrorsRef.current += 1;
+      }
+      const msg = err.response?.data?.message || err.message || 'Unable to check clock-in status.';
+      setClockInStatusError({ message: msg, status });
+      return null;
     }
-  };
+  }, [selectedOrgId]);
+
+  const fetchAttendanceStatus = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await api.get('/attendance/logs');
+      const localDateStr = new Date().toLocaleDateString('en-CA');
+      const todayRecord = res.data.find(log => {
+        const logDateStr = new Date(log.date).toLocaleDateString('en-CA');
+        return logDateStr === localDateStr;
+      });
+      
+      setClockedRecord(todayRecord || null);
+    } catch (err) {
+      console.error('Fetch attendance logs error:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const res = await api.get('/settings');
+      setSettings(res.data);
+    } catch (err) {
+      console.error('Fetch settings error:', err);
+    }
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => setTime(new Date()), 1000);
@@ -191,6 +230,11 @@ const Attendance = () => {
     fetchClockInStatus();
     fetchAttendanceStatus();
     fetchSettings();
+    getCoordinatesObj().then(coords => {
+      if (coords) {
+        setCurrentCoords(coords);
+      }
+    });
 
     const handleShiftEvent = (payload) => {
       console.log('[Socket/Window] Shift update received on Attendance page:', payload);
@@ -199,8 +243,9 @@ const Attendance = () => {
 
     window.addEventListener('shift_updated', handleShiftEvent);
     const socket = getSocket();
+    let handleAttendanceEvent = null;
     if (socket) {
-      const handleAttendanceEvent = (payload) => {
+      handleAttendanceEvent = (payload) => {
         console.log('[Socket] Attendance event received on Attendance page:', payload?.record?.id || payload);
         safeRefreshAttendance();
       };
@@ -218,50 +263,38 @@ const Attendance = () => {
       socket.on('settings_updated', handleAttendanceEvent);
       socket.on('shift_updated', handleShiftEvent);
       socket.on('schedule_updated', handleShiftEvent);
+    }
 
-      return () => {
-        window.removeEventListener('shift_updated', handleShiftEvent);
+    // Polling with visibility awareness and backoff on auth failure
+    const pollInterval = setInterval(() => {
+      if (document.hidden) return;
+      if (consecutiveAuthErrorsRef.current >= 3) return;
+      fetchClockInStatus();
+      fetchAttendanceStatus();
+    }, 30000);
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden && consecutiveAuthErrorsRef.current < 3) {
+        fetchClockInStatus();
+        fetchAttendanceStatus();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('shift_updated', handleShiftEvent);
+      if (socket && handleAttendanceEvent) {
         socket.off('attendance_clock_in', handleAttendanceEvent);
         socket.off('attendance_clock_out', handleAttendanceEvent);
         socket.off('attendance_updated', handleAttendanceEvent);
         socket.off('settings_updated', handleAttendanceEvent);
         socket.off('shift_updated', handleShiftEvent);
         socket.off('schedule_updated', handleShiftEvent);
-      };
-    } else {
-      return () => {
-        window.removeEventListener('shift_updated', handleShiftEvent);
-      };
-    }
-  }, [safeRefreshAttendance]);
-
-  const fetchAttendanceStatus = async () => {
-    try {
-      setLoading(true);
-      fetchClockInStatus();
-      const res = await api.get('/attendance/logs');
-      const localDateStr = new Date().toLocaleDateString('en-CA');
-      const todayRecord = res.data.find(log => {
-        const logDateStr = new Date(log.date).toLocaleDateString('en-CA');
-        return logDateStr === localDateStr;
-      });
-      
-      setClockedRecord(todayRecord || null);
-      setLoading(false);
-    } catch (err) {
-      console.error(err);
-      setLoading(false);
-    }
-  };
-
-  const fetchSettings = async () => {
-    try {
-      const res = await api.get('/settings');
-      setSettings(res.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
+      }
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [fetchClockInStatus, fetchAttendanceStatus, fetchSettings, safeRefreshAttendance]);
 
   const getCoordinatesObj = () => {
     return new Promise((resolve) => {
@@ -303,21 +336,7 @@ const Attendance = () => {
     return null;
   };
 
-  useEffect(() => {
-    fetchAttendanceStatus();
-    fetchSettings();
-    getCoordinatesObj().then(coords => {
-      if (coords) {
-        setCurrentCoords(coords);
-      }
-    });
 
-    const pollInterval = setInterval(() => {
-      fetchAttendanceStatus();
-    }, 30000);
-
-    return () => clearInterval(pollInterval);
-  }, []);
 
   const [isClockInModalOpen, setIsClockInModalOpen] = useState(false);
 
@@ -360,16 +379,18 @@ const Attendance = () => {
         setClockInToast(null);
       }, 3000);
     } catch (err) {
+      const errMsg = err.response?.data?.message || err.message || 'Clock-out failed. Please try again.';
       setClockInToast({
         mode: 'clockOut',
         type: 'error',
         title: 'Clock-Out Failed',
-        message: err.response?.data?.message || 'Please try again.'
+        message: errMsg
       });
 
       setTimeout(() => {
         setClockInToast(null);
-      }, 2000);
+      }, 3500);
+    } finally {
       setLoading(false);
     }
   };
@@ -439,6 +460,43 @@ const Attendance = () => {
         <div className="flex items-center justify-between p-4 rounded-xl border border-primary/20 bg-primary/5 text-primary text-xs font-semibold">
           <span>{alert}</span>
           <button onClick={() => setAlert('')} className="font-bold cursor-pointer">✕</button>
+        </div>
+      )}
+
+      {/* Clock-In Status Error Banner */}
+      {clockInStatusError && !clockedRecord && (
+        <div className="p-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300 flex items-center justify-between text-xs font-semibold text-left animate-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 text-rose-500 shrink-0" />
+            <div>
+              <p className="font-extrabold text-sm text-rose-600 dark:text-rose-400">Attendance Status Unavailable</p>
+              <p className="text-[11px] opacity-90 mt-0.5">{clockInStatusError.message}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              fetchClockInStatus();
+              fetchAttendanceStatus();
+            }}
+            className="px-3 py-1.5 rounded-lg bg-rose-600 text-white font-bold text-xs hover:bg-rose-700 transition cursor-pointer shrink-0 ml-3"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Outside Allowed Window or Non-Permitted Clock-In Banner */}
+      {clockInStatus && clockInStatus.canClockIn === false && !clockedRecord && !['BEFORE_WINDOW', 'OPEN_ON_TIME', 'OPEN_LATE', 'HOLIDAY'].includes(clockInStatus.state) && (
+        <div className="p-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300 flex items-center justify-between text-xs font-semibold text-left animate-in slide-in-from-top duration-300">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 text-amber-500 shrink-0" />
+            <div>
+              <p className="font-extrabold text-sm text-amber-600 dark:text-amber-400">Clock-In Not Available</p>
+              <p className="text-[11px] opacity-90 mt-0.5">
+                {clockInStatus.message || 'Clock-in is currently unavailable according to your shift schedule.'}
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
@@ -646,28 +704,35 @@ const Attendance = () => {
                   </span>
                 </motion.div>
               ) : !isClockedIn ? (
-                <motion.button
-                  key="btn-clock-in"
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  transition={{ duration: 0.2 }}
-                  onClick={handleClockIn}
-                  disabled={loading || !clockInStatus?.canClockIn}
-                  className="w-full flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 px-6 text-sm font-bold active:scale-95 disabled:opacity-40 shadow-lg shadow-emerald-600/25 transition-all cursor-pointer"
-                >
-                  {loading ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      <span>Clocking In...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-4 w-4 fill-current" />
-                      <span>Clock In</span>
-                    </>
+                <div className="w-full flex flex-col items-center gap-2">
+                  <motion.button
+                    key="btn-clock-in"
+                    initial={{ opacity: 0, scale: 0.96 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.96 }}
+                    transition={{ duration: 0.2 }}
+                    onClick={handleClockIn}
+                    disabled={loading || (clockInStatus ? clockInStatus.canClockIn === false : false)}
+                    className="w-full flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white py-3.5 px-6 text-sm font-bold active:scale-95 disabled:opacity-40 shadow-lg shadow-emerald-600/25 transition-all cursor-pointer"
+                  >
+                    {loading ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span>Clocking In...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 fill-current" />
+                        <span>Clock In</span>
+                      </>
+                    )}
+                  </motion.button>
+                  {clockInStatus && clockInStatus.canClockIn === false && clockInStatus.message && (
+                    <span className="text-[11px] text-amber-600 dark:text-amber-400 font-medium text-center">
+                      {clockInStatus.message}
+                    </span>
                   )}
-                </motion.button>
+                </div>
               ) : (
                 <motion.button
                   key="btn-clock-out"

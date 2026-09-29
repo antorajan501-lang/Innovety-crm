@@ -14,27 +14,43 @@ const authenticate = async (req, res, next) => {
       return res.status(401).json({ message: 'Session has been invalidated or logged out. Please sign in again.' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'enterprise_internship_crm_super_secret_jwt_key_123!');
-
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.id },
-      include: {
-        organization: {
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            logo: true,
-            status: true,
-            companyCode: true,
-            timezone: true
-          }
-        },
-        teamMembers: {
-          include: { team: true }
-        }
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || 'enterprise_internship_crm_super_secret_jwt_key_123!');
+    } catch (jwtError) {
+      if (jwtError.name === 'TokenExpiredError') {
+        return res.status(401).json({ message: 'Your session has expired. Please log in again.' });
       }
-    });
+      return res.status(401).json({ message: 'Invalid or expired token.' });
+    }
+
+    let user;
+    try {
+      user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        include: {
+          organization: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              logo: true,
+              status: true,
+              companyCode: true,
+              timezone: true
+            }
+          },
+          teamMembers: {
+            include: { team: true }
+          }
+        }
+      });
+    } catch (dbError) {
+      console.error('[Auth Middleware Database Error]:', dbError.message || dbError);
+      return res.status(503).json({
+        message: 'Authentication service temporarily unavailable due to a database issue. Please contact support.'
+      });
+    }
 
     if (!user) {
       return res.status(401).json({ message: 'User account not found.' });
@@ -47,8 +63,8 @@ const authenticate = async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
-    console.error('JWT authentication error:', error);
-    return res.status(401).json({ message: 'Invalid or expired token.' });
+    console.error('Authentication error:', error);
+    return res.status(500).json({ message: 'Authentication processing failed.' });
   }
 };
 

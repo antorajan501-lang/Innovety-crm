@@ -224,6 +224,7 @@ const getClockInStatus = async (req, res) => {
     res.json({
       ...validation,
       lateStats,
+      timezone: timeZone,
       isClockedIn,
       clockIn: existing?.clockIn || null,
       clockOut: existing?.clockOut || null,
@@ -250,7 +251,15 @@ const getClockInStatus = async (req, res) => {
         formattedStart: shiftService.formatTime12h(userShift.startTime),
         formattedEnd: shiftService.formatTime12h(userShift.endTime)
       } : null,
-      ...(validation.reason === 'SATURDAY_LEAVE' ? { message: 'Today is a scheduled Saturday leave.' } : validation.reason === 'HOLIDAY' ? { message: 'Today is a Holiday.' } : {}),
+      ...(validation.reason === 'SATURDAY_LEAVE'
+        ? { message: 'Today is a scheduled Saturday leave. Clock-in is not required.' }
+        : validation.reason === 'HOLIDAY'
+        ? { message: 'Today is a designated Holiday. Clock-in is disabled.' }
+        : validation.reason === 'SHIFT_NOT_STARTED'
+        ? { message: `Clock-in window opens at ${validation.windowOpenFormatted} (Shift starts at ${validation.shiftStartFormatted || '09:00 AM'}).` }
+        : validation.reason === 'ALREADY_CLOCKED_OUT'
+        ? { message: 'You have already clocked out today. Daily attendance is completed.' }
+        : {}),
       geofence: {
         officeLatitude: settings?.officeLatitude ?? 12.971598,
         officeLongitude: settings?.officeLongitude ?? 77.594562,
@@ -352,6 +361,13 @@ const clockIn = async (req, res) => {
           success: false,
           reason: 'DECLINED_LEAVE_ABSENT',
           message: 'Your leave application letter for today was DECLINED by Admin and your attendance is marked as ABSENT.'
+        });
+      }
+      if (existing.clockOut) {
+        return res.status(400).json({
+          success: false,
+          reason: 'ALREADY_CLOCKED_OUT',
+          message: 'You have already clocked out today. Daily attendance is completed.'
         });
       }
       return res.status(400).json({
