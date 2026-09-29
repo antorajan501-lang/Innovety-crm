@@ -26,10 +26,10 @@ const getAllOrganizations = async (req, res, next) => {
     if (search && search.trim()) {
       const query = search.trim();
       whereClause.OR = [
-        { name: { contains: query, mode: 'insensitive' } },
-        { companyCode: { contains: query, mode: 'insensitive' } },
-        { slug: { contains: query, mode: 'insensitive' } },
-        { email: { contains: query, mode: 'insensitive' } }
+        { name: { contains: query } },
+        { companyCode: { contains: query } },
+        { slug: { contains: query } },
+        { email: { contains: query } }
       ];
     }
 

@@ -132,10 +132,10 @@ const getBranches = async ({
 
   if (search) {
     where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { code: { contains: search, mode: 'insensitive' } },
-      { city: { contains: search, mode: 'insensitive' } },
-      { address: { contains: search, mode: 'insensitive' } }
+      { name: { contains: search } },
+      { code: { contains: search } },
+      { city: { contains: search } },
+      { address: { contains: search } }
     ];
   }
 

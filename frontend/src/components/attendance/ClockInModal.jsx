@@ -120,10 +120,10 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
         console.warn('GPS position error:', error);
         if (error.code === 1) { // PERMISSION_DENIED
           setGeoState('PERMISSION_DENIED');
-          setErrorMsg('Location permission is required to verify your location before Clock-In.');
+          setErrorMsg('Location permission is denied by your browser. Please allow location access in your browser settings and refresh to verify clock-in.');
         } else {
           setGeoState('GPS_ERROR');
-          setErrorMsg('Unable to determine your current location. Please enable location services and try again.');
+          setErrorMsg('Unable to determine your current location. Please enable device GPS/location services and try again.');
         }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -145,8 +145,13 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (geoState === 'PERMISSION_DENIED' || geoState === 'GPS_ERROR' || geoState === 'DETECTING') {
-      setErrorMsg('Location verification is required before completing Clock-In.');
+    if (geoState === 'PERMISSION_DENIED') {
+      setErrorMsg('Location permission is required to verify your location. Please enable location access in your browser and try again.');
+      return;
+    }
+
+    if (geoState === 'GPS_ERROR' || geoState === 'DETECTING') {
+      setErrorMsg('Location verification is in progress or unavailable. Please enable device location services and try again.');
       return;
     }
 
@@ -183,7 +188,7 @@ export default function ClockInModal({ isOpen, onClose, onSuccess, user }) {
         if (errRes.distanceMeters) {
           setDistanceMeters(errRes.distanceMeters);
         }
-        setErrorMsg(errRes.message || 'You are currently outside the permitted location.');
+        setErrorMsg((errRes.message || 'You are currently outside the permitted location.') + ' If working offsite, please select "Home (Remote)" or provide details under "Other".');
       } else {
         setErrorMsg(errRes?.message || err.message || 'Clock in failed. Please try again.');
       }

@@ -28,6 +28,16 @@ const userUpload = upload.fields([
 router.post('/me/welcome-complete', authenticate, completeWelcomePopup);
 router.post('/welcome-complete', authenticate, completeWelcomePopup);
 
+// Dedicated authenticated user profile endpoints (strictly placed BEFORE /:id to prevent route shadowing)
+router.get('/profile', authenticate, (req, res) => {
+  req.params.id = req.user.id;
+  return getUserById(req, res);
+});
+router.put('/profile', authenticate, userUpload, (req, res) => {
+  req.params.id = req.user.id;
+  return editUser(req, res);
+});
+
 // GET /api/users and GET /api/users/:id allowed for authenticated users
 router.get('/', authenticate, requireRole(['ADMIN', 'SUPER_ADMIN', 'TEAM_LEADER', 'INTERN', 'EMPLOYEE']), getAllUsers);
 router.get('/:id/promotion-history', authenticate, getUserPromotionHistory);

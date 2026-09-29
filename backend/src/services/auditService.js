@@ -85,10 +85,10 @@ const getAuditLogs = async ({
   if (search) {
     const searchClause = {
       OR: [
-        { action: { contains: search, mode: 'insensitive' } },
-        { entityType: { contains: search, mode: 'insensitive' } },
-        { performedBy: { name: { contains: search, mode: 'insensitive' } } },
-        { targetUser: { name: { contains: search, mode: 'insensitive' } } }
+        { action: { contains: search } },
+        { entityType: { contains: search } },
+        { performedBy: { name: { contains: search } } },
+        { targetUser: { name: { contains: search } } }
       ]
     };
 

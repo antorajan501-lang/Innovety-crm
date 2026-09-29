@@ -80,7 +80,7 @@ const createPosition = async (req, res) => {
     const existingName = await prisma.position.findFirst({
       where: {
         organizationId,
-        name: { equals: cleanName, mode: 'insensitive' }
+        name: { equals: cleanName }
       }
     });
     if (existingName) {
@@ -91,7 +91,7 @@ const createPosition = async (req, res) => {
     const existingCode = await prisma.position.findFirst({
       where: {
         organizationId,
-        code: { equals: cleanCode, mode: 'insensitive' }
+        code: { equals: cleanCode }
       }
     });
     if (existingCode) {
@@ -166,7 +166,7 @@ const updatePosition = async (req, res) => {
         const duplicateName = await prisma.position.findFirst({
           where: {
             organizationId: targetOrgId,
-            name: { equals: cleanName, mode: 'insensitive' },
+            name: { equals: cleanName },
             id: { not: id }
           }
         });
@@ -184,7 +184,7 @@ const updatePosition = async (req, res) => {
         const duplicateCode = await prisma.position.findFirst({
           where: {
             organizationId: targetOrgId,
-            code: { equals: cleanCode, mode: 'insensitive' },
+            code: { equals: cleanCode },
             id: { not: id }
           }
         });

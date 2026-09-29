@@ -26,8 +26,8 @@ const login = async (req, res) => {
       const org = await prisma.organization.findFirst({
         where: {
           OR: [
-            ...(targetSlug ? [{ slug: { equals: targetSlug, mode: 'insensitive' } }] : []),
-            ...(targetCode ? [{ companyCode: { equals: targetCode, mode: 'insensitive' } }] : [])
+            ...(targetSlug ? [{ slug: { equals: targetSlug } }] : []),
+            ...(targetCode ? [{ companyCode: { equals: targetCode } }] : [])
           ]
         }
       });
@@ -39,10 +39,10 @@ const login = async (req, res) => {
     // 1. Exact matching user search (email, employeeId, id, or exact name)
     const exactUserWhere = {
       OR: [
-        { email: { equals: cleanInput, mode: 'insensitive' } },
-        { employeeId: { equals: cleanInput, mode: 'insensitive' } },
+        { email: { equals: cleanInput } },
+        { employeeId: { equals: cleanInput } },
         { id: { equals: cleanInput } },
-        { name: { equals: cleanInput, mode: 'insensitive' } }
+        { name: { equals: cleanInput } }
       ]
     };
 
@@ -411,7 +411,7 @@ const forgotPassword = async (req, res) => {
     }
 
     const user = await prisma.user.findFirst({
-      where: { email: { equals: email, mode: 'insensitive' } }
+      where: { email: { equals: email } }
     });
 
     if (!user) {
@@ -501,7 +501,7 @@ const verifyResetOtp = async (req, res) => {
     const cleanOtp = String(otp).trim();
 
     const user = await prisma.user.findFirst({
-      where: { email: { equals: cleanEmail, mode: 'insensitive' } }
+      where: { email: { equals: cleanEmail } }
     });
 
     if (!user || !user.resetOtpHash || !user.resetOtpExpiry) {
@@ -591,7 +591,7 @@ const resetPassword = async (req, res) => {
 
     const cleanEmail = String(email).trim().toLowerCase();
     const user = await prisma.user.findFirst({
-      where: { email: { equals: cleanEmail, mode: 'insensitive' } }
+      where: { email: { equals: cleanEmail } }
     });
 
     if (!user || !user.resetTokenHash || !user.resetTokenExpiry) {

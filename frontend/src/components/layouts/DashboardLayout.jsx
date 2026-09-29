@@ -43,7 +43,8 @@ import {
   Sparkles,
   Award,
   Loader2,
-  Activity
+  Activity,
+  HardDrive
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -105,7 +106,8 @@ const QUICK_NAV_ITEMS = [
   { label: 'Employee Self-Service', path: '/self-service', keywords: ['self service', 'my shift', 'portal', 'timeline', 'punches', 'attendance'], category: 'Operations', icon: UserIcon, roles: ['EMPLOYEE', 'INTERN', 'TEAM_LEADER', 'ADMIN', 'SUPER_ADMIN'] },
   { label: 'Admin Management', path: '/super-admin/admins', keywords: ['admin management', 'admins', 'admin list'], category: 'Platform Control', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
   { label: 'Branding & Theme', path: '/super-admin/branding', keywords: ['branding', 'theme', 'logo', 'colors'], category: 'Platform Control', icon: Sparkles, roles: ['SUPER_ADMIN'] },
-  { label: 'Late Policy', path: '/super-admin/late-policy', keywords: ['late policy', 'late', 'warning', 'deduction', 'lates'], category: 'Platform Control', icon: Clock, roles: ['SUPER_ADMIN'] }
+  { label: 'Late Policy', path: '/super-admin/late-policy', keywords: ['late policy', 'late', 'warning', 'deduction', 'lates'], category: 'Platform Control', icon: Clock, roles: ['SUPER_ADMIN'] },
+  { label: 'Backup & Restore', path: '/super-admin/backup-restore', keywords: ['backup', 'restore', 'live backup', 'disaster recovery', 'sql dump', 'snapshot', 'mysql'], category: 'Platform Control', icon: HardDrive, roles: ['SUPER_ADMIN'] }
 ];
 
 const DashboardLayout = ({ children }) => {
@@ -346,7 +348,8 @@ const DashboardLayout = ({ children }) => {
         { label: 'Admin Management', path: '/super-admin/admins', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
         { label: 'Organization Manager', path: '/super-admin/organization', icon: Award, roles: ['SUPER_ADMIN'] },
         { label: 'Leave Policy', path: '/super-admin/leave-policy', icon: Calendar, roles: ['SUPER_ADMIN'] },
-        { label: 'Late Policy', path: '/super-admin/late-policy', icon: Clock, roles: ['SUPER_ADMIN'] }
+        { label: 'Late Policy', path: '/super-admin/late-policy', icon: Clock, roles: ['SUPER_ADMIN'] },
+        { label: 'Backup & Restore', path: '/super-admin/backup-restore', icon: HardDrive, roles: ['SUPER_ADMIN'] }
       ]
     },
     {
@@ -502,6 +505,9 @@ const DashboardLayout = ({ children }) => {
     } else if (pathname === '/super-admin/late-policy') {
       parts.push({ label: 'Platform Control', path: '/super-admin/dashboard' });
       parts.push({ label: 'Late Policy', path: '/super-admin/late-policy' });
+    } else if (pathname === '/super-admin/backup-restore' || pathname === '/super-admin/backups') {
+      parts.push({ label: 'System Management', path: '/super-admin/backup-restore' });
+      parts.push({ label: 'Backup & Restore', path: '/super-admin/backup-restore' });
     } else if (pathname === '/reports') {
 
       parts.push({ label: 'System Control', path: '/reports' });
@@ -650,6 +656,10 @@ const DashboardLayout = ({ children }) => {
                     src={getUploadUrl(companyLogo)}
                     alt={companyName || 'Logo'}
                     className="h-9 max-w-[170px] object-contain shrink-0"
+                    onError={(e) => {
+                      e.target.onerror = null;
+                      e.target.src = '/logo.png';
+                    }}
                   />
                 ) : (
                   <img src="/logo.png" alt={companyName || 'INNOVEITY'} className="h-9 max-w-[170px] object-contain shrink-0" />

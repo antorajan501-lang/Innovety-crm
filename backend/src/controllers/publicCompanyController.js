@@ -21,7 +21,7 @@ const getPublicCompanyBranding = async (req, res) => {
       where: {
         OR: [
           { slug: cleanSlug },
-          { companyCode: { equals: slug.trim(), mode: 'insensitive' } }
+          { companyCode: { equals: slug.trim() } }
         ]
       }
     });
@@ -109,7 +109,7 @@ const getActiveCompanyBranding = async (req, res) => {
         where: {
           OR: [
             { slug: cleanSlug },
-            { companyCode: { equals: slug.trim(), mode: 'insensitive' } }
+            { companyCode: { equals: slug.trim() } }
           ]
         }
       });

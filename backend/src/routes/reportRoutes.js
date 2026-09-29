@@ -8,7 +8,8 @@ const {
   getLeaveReport,
   getPayrollReport,
   getAssetReport,
-  getWorkLogReport
+  getWorkLogReport,
+  getProjectReport
 } = require('../controllers/reportController');
 const {
   getDailyAttendanceReport,
@@ -30,6 +31,7 @@ router.get('/attendance/export', requireRole(['SUPER_ADMIN', 'ADMIN']), exportAt
 // General Legacy Reports
 router.get('/attendance', getAttendanceReport);
 router.get('/tasks', getTaskReport);
+router.get('/projects', getProjectReport);
 router.get('/teams', getTeamReport);
 router.get('/tickets', getTicketReport);
 router.get('/leaves', getLeaveReport);

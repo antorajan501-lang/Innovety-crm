@@ -6,6 +6,7 @@ const fs = require('fs');
 const { authenticate } = require('../middleware/auth');
 const { requireSuperAdmin } = require('../middleware/superAdminMiddleware');
 const superAdminController = require('../controllers/superAdminController');
+const { getAllOrganizations } = require('../controllers/companyController');
 
 // Ensure branding uploads directory exists
 const brandingUploadDir = path.join(__dirname, '../../uploads/branding');
@@ -43,6 +44,8 @@ router.use(requireSuperAdmin);
 router.get('/stats', superAdminController.getPlatformStats);
 router.get('/branding', superAdminController.getPlatformSettings);
 router.put('/branding', brandingUpload, superAdminController.updatePlatformSettings);
+router.put('/branding/chat-access', superAdminController.updateChatAccess);
+router.get('/organizations', getAllOrganizations);
 
 // Users Directory (All roles)
 router.get('/users', superAdminController.getUsersDirectory);

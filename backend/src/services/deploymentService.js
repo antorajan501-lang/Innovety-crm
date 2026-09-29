@@ -46,7 +46,7 @@ const checkDeploymentReadiness = async () => {
     await prisma.$queryRaw`SELECT 1`;
     dbConnected = true;
     const tableResult = await prisma.$queryRaw`
-      SELECT count(*) as count FROM information_schema.tables WHERE table_schema = 'public'
+      SELECT count(*) as count FROM information_schema.tables WHERE table_schema = DATABASE()
     `;
     dbTablesCount = Number(tableResult[0]?.count || 0);
   } catch (e) {
@@ -54,9 +54,9 @@ const checkDeploymentReadiness = async () => {
   }
   checks.push({
     category: 'Database',
-    name: 'PostgreSQL Database Connectivity',
+    name: 'MySQL Database Connectivity',
     status: dbConnected ? 'PASS' : 'FAIL',
-    detail: dbConnected ? `Connected to PostgreSQL (Active Tables: ${dbTablesCount})` : 'Failed to reach database'
+    detail: dbConnected ? `Connected to MySQL (Active Tables: ${dbTablesCount})` : 'Failed to reach database'
   });
   checks.push({
     category: 'Database',
@@ -132,7 +132,7 @@ const getProductionConfiguration = () => {
     },
     database: {
       client: 'Prisma Client v5.22.0',
-      type: 'PostgreSQL',
+      type: 'MySQL',
       url: maskedDbUrl,
       ssl: false,
       poolSize: 'Default (Auto-managed)'

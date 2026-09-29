@@ -159,8 +159,8 @@ const createDepartment = async (req, res) => {
       where: {
         organizationId: organizationId || null,
         OR: [
-          { name: { equals: cleanName, mode: 'insensitive' } },
-          { code: { equals: cleanCode, mode: 'insensitive' } }
+          { name: { equals: cleanName } },
+          { code: { equals: cleanCode } }
         ]
       }
     });

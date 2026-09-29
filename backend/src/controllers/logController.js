@@ -30,9 +30,9 @@ const getActivityLogs = async (req, res) => {
     if (search) {
       const searchCondition = {
         OR: [
-          { details: { contains: search, mode: 'insensitive' } },
-          { user: { name: { contains: search, mode: 'insensitive' } } },
-          { user: { employeeId: { contains: search, mode: 'insensitive' } } }
+          { details: { contains: search } },
+          { user: { name: { contains: search } } },
+          { user: { employeeId: { contains: search } } }
         ]
       };
 

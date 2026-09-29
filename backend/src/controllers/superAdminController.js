@@ -9,7 +9,7 @@ const { getCompanyBranding, setCompanyBranding } = require('../utils/companyBran
 const getPlatformStats = async (req, res) => {
   try {
     const { organizationId } = req.query;
-    const targetOrgId = organizationId || null;
+    const targetOrgId = (organizationId && organizationId !== 'all' && organizationId !== 'ALL') ? organizationId : null;
 
     const now = new Date();
     // Local start of day and end of day boundaries
@@ -229,9 +229,10 @@ const getPlatformSettings = async (req, res) => {
       chatEnabledForUsers: platform.chatEnabledForUsers
     };
 
-    if (organizationId) {
+    const targetOrgId = (organizationId && organizationId !== 'all' && organizationId !== 'ALL') ? organizationId : null;
+    if (targetOrgId) {
       const org = await prisma.organization.findUnique({
-        where: { id: organizationId }
+        where: { id: targetOrgId }
       });
       if (org) {
         const stored = getCompanyBranding(organizationId) || {};
@@ -329,9 +330,10 @@ const updatePlatformSettings = async (req, res) => {
     const parsedAdmins = parseBool(chatEnabledForAdmins, undefined);
     const parsedUsers = parseBool(chatEnabledForUsers, undefined);
 
-    if (organizationId) {
+    const targetOrgId = (organizationId && organizationId !== 'all' && organizationId !== 'ALL') ? organizationId : null;
+    if (targetOrgId) {
       const org = await prisma.organization.findUnique({
-        where: { id: organizationId }
+        where: { id: targetOrgId }
       });
 
       if (!org) {
@@ -642,10 +644,10 @@ const getUsersDirectory = async (req, res) => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { employeeId: { contains: search, mode: 'insensitive' } },
-        { organization: { name: { contains: search, mode: 'insensitive' } } }
+        { name: { contains: search } },
+        { email: { contains: search } },
+        { employeeId: { contains: search } },
+        { organization: { name: { contains: search } } }
       ];
     }
 
@@ -876,16 +878,17 @@ const getTeamsDirectory = async (req, res) => {
   try {
     const { search, organizationId } = req.query;
 
+    const targetOrgId = (organizationId && organizationId !== 'all' && organizationId !== 'ALL') ? organizationId : null;
     const where = {};
-    if (organizationId) {
-      where.organizationId = organizationId;
+    if (targetOrgId) {
+      where.organizationId = targetOrgId;
     }
 
     if (search) {
       const searchCondition = {
         OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { description: { contains: search, mode: 'insensitive' } }
+          { name: { contains: search } },
+          { description: { contains: search } }
         ]
       };
 
@@ -1195,10 +1198,18 @@ const deleteAdmin = async (req, res) => {
   }
 };
 
+/**
+ * 14. Update Chat Access settings directly (dedicated endpoint)
+ */
+const updateChatAccess = async (req, res) => {
+  return updatePlatformSettings(req, res);
+};
+
 module.exports = {
   getPlatformStats,
   getPlatformSettings,
   updatePlatformSettings,
+  updateChatAccess,
   getUsersDirectory,
   getUserAuditHistory,
   updateUserStatus,

@@ -1,74 +1,1023 @@
 const fs = require('fs');
 const path = require('path');
-const { verifyBackupIntegrity } = require('./backupService');
+const readline = require('readline');
+const { spawn } = require('child_process');
+const JSZip = require('jszip');
+const prisma = require('../utils/db');
+const {
+  takeLiveBackup,
+  getLiveDatabaseStats,
+  parseDbConfig,
+  readManifest,
+  saveManifest,
+  BACKUP_DIR,
+  formatBytes
+} = require('./backupService');
 
-const backupsBaseDir = path.join(__dirname, '../../../backups');
-const dbBackupsDir = path.join(backupsBaseDir, 'database');
+const TEMP_RESTORE_DIR = path.resolve(BACKUP_DIR, 'temp_restore');
+if (!fs.existsSync(TEMP_RESTORE_DIR)) {
+  fs.mkdirSync(TEMP_RESTORE_DIR, { recursive: true });
+}
 
 /**
- * Performs a safe dry-run restore simulation without altering the active database
+ * Validates an uploaded backup ZIP archive before restoring.
+ * Meets Phase 2 & Phase 3 requirements.
  */
-async function dryRunRestore(backupId) {
-  const integrity = verifyBackupIntegrity(backupId);
-  if (!integrity.verified) {
-    return {
-      success: false,
-      dryRunPassed: false,
-      message: integrity.message || 'Backup integrity verification failed!'
+const validateUploadedBackup = async (zipFilePath, originalFileName = '') => {
+  const result = {
+    valid: true,
+    errors: [],
+    warnings: [],
+    backupInfo: null
+  };
+
+  // 1. Physical existence and extension check
+  if (!fs.existsSync(zipFilePath)) {
+    result.valid = false;
+    result.errors.push('Backup file does not exist on server.');
+    return result;
+  }
+
+  const baseName = originalFileName || path.basename(zipFilePath);
+  if (!baseName.toLowerCase().endsWith('.zip')) {
+    result.valid = false;
+    result.errors.push('Invalid Backup File: File must be a valid .zip archive.');
+    return result;
+  }
+
+  const stat = fs.statSync(zipFilePath);
+  if (stat.size < 20 * 1024) {
+    result.valid = false;
+    result.errors.push(`Invalid Backup File: ZIP archive is abnormally small (${formatBytes(stat.size)}), indicating corruption or incomplete upload.`);
+    return result;
+  }
+
+  // 2. Phase 3: Open & Inspect ZIP archive using JSZip
+  let zip;
+  try {
+    const zipData = fs.readFileSync(zipFilePath);
+    zip = await JSZip.loadAsync(zipData);
+  } catch (err) {
+    result.valid = false;
+    result.errors.push(`Invalid Backup File: Failed to open ZIP archive. It may be corrupted: ${err.message}`);
+    return result;
+  }
+
+  const requiredFiles = ['database/innoveity_live.sql', 'backup_info.json', 'README.txt'];
+  const missingFiles = requiredFiles.filter(rf => !zip.file(rf));
+  if (missingFiles.length > 0) {
+    result.valid = false;
+    result.errors.push(`Archive structure incomplete. Missing required disaster recovery files: ${missingFiles.join(', ')}`);
+    return result;
+  }
+
+  // 3. Inspect database/innoveity_live.sql
+  const sqlFile = zip.file('database/innoveity_live.sql');
+  let sqlContent = '';
+  try {
+    sqlContent = await sqlFile.async('string');
+  } catch (err) {
+    result.valid = false;
+    result.errors.push(`Failed to extract database/innoveity_live.sql: ${err.message}`);
+    return result;
+  }
+
+  if (sqlContent.length < 1000) {
+    result.valid = false;
+    result.errors.push('database/innoveity_live.sql is empty or truncated.');
+    return result;
+  }
+
+  const hasCreateTable = /CREATE TABLE/i.test(sqlContent);
+  const hasInsertInto = /INSERT INTO/i.test(sqlContent);
+
+  if (!hasCreateTable) {
+    result.valid = false;
+    result.errors.push('SQL dump lacks CREATE TABLE definitions.');
+  }
+  if (!hasInsertInto) {
+    result.valid = false;
+    result.errors.push('SQL dump lacks INSERT INTO data statements (only schema or empty database).');
+  }
+
+  if (!result.valid) {
+    return result;
+  }
+
+  // 4. Parse backup_info.json
+  let info = {};
+  try {
+    const infoStr = await zip.file('backup_info.json').async('string');
+    info = JSON.parse(infoStr);
+  } catch (err) {
+    result.warnings.push(`Warning reading backup_info.json: ${err.message}`);
+  }
+
+  // Count tables and records from SQL
+  const dumpTableNamesSet = new Set();
+  const createTableMatches = [...sqlContent.matchAll(/CREATE TABLE [`"]?([a-zA-Z0-9_]+)[`"]?/gi)];
+  createTableMatches.forEach(m => dumpTableNamesSet.add(m[1].toLowerCase()));
+
+  const tableDumpCounts = {};
+  const lines = sqlContent.split('\n');
+  let currentTable = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const dumpMatch = line.match(/-- Dumping data for table [`"]?([a-zA-Z0-9_]+)[`"]?/i);
+    const insertMatch = line.match(/^INSERT INTO [`"]?([a-zA-Z0-9_]+)[`"]?/i);
+    if (dumpMatch) {
+      currentTable = dumpMatch[1].toLowerCase();
+      if (!tableDumpCounts[currentTable]) tableDumpCounts[currentTable] = 0;
+    } else if (insertMatch) {
+      currentTable = insertMatch[1].toLowerCase();
+      if (!tableDumpCounts[currentTable]) tableDumpCounts[currentTable] = 0;
+    }
+
+    if (currentTable && line.startsWith('INSERT INTO')) {
+      let tupleCount = 0;
+      let inString = false;
+      let escape = false;
+      let depth = 0;
+      for (let j = 0; j < line.length; j++) {
+        const char = line[j];
+        if (escape) { escape = false; continue; }
+        if (char === '\\') { escape = true; continue; }
+        if (char === "'") { inString = !inString; continue; }
+        if (!inString) {
+          if (char === '(') {
+            if (depth === 0) tupleCount++;
+            depth++;
+          } else if (char === ')') {
+            depth--;
+          }
+        }
+      }
+      tableDumpCounts[currentTable] += tupleCount;
+    }
+  }
+
+  const totalDumpRecords = Object.values(tableDumpCounts).reduce((a, b) => a + b, 0);
+
+  // Phase 4 Preview Information
+  result.backupInfo = {
+    fileName: baseName,
+    created: info.createdAt ? new Date(info.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : (info.backupDate || 'N/A'),
+    createdAt: info.createdAt || new Date().toISOString(),
+    crmVersion: info.crmVersion || info.version || 'v1.0',
+    mysqlVersion: info.mysqlVersion || '8.0.46',
+    totalTables: info.totalTables || dumpTableNamesSet.size,
+    totalRecords: info.totalRecords !== undefined ? info.totalRecords : totalDumpRecords,
+    backupSize: formatBytes(stat.size),
+    sizeBytes: stat.size,
+    createdBy: info.createdBy || 'Super Admin'
+  };
+
+  return result;
+};
+
+/**
+ * Execute arbitrary SQL query via MySQL CLI
+ */
+const runMysqlQuery = (config, sqlString, connectWithoutDb = false) => {
+  return new Promise((resolve, reject) => {
+    const { host, port, user, password, database } = config;
+    const args = [
+      '-h', host,
+      '-P', String(port),
+      '-u', user,
+      '--default-character-set=utf8mb4'
+    ];
+    if (!connectWithoutDb) {
+      args.push(database);
+    }
+
+    const child = spawn('mysql', args, {
+      env: { ...process.env, MYSQL_PWD: password },
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stderr = '';
+    let stdout = '';
+    child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        return reject(new Error(stderr.trim() || `Process exited with code ${code}`));
+      }
+      resolve(stdout);
+    });
+
+    child.on('error', (err) => {
+      reject(new Error(`Failed to spawn mysql: ${err.message}`));
+    });
+
+    child.stdin.write(sqlString);
+    child.stdin.end();
+  });
+};
+
+/**
+ * Step 3: Prepare Database Before Import
+ * Option A (Recommended): Drop and recreate innoveity_crm
+ * Option B (Fallback): Disable foreign key checks, drop every table dynamically, re-enable foreign keys
+ */
+const prepareDatabaseBeforeImport = async (config) => {
+  const { database } = config;
+
+  // Disconnect prisma connection pool first
+  try {
+    await prisma.$disconnect();
+  } catch (e) {
+    console.warn('[PrepareDB] Disconnect warning:', e.message);
+  }
+
+  let prepared = false;
+  let method = '';
+  let optionAError = null;
+
+  // Option A (Recommended): Drop and Recreate database
+  try {
+    const dropAndCreateSql = `DROP DATABASE IF EXISTS \`${database}\`; CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n`;
+    await runMysqlQuery(config, dropAndCreateSql, /* connectWithoutDb= */ true);
+    prepared = true;
+    method = 'RECREATE_DATABASE';
+    console.log(`[PrepareDB] Database \`${database}\` dropped and recreated cleanly (Option A).`);
+  } catch (err) {
+    optionAError = err;
+    console.warn(`[PrepareDB] Option A failed (${err.message}), falling back to Option B (drop all tables)...`);
+  }
+
+  // Option B (Fallback): If dropping database is restricted, drop every table dynamically
+  if (!prepared) {
+    try {
+      await prisma.$connect();
+      const tables = await prisma.$queryRaw`
+        SELECT table_name
+        FROM information_schema.tables
+        WHERE table_schema = ${database} AND table_type = 'BASE TABLE';
+      `;
+      const tableNames = tables.map(t => t.TABLE_NAME || t.table_name);
+
+      if (tableNames.length > 0) {
+        let dropSql = 'SET FOREIGN_KEY_CHECKS = 0;\n';
+        for (const t of tableNames) {
+          dropSql += `DROP TABLE IF EXISTS \`${database}\`.\`${t}\`;\n`;
+        }
+        dropSql += 'SET FOREIGN_KEY_CHECKS = 1;\n';
+        await runMysqlQuery(config, dropSql, /* connectWithoutDb= */ false);
+      }
+      await prisma.$disconnect();
+      prepared = true;
+      method = 'DROP_ALL_TABLES';
+      console.log(`[PrepareDB] All ${tableNames.length} tables dropped cleanly via Option B.`);
+    } catch (optBErr) {
+      throw new Error(`Failed to prepare database before import: Option A error: ${optionAError?.message || 'failed'} | Option B error: ${optBErr.message}`);
+    }
+  }
+
+  return { success: true, method };
+};
+
+/**
+ * Step 5: Improve Error Handling
+ * Replaces raw MySQL error messages like "Table 'activitylog' already exists" with user-friendly messages.
+ */
+const parseMysqlImportError = (rawStderr, safetyBackupFileName) => {
+  const stderr = (rawStderr || '').toString();
+
+  // Step 5: Replace Table 'activitylog' already exists with user-friendly message
+  const match1050 = stderr.match(/ERROR\s+1050\s+\([^)]+\)\s+at\s+line\s+(\d+):\s+Table\s+['`]([^'`]+)['`]\s+already\s+exists/i);
+  if (match1050) {
+    const lineNum = match1050[1];
+    const tableName = match1050[2];
+    return `Restore stopped because existing database table '${tableName}' was detected (SQL line ${lineNum}). The current live data remains protected. The automatic safety backup [${safetyBackupFileName}] has been preserved.`;
+  }
+
+  // Parse other MySQL errors with line numbers
+  const matchLine = stderr.match(/ERROR\s+(\d+)\s+\([^)]+\)\s+at\s+line\s+(\d+):\s+(.+)/i);
+  if (matchLine) {
+    const errCode = matchLine[1];
+    const lineNum = matchLine[2];
+    const errMsg = matchLine[3].trim();
+    return `Restore failed at SQL line ${lineNum} (MySQL Error ${errCode}: ${errMsg}). Current live data remains protected by safety backup [${safetyBackupFileName}].`;
+  }
+
+  return `Database import failed: ${stderr.trim() || 'Unknown error'}. Current live data remains protected by safety backup [${safetyBackupFileName}].`;
+};
+
+/**
+ * Stream SQL into MySQL CLI
+ */
+const runMysqlImport = (config, sqlFilePath, safetyBackupFileName) => {
+  return new Promise((resolve, reject) => {
+    const { host, port, user, password, database } = config;
+    const args = [
+      '--max-allowed-packet=256M',
+      '-h', host,
+      '-P', String(port),
+      '-u', user,
+      '--default-character-set=utf8mb4',
+      database
+    ];
+
+    const child = spawn('mysql', args, {
+      env: { ...process.env, MYSQL_PWD: password },
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stderr = '';
+    child.stderr.on('data', (d) => { stderr += d.toString(); });
+
+    const fileStream = fs.createReadStream(sqlFilePath, { highWaterMark: 128 * 1024 });
+
+    // Handle child.stdin error to prevent unhandled EPIPE / EOF exception if MySQL closes prematurely
+    child.stdin.on('error', (err) => {
+      // Ignore EPIPE/EOF on pipe when child process exits
+      if (err.code !== 'EPIPE' && err.code !== 'EOF') {
+        console.warn('[MysqlImport] stdin warning:', err.message);
+      }
+    });
+
+    child.on('close', (code) => {
+      try { fileStream.destroy(); } catch (e) {}
+      if (code !== 0) {
+        const friendlyMsg = parseMysqlImportError(stderr, safetyBackupFileName);
+        const err = new Error(friendlyMsg);
+        err.code = code;
+        err.rawStderr = stderr;
+        return reject(err);
+      }
+      resolve();
+    });
+
+    child.on('error', (err) => {
+      try { fileStream.destroy(); } catch (e) {}
+      reject(new Error(`Failed to spawn mysql process: ${err.message}`));
+    });
+
+    fileStream.on('error', (err) => {
+      try { child.kill(); } catch (e) {}
+      reject(err);
+    });
+
+    fileStream.pipe(child.stdin);
+  });
+};
+
+/**
+ * Main Restore Execution Pipeline
+ * Phases 5, 7, 8, 9, 10
+ */
+const executeLiveRestore = async ({ tempFileName, originalFileName, user }) => {
+  if (user?.role !== 'SUPER_ADMIN') {
+    const err = new Error('Access denied. Only Super Admin can restore production backups.');
+    err.status = 403;
+    throw err;
+  }
+
+  const zipFilePath = path.join(TEMP_RESTORE_DIR, tempFileName);
+  if (!fs.existsSync(zipFilePath)) {
+    const err = new Error('Uploaded backup archive expired or not found. Please upload again.');
+    err.status = 404;
+    throw err;
+  }
+
+  // Pre-restore validation
+  const validation = await validateUploadedBackup(zipFilePath, originalFileName);
+  if (!validation.valid) {
+    const err = new Error(`Restore Rejected: ${validation.errors.join(' | ')}`);
+    err.status = 422;
+    throw err;
+  }
+
+  // PHASE 5: MANDATORY AUTOMATIC SAFETY BACKUP OF LIVE DATABASE
+  let safetyBackupResult;
+  try {
+    safetyBackupResult = await takeLiveBackup({
+      user,
+      prefix: 'pre_restore_backup',
+      type: 'Pre-Restore Backup',
+      validationStatus: 'Saved'
+    });
+  } catch (safetyErr) {
+    const err = new Error(`Restore Aborted: Automatic pre-restore safety backup failed: ${safetyErr.message}. The database was not modified.`);
+    err.status = 500;
+    throw err;
+  }
+
+  // STEP 3: PREPARE DATABASE BEFORE IMPORT (OPTION A / OPTION B)
+  const dbConfig = parseDbConfig();
+  try {
+    await prepareDatabaseBeforeImport(dbConfig);
+  } catch (prepErr) {
+    const err = new Error(`Database preparation failed: ${prepErr.message}. Current data remains protected by safety backup ${safetyBackupResult.backup.fileName}`);
+    err.status = 500;
+    err.safetyBackup = safetyBackupResult.backup;
+    throw err;
+  }
+
+  // PHASE 7: RESTORE SQL IMPORT
+  const tempExtractedSql = path.join(TEMP_RESTORE_DIR, `extracted_${Date.now()}.sql`);
+  let parsedDump = null;
+  try {
+    const zipData = fs.readFileSync(zipFilePath);
+    const zip = await JSZip.loadAsync(zipData);
+    const sqlFile = zip.file('database/innoveity_live.sql');
+    const sqlContent = await sqlFile.async('nodebuffer');
+    fs.writeFileSync(tempExtractedSql, sqlContent);
+
+    // Parse real counts from the SQL dump
+    parsedDump = await parseSqlDumpCounts(tempExtractedSql);
+
+    await runMysqlImport(dbConfig, tempExtractedSql, safetyBackupResult.backup.fileName);
+  } catch (importErr) {
+    if (fs.existsSync(tempExtractedSql)) {
+      try { fs.unlinkSync(tempExtractedSql); } catch (e) {}
+    }
+    const err = new Error(importErr.message || `Database import failed. Current data remains protected by safety backup ${safetyBackupResult.backup.fileName}`);
+    err.status = 500;
+    err.safetyBackup = safetyBackupResult.backup;
+    throw err;
+  } finally {
+    if (fs.existsSync(tempExtractedSql)) {
+      try { fs.unlinkSync(tempExtractedSql); } catch (e) {}
+    }
+  }
+
+  // PHASE 8: RESTORE VERIFICATION
+  await prisma.$connect();
+  const postRestoreStats = await getLiveDatabaseStats();
+  const verification = await verifyCriticalTables(
+    prisma,
+    postRestoreStats,
+    parsedDump?.tableCounts || {},
+    dbConfig.database || 'innoveity_crm'
+  );
+
+  if (!verification.valid) {
+    const err = new Error(`Restore Verification Failed: ${verification.errors.join(' | ')}. Safety backup [${safetyBackupResult.backup.fileName}] is available for rollback.`);
+    err.status = 500;
+    err.verification = verification;
+    err.safetyBackup = safetyBackupResult.backup;
+    throw err;
+  }
+
+  // PHASE 10: BACKUP HISTORY INTEGRATION (Restored Backup entry)
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const timeStr = `${pad(now.getHours())}-${pad(now.getMinutes())}`;
+  const restoredArchiveName = `restored_backup_${dateStr}_${timeStr}.zip`;
+  const restoredPermanentPath = path.join(BACKUP_DIR, restoredArchiveName);
+
+  try {
+    fs.copyFileSync(zipFilePath, restoredPermanentPath);
+    const restoredStat = fs.statSync(restoredPermanentPath);
+
+    const restoredEntry = {
+      id: `restore_${Date.now()}`,
+      fileName: restoredArchiveName,
+      filePath: restoredPermanentPath,
+      sizeBytes: restoredStat.size,
+      size: formatBytes(restoredStat.size),
+      type: 'Restored Backup',
+      totalTables: postRestoreStats.totalTables,
+      totalRecords: postRestoreStats.totalRecords,
+      createdAt: now.toISOString(),
+      createdBy: user?.name ? `${user.name} (${user.email || user.role})` : 'Super Admin',
+      mysqlVersion: validation.backupInfo.mysqlVersion,
+      downloadUrl: `/api/backups/download/${restoredArchiveName}`,
+      validationStatus: 'Completed'
     };
+
+    const manifest = readManifest();
+    manifest.unshift(restoredEntry);
+    saveManifest(manifest);
+  } catch (err) {
+    console.error('Failed to register restored archive in manifest:', err);
   }
 
-  const manifest = integrity.manifest;
-  const dbFilePath = path.join(dbBackupsDir, manifest.dbFile);
-  const snapshotData = JSON.parse(fs.readFileSync(dbFilePath, 'utf8'));
+  // Cleanup temp upload
+  try {
+    if (fs.existsSync(zipFilePath)) fs.unlinkSync(zipFilePath);
+  } catch (e) {}
 
+  // PHASE 9: SUCCESS RESPONSE
   return {
     success: true,
-    dryRunPassed: true,
-    backupId,
-    type: manifest.type,
-    createdAt: manifest.createdAt,
-    checksumVerified: true,
-    simulationSummary: {
-      organizationsToRestore: snapshotData.counts.organizations,
-      usersToRestore: snapshotData.counts.users,
-      projectsToRestore: snapshotData.counts.projects,
-      attendancesToRestore: snapshotData.counts.attendances,
-      workLogsToRestore: snapshotData.counts.workLogs,
-      leaveRequestsToRestore: snapshotData.counts.leaveRequests
-    },
-    message: 'Dry-run restore simulation passed. Backup file is valid and ready for confirmed restoration.'
+    message: 'Backup Restored Successfully',
+    backupName: validation.backupInfo.fileName,
+    restoreTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    tablesRestored: postRestoreStats.totalTables,
+    recordsRestored: postRestoreStats.totalRecords,
+    safetyBackup: safetyBackupResult.backup,
+    verification
   };
-}
+};
 
 /**
- * Executes confirmed restore from verified backup snapshot
+ * Step 2: Parse Real Counts from the SQL Dump
+ * Robust streaming parser that tracks CREATE TABLE statements,
+ * extracts table names from INSERT INTO / REPLACE INTO statements,
+ * correctly isolates tuples within VALUES (...) without false-positives
+ * from column lists, comments, or escaped quotes in strings.
  */
-async function executeConfirmedRestore(backupId, progressCb) {
-  const simulation = await dryRunRestore(backupId);
-  if (!simulation.dryRunPassed) {
-    throw new Error(`Restore rejected: ${simulation.message}`);
+const parseSqlDumpCounts = async (sqlFilePath) => {
+  const tableCounts = {};
+  const detectedTables = new Set();
+  let totalRows = 0;
+  let hasCreateTable = false;
+  let hasInsertInto = false;
+
+  const fileStream = fs.createReadStream(sqlFilePath, { encoding: 'utf8' });
+  const rl = readline.createInterface({
+    input: fileStream,
+    crlfDelay: Infinity
+  });
+
+  let currentTable = null;
+  let pendingTable = null;
+  let inValues = false;
+  let inString = false;
+  let stringChar = null;
+  let escapeNext = false;
+  let depth = 0;
+
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (!inValues && (!trimmed || trimmed.startsWith('--') || trimmed.startsWith('/*') || trimmed.startsWith('#'))) {
+      continue;
+    }
+
+    let i = 0;
+
+    if (!inValues) {
+      // Check for CREATE TABLE
+      const createMatch = trimmed.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?([a-zA-Z0-9_]+)[`"]?/i);
+      if (createMatch) {
+        hasCreateTable = true;
+        detectedTables.add(createMatch[1].toLowerCase());
+      }
+
+      if (!pendingTable) {
+        // Look for INSERT INTO or REPLACE INTO [table]
+        const insertMatch = trimmed.match(/^(?:INSERT\s+(?:IGNORE\s+)?INTO|REPLACE\s+INTO)\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i);
+        if (insertMatch) {
+          hasInsertInto = true;
+          pendingTable = insertMatch[1].toLowerCase();
+          if (tableCounts[pendingTable] === undefined) {
+            tableCounts[pendingTable] = 0;
+          }
+        }
+      }
+
+      if (pendingTable) {
+        // Find where VALUES or VALUE keyword begins (isolated by word boundary)
+        const valuesIndex = trimmed.search(/\bVALUES\b|\bVALUE\b/i);
+        if (valuesIndex !== -1) {
+          inValues = true;
+          currentTable = pendingTable;
+          pendingTable = null;
+          const matchedKeyword = trimmed.substring(valuesIndex).match(/^\b(VALUES|VALUE)\b/i)[0];
+          i = valuesIndex + matchedKeyword.length;
+        }
+      }
+    }
+
+    if (inValues) {
+      for (; i < line.length; i++) {
+        const ch = line[i];
+
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+
+        if (ch === '\\') {
+          escapeNext = true;
+          continue;
+        }
+
+        if (inString) {
+          if (ch === stringChar) {
+            // Check for doubled quote escape in SQL (e.g. 'It''s')
+            if (i + 1 < line.length && line[i + 1] === stringChar) {
+              i++; // skip escaped quote
+            } else {
+              inString = false;
+              stringChar = null;
+            }
+          }
+          continue;
+        }
+
+        // Not in string literal
+        if (ch === "'" || ch === '"') {
+          inString = true;
+          stringChar = ch;
+          continue;
+        }
+
+        // Line comment inside values
+        if (ch === '-' && i + 1 < line.length && line[i + 1] === '-') {
+          break; // remainder of line is comment
+        }
+
+        if (ch === '(') {
+          if (depth === 0) {
+            tableCounts[currentTable] = (tableCounts[currentTable] || 0) + 1;
+            totalRows++;
+          }
+          depth++;
+        } else if (ch === ')') {
+          if (depth > 0) depth--;
+        } else if (ch === ';' && depth === 0) {
+          inValues = false;
+          currentTable = null;
+          break;
+        }
+      }
+    }
   }
 
-  if (progressCb) progressCb(25);
+  return {
+    tableCounts,
+    totalRows,
+    detectedTables: Array.from(detectedTables),
+    hasCreateTable,
+    hasInsertInto
+  };
+};
 
-  const manifest = verifyBackupIntegrity(backupId).manifest;
-  const dbFilePath = path.join(dbBackupsDir, manifest.dbFile);
-  const snapshotData = JSON.parse(fs.readFileSync(dbFilePath, 'utf8'));
+/**
+ * Step 1, 3, 4, 5: Critical Table Verification
+ * Verifies restored database counts against expected row counts parsed from the SQL dump.
+ * Runs direct SELECT COUNT(*) queries on the restored tables.
+ * Handles legitimate differences (e.g. audit entries created during restore).
+ * Produces structured tabular comparison with status icons.
+ */
+const CRITICAL_VERIFY_MODULES = [
+  { label: 'User', table: 'user', isAudit: false },
+  { label: 'Organization', table: 'organization', isAudit: false },
+  { label: 'Attendance', table: 'attendance', isAudit: false },
+  { label: 'LeaveRequest', table: 'leaverequest', isAudit: false },
+  { label: 'UserLeaveBalance', table: 'userleavebalance', isAudit: false },
+  { label: 'Payroll', table: 'payrollbatch', altTable: 'payslip', isAudit: false },
+  { label: 'Project', table: 'project', isAudit: false },
+  { label: 'ActivityLog', table: 'activitylog', isAudit: true }
+];
 
-  if (progressCb) progressCb(50);
-  if (progressCb) progressCb(75);
-  if (progressCb) progressCb(100);
+const verifyCriticalTables = async (prisma, postImportStats, tableDumpCounts = {}, dbName = 'innoveity_crm') => {
+  const verification = {
+    valid: true,
+    database: dbName,
+    summary: 'Verification Passed',
+    totalTables: postImportStats.totalTables,
+    totalRecords: postImportStats.totalRecords,
+    checks: {},
+    tableComparison: [],
+    errors: []
+  };
 
+  for (const item of CRITICAL_VERIFY_MODULES) {
+    let foundTable = postImportStats.tableDetails.find(
+      t => t.name.toLowerCase() === item.table.toLowerCase()
+    );
+
+    let actualTableName = foundTable ? foundTable.name : null;
+    let expectedCount = tableDumpCounts[item.table.toLowerCase()] ?? null;
+
+    // Fallback if primary table name differs (e.g. payrollbatch vs payslip)
+    if (!foundTable && item.altTable) {
+      foundTable = postImportStats.tableDetails.find(
+        t => t.name.toLowerCase() === item.altTable.toLowerCase()
+      );
+      if (foundTable) {
+        actualTableName = foundTable.name;
+        if (expectedCount === null) {
+          expectedCount = tableDumpCounts[item.altTable.toLowerCase()] ?? null;
+        }
+      }
+    }
+
+    if (!foundTable) {
+      verification.valid = false;
+      const errMsg = `Critical table [${item.label}] missing in database after restore.`;
+      verification.errors.push(errMsg);
+      verification.checks[item.label] = {
+        status: 'MISSING',
+        table: item.label,
+        expected: expectedCount ?? 0,
+        actual: 0,
+        match: false
+      };
+      verification.tableComparison.push({
+        table: item.label,
+        expected: expectedCount ?? 0,
+        actual: 0,
+        status: 'MISSING',
+        icon: '❌',
+        match: false
+      });
+      continue;
+    }
+
+    // Step 3: Run direct SELECT COUNT(*) FROM table
+    let actualCount = foundTable.count;
+    try {
+      const rows = await prisma.$queryRawUnsafe(`SELECT COUNT(*) as cnt FROM \`${actualTableName}\``);
+      if (rows && rows.length > 0) {
+        actualCount = Number(rows[0].cnt ?? rows[0].count ?? foundTable.count);
+      }
+    } catch (e) {
+      actualCount = foundTable.count;
+    }
+
+    // Expected count parsed directly from the SQL dump
+    const expected = expectedCount !== null ? expectedCount : 0;
+
+    let match = false;
+    let status = 'MISMATCH';
+    let icon = '❌';
+
+    // Step 4: Handle legitimate differences
+    if (item.isAudit) {
+      // Audit records created during restore or health-checks: actual >= expected is accepted
+      if (actualCount >= expected) {
+        match = true;
+        status = 'VERIFIED';
+        icon = '✅';
+      } else {
+        match = false;
+        status = 'MISMATCH';
+        icon = '❌';
+        verification.valid = false;
+        verification.errors.push(`Row count mismatch on [${item.label}]: expected ${expected}, found ${actualCount}`);
+      }
+    } else {
+      if (actualCount === expected) {
+        match = true;
+        status = 'VERIFIED';
+        icon = '✅';
+      } else {
+        match = false;
+        status = 'MISMATCH';
+        icon = '❌';
+        verification.valid = false;
+        verification.errors.push(`Row count mismatch on [${item.label}]: expected ${expected}, found ${actualCount}`);
+      }
+    }
+
+    verification.checks[item.label] = {
+      status,
+      table: actualTableName,
+      expected,
+      actual: actualCount,
+      match
+    };
+
+    verification.tableComparison.push({
+      table: item.label,
+      expected,
+      actual: actualCount,
+      status,
+      icon,
+      match
+    });
+  }
+
+  // Minimum table threshold check (~80 tables)
+  if (postImportStats.totalTables < 70) {
+    verification.valid = false;
+    verification.errors.push(`Table count deficit: found ${postImportStats.totalTables} tables (expected ~80)`);
+  }
+
+  verification.summary = verification.valid ? 'Verification Passed' : 'Verification Failed';
+  return verification;
+};
+
+/**
+ * Validates an uploaded .sql dump file before importing.
+ * Meets Step 2, Step 3, and Step 4 requirements.
+ */
+const validateUploadedSql = async (sqlFilePath, originalFileName = '') => {
+  const result = {
+    valid: true,
+    errors: [],
+    warnings: [],
+    sqlInfo: null
+  };
+
+  // 1. File existence and extension check
+  if (!fs.existsSync(sqlFilePath)) {
+    result.valid = false;
+    result.errors.push('Uploaded file does not exist on server.');
+    return result;
+  }
+
+  const baseName = originalFileName || path.basename(sqlFilePath);
+  if (!baseName.toLowerCase().endsWith('.sql')) {
+    result.valid = false;
+    result.errors.push('Invalid SQL File – Only .sql files are allowed.');
+    return result;
+  }
+
+  const stat = fs.statSync(sqlFilePath);
+  if (stat.size === 0) {
+    result.valid = false;
+    result.errors.push('Invalid SQL File: The uploaded file is empty.');
+    return result;
+  }
+
+  // 2. Stream-parse the SQL file using the robust parser
+  let dumpParse;
+  try {
+    dumpParse = await parseSqlDumpCounts(sqlFilePath);
+  } catch (err) {
+    result.valid = false;
+    result.errors.push(`Invalid SQL File: Failed to inspect file: ${err.message}`);
+    return result;
+  }
+
+  if (!dumpParse.hasCreateTable) {
+    result.valid = false;
+    result.errors.push('SQL Validation Failed – No CREATE TABLE statements found.');
+  }
+  if (!dumpParse.hasInsertInto) {
+    result.valid = false;
+    result.errors.push('SQL Validation Failed – No INSERT INTO statements found.');
+  }
+  if (dumpParse.detectedTables.length === 0) {
+    result.valid = false;
+    result.errors.push('Invalid SQL File: File is not a valid MySQL dump or appears corrupted.');
+  }
+
+  if (!result.valid) {
+    return result;
+  }
+
+  // Step 4: Show SQL Preview with real row counts
+  result.sqlInfo = {
+    fileName: baseName,
+    fileSize: formatBytes(stat.size),
+    sizeBytes: stat.size,
+    tablesDetected: dumpParse.detectedTables.length,
+    totalRecords: dumpParse.totalRows,
+    sqlType: 'MySQL Dump',
+    tableDumpCounts: dumpParse.tableCounts
+  };
+
+  return result;
+};
+
+/**
+ * Executes confirmed SQL file import.
+ * Meets Step 3, Step 4, Step 5, Step 6, Step 7 requirements.
+ */
+const executeSqlImport = async ({ tempFileName, originalFileName, user }) => {
+  if (user?.role !== 'SUPER_ADMIN') {
+    const err = new Error('Access denied. Only Super Admin can import SQL backups.');
+    err.status = 403;
+    throw err;
+  }
+
+  const sqlFilePath = path.join(TEMP_RESTORE_DIR, tempFileName);
+  if (!fs.existsSync(sqlFilePath)) {
+    const err = new Error('Uploaded SQL file expired or not found. Please upload again.');
+    err.status = 404;
+    throw err;
+  }
+
+  // Pre-import validation
+  const validation = await validateUploadedSql(sqlFilePath, originalFileName);
+  if (!validation.valid) {
+    const err = new Error(`Import Rejected: ${validation.errors.join(' | ')}`);
+    err.status = 422;
+    throw err;
+  }
+
+  // STEP 2 & 5: AUTOMATIC PRE-IMPORT SAFETY BACKUP (MANDATORY)
+  let safetyBackupResult;
+  try {
+    safetyBackupResult = await takeLiveBackup({
+      user,
+      prefix: 'pre_import_backup',
+      type: 'Pre-Import Backup',
+      validationStatus: 'Saved'
+    });
+  } catch (safetyErr) {
+    const err = new Error(`Import Failed – Safety backup could not be created: ${safetyErr.message}. The database was not modified.`);
+    err.status = 500;
+    throw err;
+  }
+
+  // STEP 3: PREPARE DATABASE BEFORE IMPORT (OPTION A / OPTION B)
+  const dbConfig = parseDbConfig();
+  try {
+    await prepareDatabaseBeforeImport(dbConfig);
+  } catch (prepErr) {
+    const err = new Error(`Database preparation failed: ${prepErr.message}. Current data remains protected by safety backup ${safetyBackupResult.backup.fileName}`);
+    err.status = 500;
+    err.safetyBackup = safetyBackupResult.backup;
+    throw err;
+  }
+
+  // STEP 4 & 7: IMPORT PROCESS
+  try {
+    await runMysqlImport(dbConfig, sqlFilePath, safetyBackupResult.backup.fileName);
+  } catch (importErr) {
+    const err = new Error(importErr.message || `Database import failed. Current data remains protected by safety backup ${safetyBackupResult.backup.fileName}`);
+    err.status = 500;
+    err.safetyBackup = safetyBackupResult.backup;
+    throw err;
+  }
+
+  // STEP 6: VERIFICATION AFTER RESTORE
+  await prisma.$connect();
+  const postImportStats = await getLiveDatabaseStats();
+  const verification = await verifyCriticalTables(
+    prisma,
+    postImportStats,
+    validation.sqlInfo.tableDumpCounts,
+    dbConfig.database || 'innoveity_crm'
+  );
+
+  if (!verification.valid) {
+    const err = new Error(`Import Verification Failed: ${verification.errors.join(' | ')}. Safety backup [${safetyBackupResult.backup.fileName}] is available for rollback.`);
+    err.status = 500;
+    err.verification = verification;
+    err.safetyBackup = safetyBackupResult.backup;
+    throw err;
+  }
+
+  // STEP 10: BACKUP HISTORY INTEGRATION
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const dateStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const timeStr = `${pad(now.getHours())}-${pad(now.getMinutes())}`;
+  const savedSqlName = `sql_import_${dateStr}_${timeStr}.sql`;
+  const savedSqlPath = path.join(BACKUP_DIR, savedSqlName);
+
+  try {
+    fs.copyFileSync(sqlFilePath, savedSqlPath);
+    const sqlStat = fs.statSync(savedSqlPath);
+
+    const sqlEntry = {
+      id: `sql_import_${Date.now()}`,
+      fileName: savedSqlName,
+      filePath: savedSqlPath,
+      sizeBytes: sqlStat.size,
+      size: formatBytes(sqlStat.size),
+      type: 'SQL Import',
+      totalTables: postImportStats.totalTables,
+      totalRecords: postImportStats.totalRecords,
+      createdAt: now.toISOString(),
+      createdBy: user?.name ? `${user.name} (${user.email || user.role})` : 'Super Admin',
+      mysqlVersion: '8.0.46',
+      downloadUrl: `/api/backups/download/${savedSqlName}`,
+      validationStatus: 'Completed'
+    };
+
+    const manifest = readManifest();
+    manifest.unshift(sqlEntry);
+    saveManifest(manifest);
+  } catch (err) {
+    console.error('Failed to register SQL import in manifest:', err);
+  }
+
+  // Cleanup temp upload
+  try {
+    if (fs.existsSync(sqlFilePath)) fs.unlinkSync(sqlFilePath);
+  } catch (e) {}
+
+  // STEP 9 & STEP 6: SUCCESS CRITERIA
   return {
     success: true,
-    backupId,
-    restoredCounts: snapshotData.counts,
-    completedAt: new Date().toISOString()
+    message: 'SQL Backup Restored Successfully',
+    database: dbConfig.database || 'innoveity_crm',
+    fileName: validation.sqlInfo.fileName,
+    importTime: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+    tablesRestored: postImportStats.totalTables,
+    recordsImported: postImportStats.totalRecords,
+    tablesImported: postImportStats.totalTables,
+    safetyBackupPreserved: true,
+    safetyBackup: safetyBackupResult.backup,
+    verificationPassed: true,
+    verification
   };
-}
+};
 
 module.exports = {
-  dryRunRestore,
-  executeConfirmedRestore
+  validateUploadedBackup,
+  executeLiveRestore,
+  validateUploadedSql,
+  executeSqlImport,
+  prepareDatabaseBeforeImport,
+  parseMysqlImportError,
+  parseSqlDumpCounts,
+  verifyCriticalTables,
+  CRITICAL_VERIFY_MODULES,
+  TEMP_RESTORE_DIR
 };

@@ -58,6 +58,20 @@ const rateLimiter = ({
       return next();
     }
 
+    // High-frequency polling endpoints (attendance status, unread count, health) are exempt from global rate limit
+    const cleanPath = (req.path || '').toLowerCase();
+    const isStatusPolling =
+      cleanPath === '/status' ||
+      cleanPath === '/today-status' ||
+      cleanPath.endsWith('/attendance/status') ||
+      cleanPath.endsWith('/attendance/today-status') ||
+      cleanPath.endsWith('/notifications/unread-count') ||
+      cleanPath.endsWith('/health');
+
+    if (isStatusPolling && keyPrefix === 'global') {
+      return next();
+    }
+
     const ip = req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1';
     const key = `${keyPrefix}:${ip}`;
     const now = Date.now();
@@ -100,14 +114,14 @@ const rateLimiter = ({
 // Specialized Rate Limiters
 const authRateLimiter = rateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 25, // 25 attempts
+  max: 50, // 50 attempts
   message: 'Too many login or authentication attempts. Please wait 15 minutes.',
   keyPrefix: 'auth'
 });
 
 const globalRateLimiter = rateLimiter({
   windowMs: 60 * 1000, // 1 minute
-  max: 300, // 300 requests per minute
+  max: 1200, // 1200 requests per minute
   message: 'API rate limit exceeded. Please throttle your requests.',
   keyPrefix: 'global'
 });

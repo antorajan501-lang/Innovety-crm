@@ -95,7 +95,7 @@ const getSystemHealth = async () => {
     database: {
       status: dbStatus,
       latencyMs: dbLatencyMs,
-      provider: 'PostgreSQL (Prisma Engine)'
+      provider: 'MySQL (Prisma Engine)'
     },
     memory,
     cpu,

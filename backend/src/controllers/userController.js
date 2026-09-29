@@ -401,27 +401,27 @@ const getAllUsers = async (req, res) => {
     if (department) {
       where.OR = [
         ...(where.OR || []),
-        { department: { equals: department, mode: 'insensitive' } },
-        { departmentRef: { name: { equals: department, mode: 'insensitive' } } },
+        { department: { equals: department } },
+        { departmentRef: { name: { equals: department } } },
         { departmentId: department }
       ];
     }
     if (position) {
       where.position = {
-        name: { equals: position, mode: 'insensitive' }
+        name: { equals: position }
       };
     }
 
     if (search) {
       where.OR = [
         ...(where.OR || []),
-        { name: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
-        { employeeId: { contains: search, mode: 'insensitive' } },
-        { department: { contains: search, mode: 'insensitive' } },
-        { college: { contains: search, mode: 'insensitive' } },
-        { companyName: { contains: search, mode: 'insensitive' } },
-        { candidateType: { contains: search, mode: 'insensitive' } }
+        { name: { contains: search } },
+        { email: { contains: search } },
+        { employeeId: { contains: search } },
+        { department: { contains: search } },
+        { college: { contains: search } },
+        { companyName: { contains: search } },
+        { candidateType: { contains: search } }
       ];
     }
 
@@ -840,7 +840,7 @@ const deleteUser = async (req, res) => {
         where: { userId: id }
       });
 
-      // 8. Permanently delete user record from PostgreSQL
+      // 8. Permanently delete user record from MySQL
       await tx.user.delete({
         where: { id }
       });

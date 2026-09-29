@@ -565,6 +565,10 @@ const BrandingTheme = () => {
                     src={getUploadUrl(logoPreview)}
                     alt="Company Logo Preview"
                     className="h-full w-full object-contain p-1"
+                    onError={(e) => {
+                      e.target.onerror = null;
+                      e.target.src = '/logo.png';
+                    }}
                   />
                 ) : (
                   <ImageIcon className="h-6 w-6 text-muted-foreground" />

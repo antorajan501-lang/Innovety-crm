@@ -96,12 +96,12 @@ const getAssets = async ({
 
   if (search) {
     where.OR = [
-      { name: { contains: search, mode: 'insensitive' } },
-      { assetId: { contains: search, mode: 'insensitive' } },
-      { serialNumber: { contains: search, mode: 'insensitive' } },
-      { model: { contains: search, mode: 'insensitive' } },
-      { brand: { contains: search, mode: 'insensitive' } },
-      { assignedTo: { name: { contains: search, mode: 'insensitive' } } }
+      { name: { contains: search } },
+      { assetId: { contains: search } },
+      { serialNumber: { contains: search } },
+      { model: { contains: search } },
+      { brand: { contains: search } },
+      { assignedTo: { name: { contains: search } } }
     ];
   }
 

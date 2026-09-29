@@ -97,11 +97,11 @@ const globalSearch = async (req, res) => {
     const users = await prisma.user.findMany({
       where: getOrganizationWhere(req, {
         OR: [
-          { name: { contains: q, mode: 'insensitive' } },
-          { email: { contains: q, mode: 'insensitive' } },
-          { employeeId: { contains: q, mode: 'insensitive' } },
-          { department: { contains: q, mode: 'insensitive' } },
-          { college: { contains: q, mode: 'insensitive' } }
+          { name: { contains: q } },
+          { email: { contains: q } },
+          { employeeId: { contains: q } },
+          { department: { contains: q } },
+          { college: { contains: q } }
         ]
       }),
       take: 8,
@@ -154,9 +154,9 @@ const globalSearch = async (req, res) => {
         where: getOrganizationWhere(req, {
           isDeleted: false,
           OR: [
-            { name: { contains: q, mode: 'insensitive' } },
-            { projectCode: { contains: q, mode: 'insensitive' } },
-            { description: { contains: q, mode: 'insensitive' } }
+            { name: { contains: q } },
+            { projectCode: { contains: q } },
+            { description: { contains: q } }
           ]
         }),
         take: 5,
@@ -185,8 +185,8 @@ const globalSearch = async (req, res) => {
       const tasks = await prisma.task.findMany({
         where: getOrganizationWhere(req, {
           OR: [
-            { title: { contains: q, mode: 'insensitive' } },
-            { description: { contains: q, mode: 'insensitive' } }
+            { title: { contains: q } },
+            { description: { contains: q } }
           ]
         }),
         take: 5,
@@ -215,9 +215,9 @@ const globalSearch = async (req, res) => {
       const tickets = await prisma.ticket.findMany({
         where: {
           OR: [
-            { ticketId: { contains: q, mode: 'insensitive' } },
-            { subject: { contains: q, mode: 'insensitive' } },
-            { description: { contains: q, mode: 'insensitive' } }
+            { ticketId: { contains: q } },
+            { subject: { contains: q } },
+            { description: { contains: q } }
           ]
         },
         take: 5,
@@ -246,8 +246,8 @@ const globalSearch = async (req, res) => {
       const announcements = await prisma.announcement.findMany({
         where: {
           OR: [
-            { title: { contains: q, mode: 'insensitive' } },
-            { content: { contains: q, mode: 'insensitive' } }
+            { title: { contains: q } },
+            { content: { contains: q } }
           ]
         },
         take: 3,
@@ -274,10 +274,10 @@ const globalSearch = async (req, res) => {
       const assets = await prisma.asset.findMany({
         where: {
           OR: [
-            { assetId: { contains: q, mode: 'insensitive' } },
-            { name: { contains: q, mode: 'insensitive' } },
-            { brand: { contains: q, mode: 'insensitive' } },
-            { model: { contains: q, mode: 'insensitive' } }
+            { assetId: { contains: q } },
+            { name: { contains: q } },
+            { brand: { contains: q } },
+            { model: { contains: q } }
           ]
         },
         take: 3,

@@ -199,22 +199,22 @@ const getAllAssets = async (req, res) => {
       // Admin filters
       if (category) where.category = category;
       if (status) where.status = status;
-      if (brand) where.brand = { contains: brand, mode: 'insensitive' };
+      if (brand) where.brand = { contains: brand };
       if (department) {
         where.assignedTo = {
-          department: { contains: department, mode: 'insensitive' }
+          department: { contains: department }
         };
       }
     }
 
     if (search) {
       where.OR = [
-        { assetId: { contains: search, mode: 'insensitive' } },
-        { name: { contains: search, mode: 'insensitive' } },
-        { brand: { contains: search, mode: 'insensitive' } },
-        { model: { contains: search, mode: 'insensitive' } },
-        { serialNumber: { contains: search, mode: 'insensitive' } },
-        { assignedTo: { name: { contains: search, mode: 'insensitive' } } }
+        { assetId: { contains: search } },
+        { name: { contains: search } },
+        { brand: { contains: search } },
+        { model: { contains: search } },
+        { serialNumber: { contains: search } },
+        { assignedTo: { name: { contains: search } } }
       ];
     }
 

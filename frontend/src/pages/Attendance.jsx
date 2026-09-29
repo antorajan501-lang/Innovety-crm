@@ -314,7 +314,7 @@ const Attendance = () => {
 
     const pollInterval = setInterval(() => {
       fetchAttendanceStatus();
-    }, 4000);
+    }, 30000);
 
     return () => clearInterval(pollInterval);
   }, []);
@@ -560,9 +560,14 @@ const Attendance = () => {
           {/* Active status indicator */}
           <div className="mt-4 flex flex-col items-center gap-2">
             {!clockedRecord ? (
-              <span className="text-[10px] bg-red-500/10 text-red-500 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
-                Offline • Not Clocked In
-              </span>
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-[10px] bg-red-500/10 text-red-500 px-3 py-1 rounded-full font-bold uppercase tracking-wider">
+                  Offline • Not Clocked In
+                </span>
+                <span className="text-xs text-muted-foreground font-medium">
+                  No attendance records found for today.
+                </span>
+              </div>
             ) : clockedRecord.clockOut ? (
               <div className="flex items-center gap-2">
                 {clockedRecord.autoClockOut && (

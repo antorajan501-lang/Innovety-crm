@@ -30,3 +30,5 @@ backend/check_*.js
 backend/checkUsers.js
 backend/get_pw.js
 backend/run_live_e2e_verification.js
+backend/scratch/
+backend/backups/

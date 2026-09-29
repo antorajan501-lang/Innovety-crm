@@ -118,8 +118,8 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
   if (employeeName && employeeName.trim()) {
     const q = employeeName.trim();
     userWhere.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { employeeId: { contains: q, mode: 'insensitive' } }
+      { name: { contains: q } },
+      { employeeId: { contains: q } }
     ];
   }
 
@@ -340,8 +340,8 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
   if (employeeName && employeeName.trim()) {
     const q = employeeName.trim();
     userWhere.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { employeeId: { contains: q, mode: 'insensitive' } }
+      { name: { contains: q } },
+      { employeeId: { contains: q } }
     ];
   }
 
@@ -588,8 +588,8 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
   if (employeeName && employeeName.trim()) {
     const q = employeeName.trim();
     userWhere.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { employeeId: { contains: q, mode: 'insensitive' } }
+      { name: { contains: q } },
+      { employeeId: { contains: q } }
     ];
   }
 

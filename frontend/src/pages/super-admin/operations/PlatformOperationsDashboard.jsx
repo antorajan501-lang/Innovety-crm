@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Activity, ShieldCheck, Database, Wrench, Download, RefreshCw, FileText, CheckCircle2, UserX } from 'lucide-react';
+import { Activity, ShieldCheck, Database, Wrench, Download, RefreshCw, FileText, CheckCircle2, UserX, HardDrive } from 'lucide-react';
 import api from '../../../services/api';
 import PlatformHealthCard from '../../../components/operations/PlatformHealthCard';
 import BackupTimeline from '../../../components/operations/BackupTimeline';
@@ -68,13 +69,22 @@ const PlatformOperationsDashboard = () => {
             Real-time system health, automated backup timelines, maintenance routines, and compliance desk
           </p>
         </div>
-        <button
-          onClick={fetchHealth}
-          className="p-2 rounded-xl bg-card hover:bg-muted border border-border text-foreground transition-colors cursor-pointer"
-          title="Refresh Health Metrics"
-        >
-          <RefreshCw className={`h-4 w-4 ${loadingHealth ? 'animate-spin text-emerald-600' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2.5">
+          <Link
+            to="/super-admin/backup-restore"
+            className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-emerald-500/20 transition-all cursor-pointer"
+          >
+            <HardDrive className="h-4 w-4" />
+            <span>Take Live Backup</span>
+          </Link>
+          <button
+            onClick={fetchHealth}
+            className="p-2 rounded-xl bg-card hover:bg-muted border border-border text-foreground transition-colors cursor-pointer"
+            title="Refresh Health Metrics"
+          >
+            <RefreshCw className={`h-4 w-4 ${loadingHealth ? 'animate-spin text-emerald-600' : ''}`} />
+          </button>
+        </div>
       </div>
 
       {/* Platform Real-Time Health Cards */}

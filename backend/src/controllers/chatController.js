@@ -904,9 +904,9 @@ const searchChat = async (req, res) => {
 
     const usersWhere = getOrganizationWhere(req, {
       OR: [
-        { name: { contains: query, mode: 'insensitive' } },
-        { email: { contains: query, mode: 'insensitive' } },
-        { employeeId: { contains: query, mode: 'insensitive' } }
+        { name: { contains: query } },
+        { email: { contains: query } },
+        { employeeId: { contains: query } }
       ]
     });
 
@@ -917,7 +917,7 @@ const searchChat = async (req, res) => {
     });
 
     const roomsWhere = {
-      name: { contains: query, mode: 'insensitive' },
+      name: { contains: query },
       isArchived: false
     };
     if (targetOrgId) {
@@ -931,7 +931,7 @@ const searchChat = async (req, res) => {
 
     const messages = await prisma.chatMessage.findMany({
       where: {
-        message: { contains: query, mode: 'insensitive' },
+        message: { contains: query },
         isDeleted: false
       },
       include: {

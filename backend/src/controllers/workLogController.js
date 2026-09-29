@@ -384,10 +384,10 @@ const getWorkLogs = async (req, res) => {
     if (search && search.trim().length > 0) {
       const q = search.trim();
       where.OR = [
-        { description: { contains: q, mode: 'insensitive' } },
-        { project: { name: { contains: q, mode: 'insensitive' } } },
-        { project: { projectCode: { contains: q, mode: 'insensitive' } } },
-        { task: { title: { contains: q, mode: 'insensitive' } } }
+        { description: { contains: q } },
+        { project: { name: { contains: q } } },
+        { project: { projectCode: { contains: q } } },
+        { task: { title: { contains: q } } }
       ];
     }
 
@@ -546,9 +546,9 @@ const getAdminWorkLogs = async (req, res) => {
     if (search && search.trim().length > 0) {
       const q = search.trim();
       const searchOR = [
-        { description: { contains: q, mode: 'insensitive' } },
-        { user: { name: { contains: q, mode: 'insensitive' } } },
-        { user: { employeeId: { contains: q, mode: 'insensitive' } } }
+        { description: { contains: q } },
+        { user: { name: { contains: q } } },
+        { user: { employeeId: { contains: q } } }
       ];
 
       if (targetOrgId) {

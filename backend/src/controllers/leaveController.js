@@ -165,15 +165,15 @@ const getLeaves = async (req, res) => {
     // 5. Department & Employee Search Filter
     const userWhere = {};
     if (department && department !== 'ALL') {
-      userWhere.department = { equals: department, mode: 'insensitive' };
+      userWhere.department = { equals: department };
     }
 
     if (search && search.trim()) {
       const q = search.trim();
       userWhere.OR = [
-        { name: { contains: q, mode: 'insensitive' } },
-        { employeeId: { contains: q, mode: 'insensitive' } },
-        { email: { contains: q, mode: 'insensitive' } }
+        { name: { contains: q } },
+        { employeeId: { contains: q } },
+        { email: { contains: q } }
       ];
     }
 

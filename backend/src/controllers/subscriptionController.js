@@ -90,8 +90,8 @@ const getOrganizationAuditLogs = async (req, res, next) => {
     const whereClause = { organizationId: id };
     if (search && search.trim()) {
       whereClause.OR = [
-        { action: { contains: search.trim(), mode: 'insensitive' } },
-        { actorEmail: { contains: search.trim(), mode: 'insensitive' } }
+        { action: { contains: search.trim() } },
+        { actorEmail: { contains: search.trim() } }
       ];
     }
 

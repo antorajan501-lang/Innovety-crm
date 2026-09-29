@@ -1,5 +1,5 @@
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -484,14 +484,14 @@ model Task {
   id                  String                   @id @default(uuid())
   organizationId      String?
   title               String
-  description         String
+  description         String                   @db.Text
   priority            TaskPriority             @default(MEDIUM)
   status              TaskStatus               @default(PENDING)
   deadline            DateTime
   teamId              String?
   assigneeId          String?
   creatorId           String
-  attachments         String[]                 // List of file paths
+  attachments         Json?                    // List of file paths
   type                String?                  @default("TASK") // TASK, BUG, STORY
   storyPoints         Int?                     @default(0)
   sprintName          String?
@@ -503,7 +503,7 @@ model Task {
   stageId             String?
   stageApprovalStatus ApprovalStatus           @default(NOT_REQUIRED)
   reviewStatus        String                   @default("PENDING") // PENDING, APPROVED, REJECTED, RESUBMITTED
-  correctionText      String?
+  correctionText      String?                  @db.Text
   correctionAudioUrl  String?
   reviewedById        String?
   reviewedAt          DateTime?
@@ -537,8 +537,8 @@ model TaskSubmission {
   id          String   @id @default(uuid())
   taskId      String
   userId      String
-  submitNotes String?
-  files       String[] // File paths/URLs uploaded by intern
+  submitNotes String?  @db.Text
+  files       Json?    // File paths/URLs uploaded by intern
   submittedAt DateTime @default(now())
 
   task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
@@ -549,7 +549,7 @@ model Comment {
   id        String   @id @default(uuid())
   taskId    String
   userId    String
-  text      String
+  text      String   @db.Text
   audioUrl  String?
   type      String?  @default("TEXT") // TEXT, AUDIO
   createdAt DateTime @default(now())
@@ -562,7 +562,7 @@ model TaskReviewHistory {
   id           String   @id @default(uuid())
   taskId       String
   action       String   // SUBMITTED, APPROVED, REJECTED, RESUBMITTED
-  message      String?
+  message      String?  @db.Text
   audioUrl     String?
   createdById  String
   createdAt    DateTime @default(now())
@@ -723,7 +723,7 @@ model ActivityLog {
   organizationId String?
   userId         String
   action         String   // LOGIN, CLOCK_IN, TASK_CREATE, etc.
-  details        String
+  details        String   @db.Text
   ipAddress      String?
   createdAt      DateTime @default(now())
 
@@ -803,8 +803,8 @@ model LeaveRequest {
   type                String   @default("LEAVE")   // LEAVE, WFH
   payType             String   @default("PAID")    // PAID, UNPAID
   subject             String?
-  letterContent       String?
-  reason              String
+  letterContent       String?  @db.Text
+  reason              String   @db.Text
   contactPhone        String?
   
   // Team Snapshot at submission time
@@ -966,7 +966,7 @@ model Project {
   organizationId     String?
   projectCode        String          @unique // e.g. PRJ-1001
   name               String
-  description        String?
+  description        String?         @db.Text
   type               ProjectType     @default(CLIENT)
   status             ProjectStatus   @default(DRAFT)
   priority           ProjectPriority @default(MEDIUM)
@@ -1133,7 +1133,7 @@ model ChatMessage {
   id               String          @id @default(uuid())
   roomId           String
   senderId         String
-  message          String
+  message          String          @db.Text
   messageType      ChatMessageType @default(TEXT)
   attachmentUrl    String?
   fileName         String?

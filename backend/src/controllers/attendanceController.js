@@ -386,15 +386,15 @@ const clockIn = async (req, res) => {
     if (!validation.canClockIn) {
       let msg = `Clock-in is prohibited at this time.`;
       if (validation.reason === 'SATURDAY_LEAVE') {
-        msg = `Today is a scheduled Saturday leave.`;
+        msg = `Today is a scheduled Saturday leave. Clock-in is not required.`;
       } else if (validation.reason === 'HOLIDAY') {
-        msg = `Today is a Holiday.`;
+        msg = `Today is a designated Holiday. Clock-in is disabled.`;
       } else if (validation.reason === 'SHIFT_NOT_STARTED') {
-        msg = `Clock-in is available from ${validation.windowOpenFormatted}.`;
+        msg = `Clock-in window is not open yet. Shift starts at ${validation.shiftStartFormatted || '09:00 AM'}. Early clock-in opens at ${validation.windowOpenFormatted || '08:30 AM'} (Grace period ends at ${validation.windowCloseFormatted || '09:15 AM'}). Current server time is ${validation.currentTimeFormatted}.`;
       } else if (validation.reason === 'ALREADY_CLOCKED_IN') {
         msg = `You have already clocked in today.`;
       } else if (validation.reason === 'ALREADY_CLOCKED_OUT') {
-        msg = `You have already clocked out today.`;
+        msg = `You have already clocked out today. Daily attendance is completed.`;
       }
 
       console.warn(`[ClockIn 400 Rejected] User: ${userId} (${req.user.role}) | Reason: ${validation.reason} | WindowOpen: ${validation.windowOpenFormatted} | CurrentTime: ${validation.currentTimeFormatted}`);
@@ -403,6 +403,7 @@ const clockIn = async (req, res) => {
         success: false,
         reason: validation.reason || 'CLOCK_IN_PROHIBITED',
         message: msg,
+        currentTimeFormatted: validation.currentTimeFormatted,
         windowOpenFormatted: validation.windowOpenFormatted,
         shiftStartFormatted: validation.shiftStartFormatted,
         windowCloseFormatted: validation.windowCloseFormatted
@@ -1450,9 +1451,9 @@ const getCompanyLeaveReport = async (req, res) => {
       ...(departmentId ? { departmentId } : {}),
       ...(search ? {
         OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { employeeId: { contains: search, mode: 'insensitive' } }
+          { name: { contains: search } },
+          { email: { contains: search } },
+          { employeeId: { contains: search } }
         ]
       } : {})
     };

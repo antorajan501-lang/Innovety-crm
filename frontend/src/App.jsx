@@ -52,6 +52,7 @@ import OrganizationManager from './pages/super-admin/organization/OrganizationMa
 import PlatformOperationsDashboard from './pages/super-admin/operations/PlatformOperationsDashboard';
 import LeavePolicySettings from './pages/super-admin/LeavePolicySettings';
 import LatePolicySettings from './pages/super-admin/LatePolicySettings';
+import BackupRestore from './pages/super-admin/BackupRestore';
 import EmployeeSelfService from './components/intelligence/EmployeeSelfService';
 import ErrorBoundary from './components/common/ErrorBoundary';
 
@@ -198,6 +199,22 @@ const App = () => {
                     element={
                       <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
                         <PlatformOperationsDashboard />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/super-admin/backup-restore"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <BackupRestore />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/super-admin/backups"
+                    element={
+                      <ProtectedRoute allowedRoles={['SUPER_ADMIN']}>
+                        <BackupRestore />
                       </ProtectedRoute>
                     }
                   />

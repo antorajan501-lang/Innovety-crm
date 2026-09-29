@@ -137,6 +137,15 @@ api.interceptors.response.use(
         }
       }
     }
+
+    // Resilience: Gracefully retry once on 429 Rate Limit with exponential backoff
+    if (error.response && error.response.status === 429 && originalRequest && !originalRequest._retry429) {
+      originalRequest._retry429 = true;
+      const retryAfter = error.response.data?.retryAfterMs || 1000;
+      await new Promise(resolve => setTimeout(resolve, Math.min(retryAfter, 1500)));
+      return api(originalRequest);
+    }
+
     return Promise.reject(error);
   }
 );

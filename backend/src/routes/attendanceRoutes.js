@@ -6,6 +6,7 @@ const { authenticate, requireRole } = require('../middleware/auth');
 router.use(authenticate);
 
 router.get('/status', requireRole(['INTERN', 'TEAM_LEADER', 'EMPLOYEE', 'ADMIN']), getClockInStatus);
+router.get('/today-status', requireRole(['INTERN', 'TEAM_LEADER', 'EMPLOYEE', 'ADMIN']), getClockInStatus);
 router.post('/clock-in', requireRole(['INTERN', 'TEAM_LEADER', 'EMPLOYEE']), clockIn);
 router.post('/clock-out', requireRole(['INTERN', 'TEAM_LEADER', 'EMPLOYEE']), clockOut);
 router.get('/logs', getAttendanceLogs);

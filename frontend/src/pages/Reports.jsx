@@ -139,6 +139,7 @@ const Reports = () => {
             <select value={reportType} onChange={(e) => setReportType(e.target.value)} className="bg-muted/50 border border-border rounded-xl p-2.5 text-xs text-foreground font-semibold">
               <option value="attendance">Attendance Reports</option>
               <option value="tasks">Task Allocation Logs</option>
+              <option value="projects">Projects Portfolio Report</option>
               <option value="teams">Team Performance Audits</option>
               <option value="tickets">Support Tickets Summaries</option>
               <option value="leaves">Leave Applications Report</option>

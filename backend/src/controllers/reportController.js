@@ -1,5 +1,5 @@
 const prisma = require('../utils/db');
-const { getEffectiveOrgId } = require('../utils/organizationScope');
+const { getEffectiveOrgId, getProjectWhere } = require('../utils/organizationScope');
 
 // Helper to resolve targetOrgId cleanly
 const getTargetOrgId = (req) => {
@@ -423,6 +423,69 @@ const getWorkLogReport = async (req, res) => {
   }
 };
 
+// 9. Project Portfolio Report
+const getProjectReport = async (req, res) => {
+  try {
+    const { status, priority, startDate, endDate } = req.query;
+
+    const extra = { isDeleted: false };
+    if (status) extra.status = status;
+    if (priority) extra.priority = priority;
+
+    if (startDate || endDate) {
+      extra.createdAt = {};
+      if (startDate) extra.createdAt.gte = new Date(startDate);
+      if (endDate) extra.createdAt.lte = new Date(endDate);
+    }
+
+    const where = getProjectWhere(req, extra);
+
+    const projects = await prisma.project.findMany({
+      where,
+      include: {
+        leader: { select: { name: true, employeeId: true } },
+        creator: { select: { name: true, role: true } },
+        team: { select: { name: true } },
+        tasks: { select: { id: true, status: true } }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const reportData = projects.map((p) => {
+      const totalTasks = p.tasks.length;
+      const completedTasks = p.tasks.filter((t) => t.status === 'COMPLETED').length;
+      const progress = totalTasks > 0 ? `${Math.round((completedTasks / totalTasks) * 100)}%` : '0%';
+
+      return {
+        'Project Code': p.projectCode,
+        'Project Name': p.name,
+        'Type': p.type,
+        'Status': p.status,
+        'Priority': p.priority,
+        'Leader': p.leader?.name || 'N/A',
+        'Team': p.team?.name || 'N/A',
+        'Progress': progress,
+        'Tasks Count': totalTasks,
+        'Start Date': p.estimatedStartDate ? p.estimatedStartDate.toISOString().split('T')[0] : 'N/A',
+        'End Date': p.estimatedEndDate ? p.estimatedEndDate.toISOString().split('T')[0] : 'N/A',
+        'Created At': p.createdAt ? p.createdAt.toISOString().split('T')[0] : 'N/A'
+      };
+    });
+
+    if (req.query.format === 'csv') {
+      const csv = convertToCsv(reportData);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=projects_report.csv');
+      return res.send(csv);
+    }
+
+    res.json(reportData);
+  } catch (error) {
+    console.error('Projects report error:', error);
+    res.status(500).json({ message: 'Failed to generate projects report.', reason: error.message });
+  }
+};
+
 // Helper: convert JSON array of objects to CSV string
 const convertToCsv = (objArray) => {
   if (objArray.length === 0) return '';
@@ -441,5 +504,6 @@ module.exports = {
   getLeaveReport,
   getPayrollReport,
   getAssetReport,
-  getWorkLogReport
+  getWorkLogReport,
+  getProjectReport
 };

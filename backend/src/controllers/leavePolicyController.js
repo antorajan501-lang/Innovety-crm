@@ -1186,7 +1186,7 @@ const deleteLeaveType = async (req, res) => {
       }
     }
 
-    // 7. Actual permanent DELETE operation from PostgreSQL database
+    // 7. Actual permanent DELETE operation from MySQL database
     await prisma.leaveType.delete({
       where: { id }
     });

@@ -251,11 +251,11 @@ const getVisitorHistory = async ({
 
   if (search) {
     where.OR = [
-      { visitorName: { contains: search, mode: 'insensitive' } },
-      { companyName: { contains: search, mode: 'insensitive' } },
-      { badgeNumber: { contains: search, mode: 'insensitive' } },
-      { qrCode: { contains: search, mode: 'insensitive' } },
-      { host: { name: { contains: search, mode: 'insensitive' } } }
+      { visitorName: { contains: search } },
+      { companyName: { contains: search } },
+      { badgeNumber: { contains: search } },
+      { qrCode: { contains: search } },
+      { host: { name: { contains: search } } }
     ];
   }
 
