@@ -295,11 +295,19 @@ const validateBackupArchive = async (zipFilePath, liveStats, expectedDbName) => 
     validation.warnings.push('SQL dump contains no foreign key constraint declarations.');
   }
 
-  // 5. Phase 3: Parse Tables and Compare with Live MySQL Database
-  const dumpTableNamesSet = new Set();
+  // 5. Phase 3: Parse Tables and Compare with Live MySQL Database (Exact Case Sensitive)
+  const exactDumpTableNames = [];
   const createTableMatches = [...sqlContent.matchAll(/CREATE TABLE [`"]?([a-zA-Z0-9_]+)[`"]?/gi)];
-  createTableMatches.forEach(m => dumpTableNamesSet.add(m[1].toLowerCase()));
+  createTableMatches.forEach(m => exactDumpTableNames.push(m[1]));
+  const dumpTableNamesSet = new Set(exactDumpTableNames);
   validation.totalDumpTables = dumpTableNamesSet.size;
+
+  // Enforce lowercase naming standard for Linux/Windows cross-platform compatibility
+  const uppercaseTablesInDump = exactDumpTableNames.filter(name => /[A-Z]/.test(name));
+  if (uppercaseTablesInDump.length > 0) {
+    validation.valid = false;
+    validation.errors.push(`SQL dump contains PascalCase/uppercase table definitions (${uppercaseTablesInDump.slice(0, 10).join(', ')}${uppercaseTablesInDump.length > 10 ? '...' : ''}). All tables must be lowercase for Linux/Windows cross-platform compatibility.`);
+  }
 
   const tableDumpCounts = {};
   const lines = sqlContent.split('\n');
@@ -309,7 +317,7 @@ const validateBackupArchive = async (zipFilePath, liveStats, expectedDbName) => 
     const line = lines[i];
     const dumpMatch = line.match(/-- Dumping data for table [`"]?([a-zA-Z0-9_]+)[`"]?/i);
     if (dumpMatch) {
-      currentTable = dumpMatch[1].toLowerCase();
+      currentTable = dumpMatch[1];
       if (!tableDumpCounts[currentTable]) {
         tableDumpCounts[currentTable] = 0;
       }
@@ -333,7 +341,7 @@ const validateBackupArchive = async (zipFilePath, liveStats, expectedDbName) => 
           }
         }
       }
-      tableDumpCounts[currentTable] += tupleCount;
+      tableDumpCounts[currentTable] = (tableDumpCounts[currentTable] || 0) + tupleCount;
     }
   }
 
@@ -372,25 +380,33 @@ const validateBackupArchive = async (zipFilePath, liveStats, expectedDbName) => 
 
   let criticalMismatches = 0;
   for (const table of liveStats.tableDetails) {
-    const lowerName = table.name.toLowerCase();
+    const exactName = table.name;
     const liveCount = table.count;
-    const backupCount = tableDumpCounts[lowerName] ?? 0;
-    const existsInDump = dumpTableNamesSet.has(lowerName);
+    const backupCount = tableDumpCounts[exactName] ?? 0;
+    const existsInDump = dumpTableNamesSet.has(exactName);
+    
+    // Check if table exists under different casing in dump
+    const caseMismatchInDump = exactDumpTableNames.some(d => d.toLowerCase() === exactName.toLowerCase() && d !== exactName);
+    if (caseMismatchInDump) {
+      criticalMismatches++;
+      validation.errors.push(`Table case mismatch [${exactName}]: Live database table casing differs from dump table casing.`);
+    }
+
     const match = existsInDump && liveCount === backupCount;
-    const isCritical = CRITICAL_TABLES.has(lowerName);
-    const category = TABLE_CATEGORIES[lowerName] || 'Core Database Module';
+    const isCritical = CRITICAL_TABLES.has(exactName.toLowerCase());
+    const category = TABLE_CATEGORIES[exactName.toLowerCase()] || 'Core Database Module';
 
     if (!match) {
       if (isCritical) {
         criticalMismatches++;
-        validation.errors.push(`Critical table mismatch [${table.name}]: Live=${liveCount}, Dump=${backupCount}`);
+        validation.errors.push(`Critical table mismatch [${exactName}]: Live=${liveCount}, Dump=${backupCount}`);
       } else {
-        validation.warnings.push(`Table row discrepancy [${table.name}]: Live=${liveCount}, Dump=${backupCount}`);
+        validation.warnings.push(`Table row discrepancy [${exactName}]: Live=${liveCount}, Dump=${backupCount}`);
       }
     }
 
     validation.tableComparison.push({
-      table: table.name,
+      table: exactName,
       live: liveCount,
       backup: backupCount,
       match,
@@ -472,10 +488,14 @@ const takeLiveBackup = async ({
     // Extended audit properties
     type: backupTypeConst,
     database: dbConfig.database,
+    databaseEngine: 'MySQL',
     version: '1.0.0',
     createdAt: now.toISOString(),
     creatorRole: user?.role || 'SUPER_ADMIN',
-    tablesList: dbStats.tableNames
+    tablesList: dbStats.tableNames,
+    exactTableNames: dbStats.tableNames,
+    tableNamingStrategy: 'lowercase_mapped',
+    schemaVersion: '1.0.0'
   };
 
   // 5. Construct README.txt

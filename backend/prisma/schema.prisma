@@ -262,6 +262,8 @@ model User {
   connectedIntegrations    ExternalIntegration[]    @relation("ConnectedIntegrations")
   performedAuditLogs       OrganizationAuditLog[]   @relation("AuditPerformedBy")
   targetAuditLogs          OrganizationAuditLog[]   @relation("AuditTargetUser")
+
+  @@map("user")
 }
 
 model Position {
@@ -291,6 +293,8 @@ model Position {
   @@unique([organizationId, code])
   @@unique([organizationId, name])
   @@unique([organizationId, level])
+
+  @@map("position")
 }
 
 model PositionHistory {
@@ -307,6 +311,8 @@ model PositionHistory {
   oldPosition   Position? @relation("OldPositionHistory", fields: [oldPositionId], references: [id], onDelete: SetNull)
   newPosition   Position? @relation("NewPositionHistory", fields: [newPositionId], references: [id], onDelete: SetNull)
   changedBy     User?     @relation("ChangedByPositionHistory", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@map("positionhistory")
 }
 
 model PromotionHistory {
@@ -327,6 +333,8 @@ model PromotionHistory {
   previousPosition   Position? @relation("PrevPromotionPosition", fields: [previousPositionId], references: [id], onDelete: SetNull)
   newPosition        Position? @relation("NextPromotionPosition", fields: [newPositionId], references: [id], onDelete: SetNull)
   promotedBy         User?     @relation("PromotedByHistory", fields: [promotedById], references: [id], onDelete: SetNull)
+
+  @@map("promotionhistory")
 }
 
 model OrgBranch {
@@ -352,6 +360,8 @@ model OrgBranch {
 
   @@index([organizationId])
   @@index([organizationId, status])
+
+  @@map("orgbranch")
 }
 
 model DepartmentMaster {
@@ -371,6 +381,8 @@ model DepartmentMaster {
   @@index([organizationId])
   @@unique([organizationId, code])
   @@unique([organizationId, name])
+
+  @@map("departmentmaster")
 }
 
 model DesignationMaster {
@@ -390,6 +402,8 @@ model DesignationMaster {
   @@index([organizationId])
   @@unique([organizationId, code])
   @@unique([organizationId, name])
+
+  @@map("designationmaster")
 }
 
 model ShiftMaster {
@@ -402,6 +416,8 @@ model ShiftMaster {
   updatedAt DateTime @updatedAt
 
   users     User[]   @relation("UserShift")
+
+  @@map("shiftmaster")
 }
 
 model EmploymentTypeMaster {
@@ -410,6 +426,8 @@ model EmploymentTypeMaster {
   status    String   @default("ACTIVE")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@map("employmenttypemaster")
 }
 
 
@@ -432,6 +450,8 @@ model Team {
   projects      Project[]
 
   @@index([organizationId])
+
+  @@map("team")
 }
 
 model TeamMember {
@@ -445,6 +465,8 @@ model TeamMember {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([teamId, userId])
+
+  @@map("teammember")
 }
 
 model Attendance {
@@ -478,6 +500,8 @@ model Attendance {
   user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, date])
+
+  @@map("attendance")
 }
 
 model Task {
@@ -531,6 +555,8 @@ model Task {
   stageApprovalAudits TaskStageApprovalAudit[]
 
   @@index([organizationId])
+
+  @@map("task")
 }
 
 model TaskSubmission {
@@ -543,6 +569,8 @@ model TaskSubmission {
 
   task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("tasksubmission")
 }
 
 model Comment {
@@ -556,6 +584,8 @@ model Comment {
 
   task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("comment")
 }
 
 model TaskReviewHistory {
@@ -569,6 +599,8 @@ model TaskReviewHistory {
 
   task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
   createdBy    User     @relation("TaskReviewHistoryCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@map("taskreviewhistory")
 }
 
 model TaskHistory {
@@ -580,6 +612,8 @@ model TaskHistory {
   createdAt DateTime @default(now())
 
   task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("taskhistory")
 }
 
 enum AssetStatus {
@@ -649,6 +683,8 @@ model Asset {
 
   @@index([organizationId])
   @@index([branchId])
+
+  @@map("asset")
 }
 
 model AssetAssignment {
@@ -668,6 +704,8 @@ model AssetAssignment {
   user           User        @relation("UserAssignmentHistory", fields: [userId], references: [id], onDelete: Cascade)
   assignedBy     User?       @relation("UserAssignedByHistory", fields: [assignedById], references: [id], onDelete: SetNull)
   createdAt      DateTime    @default(now())
+
+  @@map("assetassignment")
 }
 
 model Ticket {
@@ -689,6 +727,8 @@ model Ticket {
   asset          Asset?         @relation(fields: [assetId], references: [id], onDelete: SetNull)
 
   @@index([organizationId])
+
+  @@map("ticket")
 }
 
 model Announcement {
@@ -704,6 +744,8 @@ model Announcement {
   creator      User     @relation("AnnouncementCreator", fields: [creatorId], references: [id], onDelete: Cascade)
   targetTeam   Team?    @relation(fields: [targetTeamId], references: [id], onDelete: SetNull)
   targetUser   User?    @relation("AnnouncementTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@map("announcement")
 }
 
 model Notification {
@@ -716,6 +758,8 @@ model Notification {
   createdAt DateTime @default(now())
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notification")
 }
 
 model ActivityLog {
@@ -731,6 +775,8 @@ model ActivityLog {
   organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
 
   @@index([organizationId])
+
+  @@map("activitylog")
 }
 
 model SystemSettings {
@@ -757,6 +803,8 @@ model SystemSettings {
   deductionPerLate    String        @default("1_DAY_SALARY")
   latePolicyAppliesTo String        @default("INTERN,EMPLOYEE,TEAM_LEADER")
   updatedAt           DateTime      @updatedAt
+
+  @@map("systemsettings")
 }
 
 model PlatformSettings {
@@ -768,6 +816,8 @@ model PlatformSettings {
   chatEnabledForAdmins Boolean  @default(true)
   chatEnabledForUsers  Boolean  @default(true)
   updatedAt            DateTime @updatedAt
+
+  @@map("platformsettings")
 }
 
 model Subtask {
@@ -778,6 +828,8 @@ model Subtask {
   createdAt DateTime @default(now())
 
   task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("subtask")
 }
 
 model Repository {
@@ -791,6 +843,8 @@ model Repository {
   updatedAt    DateTime @updatedAt
 
   branches     Branch[]
+
+  @@map("repository")
 }
 
 model LeaveRequest {
@@ -830,6 +884,8 @@ model LeaveRequest {
   updatedAt           DateTime @updatedAt
 
   user                User     @relation("UserLeaves", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("leaverequest")
 }
 
 enum LeaveAllocationType {
@@ -848,6 +904,8 @@ model LeavePolicy {
   autoApproval        Boolean              @default(false)
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
+
+  @@map("leavepolicy")
 }
 
 model LeaveType {
@@ -871,6 +929,8 @@ model LeaveType {
 
   userBalances      UserLeaveBalance[]
   creditHistories   LeaveCreditHistory[]
+
+  @@map("leavetype")
 }
 
 model UserLeaveBalance {
@@ -890,6 +950,8 @@ model UserLeaveBalance {
   leaveType      LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
   @@unique([userId, leaveTypeId])
+
+  @@map("userleavebalance")
 }
 
 model LeaveCreditHistory {
@@ -906,6 +968,8 @@ model LeaveCreditHistory {
   leaveType    LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
   @@unique([userId, leaveTypeId, month, year])
+
+  @@map("leavecredithistory")
 }
 
 model Branch {
@@ -919,6 +983,8 @@ model Branch {
   repository   Repository @relation(fields: [repoId], references: [id], onDelete: Cascade)
 
   @@unique([repoId, name])
+
+  @@map("branch")
 }
 
 enum ChatRoomType {
@@ -959,6 +1025,8 @@ model ChatRoom {
   messages       ChatMessage[]
 
   @@index([organizationId])
+
+  @@map("chatroom")
 }
 
 model Project {
@@ -1001,6 +1069,8 @@ model Project {
   workflowStages     ProjectWorkflowStage[]
 
   @@index([organizationId])
+
+  @@map("project")
 }
 
 model ProjectMember {
@@ -1014,6 +1084,8 @@ model ProjectMember {
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, userId])
+
+  @@map("projectmember")
 }
 
 model ProjectMilestone {
@@ -1028,6 +1100,8 @@ model ProjectMilestone {
 
   project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks       Task[]
+
+  @@map("projectmilestone")
 }
 
 model TaskDependency {
@@ -1040,6 +1114,8 @@ model TaskDependency {
   dependsOnTask    Task     @relation("TaskPrerequisites", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
 
   @@unique([taskId, dependsOnTaskId])
+
+  @@map("taskdependency")
 }
 
 model WorkLog {
@@ -1062,6 +1138,8 @@ model WorkLog {
   task         Task?                @relation(fields: [taskId], references: [id], onDelete: SetNull)
   user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   attachments  WorkLogAttachment[]
+
+  @@map("worklog")
 }
 
 model WorkLogAttachment {
@@ -1074,6 +1152,8 @@ model WorkLogAttachment {
   uploadedAt DateTime @default(now())
 
   workLog WorkLog @relation(fields: [workLogId], references: [id], onDelete: Cascade)
+
+  @@map("worklogattachment")
 }
 
 model AIFeedback {
@@ -1086,6 +1166,8 @@ model AIFeedback {
   createdAt        DateTime @default(now())
 
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("aifeedback")
 }
 
 model ProjectDocument {
@@ -1100,6 +1182,8 @@ model ProjectDocument {
 
   project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   uploader   User     @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@map("projectdocument")
 }
 
 model ProjectHistory {
@@ -1114,6 +1198,8 @@ model ProjectHistory {
 
   project     Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   changedBy   User           @relation("ProjectHistoryUser", fields: [changedById], references: [id], onDelete: Cascade)
+
+  @@map("projecthistory")
 }
 
 model ChatRoomMember {
@@ -1127,6 +1213,8 @@ model ChatRoomMember {
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([roomId, userId])
+
+  @@map("chatroommember")
 }
 
 model ChatMessage {
@@ -1166,6 +1254,8 @@ model ChatMessage {
   room             ChatRoom        @relation(fields: [roomId], references: [id], onDelete: Cascade)
   sender           User            @relation("ChatSender", fields: [senderId], references: [id], onDelete: Cascade)
   reads            MessageRead[]
+
+  @@map("chatmessage")
 }
 
 model MessageRead {
@@ -1178,6 +1268,8 @@ model MessageRead {
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([messageId, userId])
+
+  @@map("messageread")
 }
 
 enum FieldType {
@@ -1264,6 +1356,8 @@ model CustomFormField {
   updatedAt          DateTime           @updatedAt
 
   @@unique([entityType, fieldKey, versionId])
+
+  @@map("customformfield")
 }
 
 model CustomFormVersion {
@@ -1279,6 +1373,8 @@ model CustomFormVersion {
   updatedAt   DateTime           @updatedAt
 
   @@unique([entityType, version])
+
+  @@map("customformversion")
 }
 
 model DynamicMenu {
@@ -1299,6 +1395,8 @@ model DynamicMenu {
   updatedAt  DateTime      @updatedAt
 
   @@unique([role, menuKey])
+
+  @@map("dynamicmenu")
 }
 
 model BuilderHistory {
@@ -1312,6 +1410,8 @@ model BuilderHistory {
   newSnapshot   Json?
   details       String
   createdAt     DateTime            @default(now())
+
+  @@map("builderhistory")
 }
 
 enum PayrollBatchStatus {
@@ -1359,6 +1459,8 @@ model SalaryTemplate {
   structures       SalaryStructure[]
 
   @@index([organizationId])
+
+  @@map("salarytemplate")
 }
 
 model SalaryStructure {
@@ -1394,6 +1496,8 @@ model SalaryStructure {
   template         SalaryTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   @@index([organizationId])
+
+  @@map("salarystructure")
 }
 
 model SalaryRevision {
@@ -1414,6 +1518,8 @@ model SalaryRevision {
   revisedBy      User          @relation("RevisedByRevisions", fields: [revisedById], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
+
+  @@map("salaryrevision")
 }
 
 model HolidayCalendar {
@@ -1432,6 +1538,8 @@ model HolidayCalendar {
 
   @@unique([organizationId, date])
   @@index([organizationId])
+
+  @@map("holidaycalendar")
 }
 
 model PayrollSettings {
@@ -1459,6 +1567,8 @@ model PayrollSettings {
   deductionPerLate      String        @default("1_DAY_SALARY")
   latePolicyAppliesTo   String        @default("INTERN,EMPLOYEE,TEAM_LEADER")
   updatedAt             DateTime      @updatedAt
+
+  @@map("payrollsettings")
 }
 
 model PayrollBatch {
@@ -1483,6 +1593,8 @@ model PayrollBatch {
 
   @@unique([month, year, organizationId])
   @@index([organizationId])
+
+  @@map("payrollbatch")
 }
 
 model Payslip {
@@ -1524,6 +1636,8 @@ model Payslip {
 
   @@unique([batchId, userId])
   @@index([organizationId])
+
+  @@map("payslip")
 }
 
 model ProjectWorkflowStage {
@@ -1545,6 +1659,8 @@ model ProjectWorkflowStage {
   approvalAudits   TaskStageApprovalAudit[]
 
   @@unique([projectId, name])
+
+  @@map("projectworkflowstage")
 }
 
 model TaskStageApprovalAudit {
@@ -1563,6 +1679,8 @@ model TaskStageApprovalAudit {
   stage         ProjectWorkflowStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
   requestedBy   User                 @relation("StageAuditRequestedBy", fields: [requestedById], references: [id], onDelete: Cascade)
   approvedBy    User?                @relation("StageAuditApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@map("taskstageapprovalaudit")
 }
 
 model WorkCalendar {
@@ -1585,6 +1703,8 @@ model WorkCalendar {
   @@index([date])
   @@index([organizationId])
   @@index([isPermanent, recurrenceMonth, recurrenceDay])
+
+  @@map("workcalendar")
 }
 
 model OrganizationAuditLog {
@@ -1608,6 +1728,8 @@ model OrganizationAuditLog {
   @@index([organizationId])
   @@index([organizationId, createdAt])
   @@index([action])
+
+  @@map("organizationauditlog")
 }
 
 model Organization {
@@ -1667,6 +1789,8 @@ model Organization {
   integrations            ExternalIntegration[]
   activityLogs   ActivityLog[]
   auditLogs      OrganizationAuditLog[]
+
+  @@map("organization")
 }
 
 model OrganizationSettings {
@@ -1689,6 +1813,8 @@ model OrganizationSettings {
   chatEnabledForUsers  Boolean     @default(true)
   createdAt           DateTime     @default(now())
   updatedAt           DateTime     @updatedAt
+
+  @@map("organizationsettings")
 }
 
 model SubscriptionPlan {
@@ -1703,6 +1829,8 @@ model SubscriptionPlan {
   createdAt       DateTime       @default(now())
 
   organizations   Organization[]
+
+  @@map("subscriptionplan")
 }
 
 model Shift {
@@ -1724,6 +1852,8 @@ model Shift {
 
   @@index([organizationId])
   @@index([organizationId, status])
+
+  @@map("shift")
 }
 
 model ShiftMember {
@@ -1737,6 +1867,8 @@ model ShiftMember {
 
   @@index([shiftId])
   @@index([userId])
+
+  @@map("shiftmember")
 }
 
 model ShiftHistory {
@@ -1752,6 +1884,8 @@ model ShiftHistory {
 
   @@index([shiftId])
   @@index([shiftId, createdAt])
+
+  @@map("shifthistory")
 }
 
 model ShiftSchedule {
@@ -1779,6 +1913,8 @@ model ShiftSchedule {
   @@index([userId, startDate, endDate])
   @@index([organizationId, startDate, endDate])
   @@index([status])
+
+  @@map("shiftschedule")
 }
 
 model ShiftNotification {
@@ -1798,6 +1934,8 @@ model ShiftNotification {
   @@index([organizationId])
   @@index([userId, isRead])
   @@index([userId, createdAt])
+
+  @@map("shiftnotification")
 }
 
 model ShiftApproval {
@@ -1821,6 +1959,8 @@ model ShiftApproval {
   @@index([organizationId])
   @@index([requesterId])
   @@index([status])
+
+  @@map("shiftapproval")
 }
 
 model RecurringShiftTemplate {
@@ -1838,6 +1978,8 @@ model RecurringShiftTemplate {
   shift             Shift        @relation(fields: [shiftId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
+
+  @@map("recurringshifttemplate")
 }
 
 model ShiftAutomationSetting {
@@ -1854,6 +1996,8 @@ model ShiftAutomationSetting {
   updatedAt                DateTime     @updatedAt
 
   organization             Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("shiftautomationsetting")
 }
 
 model ShiftException {
@@ -1876,6 +2020,8 @@ model ShiftException {
   @@index([organizationId])
   @@index([userId, date])
   @@index([status])
+
+  @@map("shiftexception")
 }
 
 model WorkforceInsight {
@@ -1894,6 +2040,8 @@ model WorkforceInsight {
 
   @@index([organizationId])
   @@index([organizationId, createdAt])
+
+  @@map("workforceinsight")
 }
 
 model Visitor {
@@ -1925,6 +2073,8 @@ model Visitor {
   @@index([organizationId])
   @@index([organizationId, status])
   @@index([hostId])
+
+  @@map("visitor")
 }
 
 model EmployeeDocument {
@@ -1952,6 +2102,8 @@ model EmployeeDocument {
   @@index([organizationId])
   @@index([userId])
   @@index([documentType])
+
+  @@map("employeedocument")
 }
 
 model EmployeeDocumentHistory {
@@ -1967,6 +2119,8 @@ model EmployeeDocumentHistory {
   createdAt    DateTime         @default(now())
 
   @@index([documentId])
+
+  @@map("employeedocumenthistory")
 }
 
 model OrganizationEvent {
@@ -1990,6 +2144,8 @@ model OrganizationEvent {
 
   @@index([organizationId])
   @@index([startDate, endDate])
+
+  @@map("organizationevent")
 }
 
 model ExternalIntegration {
@@ -2018,6 +2174,8 @@ model ExternalIntegration {
 
   @@unique([organizationId, provider])
   @@index([organizationId])
+
+  @@map("externalintegration")
 }
 
 

@@ -113,10 +113,18 @@ const validateUploadedBackup = async (zipFilePath, originalFileName = '') => {
     result.warnings.push(`Warning reading backup_info.json: ${err.message}`);
   }
 
-  // Count tables and records from SQL
-  const dumpTableNamesSet = new Set();
+  // Count tables and records from SQL (Exact Case Sensitive)
+  const exactDumpTableNames = [];
   const createTableMatches = [...sqlContent.matchAll(/CREATE TABLE [`"]?([a-zA-Z0-9_]+)[`"]?/gi)];
-  createTableMatches.forEach(m => dumpTableNamesSet.add(m[1].toLowerCase()));
+  createTableMatches.forEach(m => exactDumpTableNames.push(m[1]));
+  const dumpTableNamesSet = new Set(exactDumpTableNames);
+
+  // Enforce lowercase table standard
+  const uppercaseTables = exactDumpTableNames.filter(t => /[A-Z]/.test(t));
+  if (uppercaseTables.length > 0) {
+    result.valid = false;
+    result.errors.push(`Table case mismatch in SQL dump: ${uppercaseTables.length} tables have PascalCase/uppercase names (${uppercaseTables.slice(0, 5).join(', ')}...). Expected all lowercase tables for Linux/Windows cross-platform compatibility.`);
+  }
 
   const tableDumpCounts = {};
   const lines = sqlContent.split('\n');
@@ -127,10 +135,10 @@ const validateUploadedBackup = async (zipFilePath, originalFileName = '') => {
     const dumpMatch = line.match(/-- Dumping data for table [`"]?([a-zA-Z0-9_]+)[`"]?/i);
     const insertMatch = line.match(/^INSERT INTO [`"]?([a-zA-Z0-9_]+)[`"]?/i);
     if (dumpMatch) {
-      currentTable = dumpMatch[1].toLowerCase();
+      currentTable = dumpMatch[1];
       if (!tableDumpCounts[currentTable]) tableDumpCounts[currentTable] = 0;
     } else if (insertMatch) {
-      currentTable = insertMatch[1].toLowerCase();
+      currentTable = insertMatch[1];
       if (!tableDumpCounts[currentTable]) tableDumpCounts[currentTable] = 0;
     }
 
@@ -554,19 +562,19 @@ const parseSqlDumpCounts = async (sqlFilePath) => {
     let i = 0;
 
     if (!inValues) {
-      // Check for CREATE TABLE
+      // Check for CREATE TABLE (preserve exact casing)
       const createMatch = trimmed.match(/^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"]?([a-zA-Z0-9_]+)[`"]?/i);
       if (createMatch) {
         hasCreateTable = true;
-        detectedTables.add(createMatch[1].toLowerCase());
+        detectedTables.add(createMatch[1]);
       }
 
       if (!pendingTable) {
-        // Look for INSERT INTO or REPLACE INTO [table]
+        // Look for INSERT INTO or REPLACE INTO [table] (preserve exact casing)
         const insertMatch = trimmed.match(/^(?:INSERT\s+(?:IGNORE\s+)?INTO|REPLACE\s+INTO)\s+[`"]?([a-zA-Z0-9_]+)[`"]?/i);
         if (insertMatch) {
           hasInsertInto = true;
-          pendingTable = insertMatch[1].toLowerCase();
+          pendingTable = insertMatch[1];
           if (tableCounts[pendingTable] === undefined) {
             tableCounts[pendingTable] = 0;
           }
@@ -662,11 +670,20 @@ const CRITICAL_VERIFY_MODULES = [
   { label: 'User', table: 'user', isAudit: false },
   { label: 'Organization', table: 'organization', isAudit: false },
   { label: 'Attendance', table: 'attendance', isAudit: false },
+  { label: 'OrganizationSettings', table: 'organizationsettings', isAudit: false },
+  { label: 'OrgBranch', table: 'orgbranch', isAudit: false },
+  { label: 'Shift', table: 'shift', isAudit: false },
+  { label: 'ShiftMember', table: 'shiftmember', isAudit: false },
   { label: 'LeaveRequest', table: 'leaverequest', isAudit: false },
+  { label: 'LeavePolicy', table: 'leavepolicy', isAudit: false },
   { label: 'UserLeaveBalance', table: 'userleavebalance', isAudit: false },
-  { label: 'Payroll', table: 'payrollbatch', altTable: 'payslip', isAudit: false },
+  { label: 'PayrollSettings', table: 'payrollsettings', isAudit: false },
+  { label: 'Payslip', table: 'payslip', altTable: 'payrollbatch', isAudit: false },
+  { label: 'WorkLog', table: 'worklog', isAudit: false },
+  { label: 'Notification', table: 'notification', isAudit: false },
+  { label: 'ActivityLog', table: 'activitylog', isAudit: true },
   { label: 'Project', table: 'project', isAudit: false },
-  { label: 'ActivityLog', table: 'activitylog', isAudit: true }
+  { label: 'Task', table: 'task', isAudit: false }
 ];
 
 const verifyCriticalTables = async (prisma, postImportStats, tableDumpCounts = {}, dbName = 'innoveity_crm') => {
@@ -681,30 +698,65 @@ const verifyCriticalTables = async (prisma, postImportStats, tableDumpCounts = {
     errors: []
   };
 
+  // Cross-platform check: Ensure no restored tables contain uppercase letters
+  const uppercaseDbTables = postImportStats.tableDetails.filter(t => /[A-Z]/.test(t.name));
+  if (uppercaseDbTables.length > 0) {
+    verification.valid = false;
+    verification.errors.push(`Database contains ${uppercaseDbTables.length} uppercase/PascalCase table(s) (${uppercaseDbTables.map(t => t.name).slice(0, 5).join(', ')}${uppercaseDbTables.length > 5 ? '...' : ''}). All tables must be lowercase for Linux/Windows cross-platform compatibility.`);
+  }
+
   for (const item of CRITICAL_VERIFY_MODULES) {
+    // 1. Exact case check
     let foundTable = postImportStats.tableDetails.find(
-      t => t.name.toLowerCase() === item.table.toLowerCase()
+      t => t.name === item.table
     );
 
+    // 2. Case mismatch detection
+    const caseMismatchTable = postImportStats.tableDetails.find(
+      t => t.name.toLowerCase() === item.table.toLowerCase() && t.name !== item.table
+    );
+
+    if (caseMismatchTable) {
+      verification.valid = false;
+      const errMsg = `Critical table [${item.label}] has CASE MISMATCH: expected exact lowercase '${item.table}', found '${caseMismatchTable.name}'. Linux case-sensitive MySQL will reject queries.`;
+      verification.errors.push(errMsg);
+      verification.checks[item.label] = {
+        status: 'CASE_MISMATCH',
+        table: item.label,
+        expected: item.table,
+        actual: caseMismatchTable.name,
+        match: false
+      };
+      verification.tableComparison.push({
+        table: item.label,
+        expected: item.table,
+        actual: caseMismatchTable.name,
+        status: 'CASE_MISMATCH',
+        icon: '⚠️',
+        match: false
+      });
+      continue;
+    }
+
     let actualTableName = foundTable ? foundTable.name : null;
-    let expectedCount = tableDumpCounts[item.table.toLowerCase()] ?? null;
+    let expectedCount = tableDumpCounts[item.table] ?? null;
 
     // Fallback if primary table name differs (e.g. payrollbatch vs payslip)
     if (!foundTable && item.altTable) {
       foundTable = postImportStats.tableDetails.find(
-        t => t.name.toLowerCase() === item.altTable.toLowerCase()
+        t => t.name === item.altTable
       );
       if (foundTable) {
         actualTableName = foundTable.name;
         if (expectedCount === null) {
-          expectedCount = tableDumpCounts[item.altTable.toLowerCase()] ?? null;
+          expectedCount = tableDumpCounts[item.altTable] ?? null;
         }
       }
     }
 
     if (!foundTable) {
       verification.valid = false;
-      const errMsg = `Critical table [${item.label}] missing in database after restore.`;
+      const errMsg = `Critical table [${item.label}] missing in database after restore. Expected exact table '${item.table}'.`;
       verification.errors.push(errMsg);
       verification.checks[item.label] = {
         status: 'MISSING',
@@ -852,6 +904,13 @@ const validateUploadedSql = async (sqlFilePath, originalFileName = '') => {
   if (dumpParse.detectedTables.length === 0) {
     result.valid = false;
     result.errors.push('Invalid SQL File: File is not a valid MySQL dump or appears corrupted.');
+  }
+
+  // Cross-platform check: Enforce lowercase table names in SQL dump
+  const uppercaseTables = dumpParse.detectedTables.filter(t => /[A-Z]/.test(t));
+  if (uppercaseTables.length > 0) {
+    result.valid = false;
+    result.errors.push(`Table case mismatch in SQL file: ${uppercaseTables.length} table(s) have PascalCase/uppercase names (${uppercaseTables.slice(0, 5).join(', ')}${uppercaseTables.length > 5 ? '...' : ''}). Expected all lowercase tables for Linux/Windows cross-platform compatibility.`);
   }
 
   if (!result.valid) {
