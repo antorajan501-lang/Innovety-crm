@@ -672,7 +672,7 @@ const CRITICAL_VERIFY_MODULES = [
   { label: 'Attendance', table: 'attendance', isAudit: false },
   { label: 'OrganizationSettings', table: 'organizationsettings', isAudit: false },
   { label: 'OrgBranch', table: 'orgbranch', isAudit: false },
-  { label: 'Shift', table: 'shift', isAudit: false },
+  { label: 'Shift', table: 'shift', altTable: 'shiftmaster', isAudit: false },
   { label: 'ShiftMember', table: 'shiftmember', isAudit: false },
   { label: 'LeaveRequest', table: 'leaverequest', isAudit: false },
   { label: 'LeavePolicy', table: 'leavepolicy', isAudit: false },
@@ -682,6 +682,7 @@ const CRITICAL_VERIFY_MODULES = [
   { label: 'WorkLog', table: 'worklog', isAudit: false },
   { label: 'Notification', table: 'notification', isAudit: false },
   { label: 'ActivityLog', table: 'activitylog', isAudit: true },
+  { label: 'Department', table: 'departmentmaster', altTable: 'department', isAudit: false },
   { label: 'Project', table: 'project', isAudit: false },
   { label: 'Task', table: 'task', isAudit: false }
 ];
@@ -851,15 +852,146 @@ const verifyCriticalTables = async (prisma, postImportStats, tableDumpCounts = {
 };
 
 /**
+ * Reads Prisma schema to discover all registered models and their @@map lowercase table names.
+ */
+let cachedPrismaTables = null;
+const getExpectedPrismaTables = () => {
+  if (cachedPrismaTables) return cachedPrismaTables;
+
+  const schemaPath = path.resolve(__dirname, '..', '..', 'prisma', 'schema.prisma');
+  const modelToTable = new Map();
+  const tableToModel = new Map();
+
+  if (fs.existsSync(schemaPath)) {
+    const lines = fs.readFileSync(schemaPath, 'utf8').split('\n');
+    let currentModel = null;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      const modelMatch = trimmed.match(/^model\s+([A-Za-z0-9_]+)\s*\{/);
+      if (modelMatch) {
+        currentModel = modelMatch[1];
+        continue;
+      }
+      if (currentModel && trimmed.startsWith('}')) {
+        if (!modelToTable.has(currentModel)) {
+          const lower = currentModel.toLowerCase();
+          modelToTable.set(currentModel, lower);
+          tableToModel.set(lower, currentModel);
+        }
+        currentModel = null;
+        continue;
+      }
+      if (currentModel) {
+        const mapMatch = trimmed.match(/^@@map\("([^"]+)"\)/);
+        if (mapMatch) {
+          const tableName = mapMatch[1].toLowerCase();
+          modelToTable.set(currentModel, tableName);
+          tableToModel.set(tableName, currentModel);
+        }
+      }
+    }
+  }
+
+  cachedPrismaTables = { modelToTable, tableToModel };
+  return cachedPrismaTables;
+};
+
+/**
+ * Creates a streaming line-by-line SQL transformer that replaces only table identifiers,
+ * preserving all column names, strings, comments, and data values.
+ */
+const createLegacySqlTableReplacer = (tableMap) => {
+  const names = Array.from(tableMap.keys()).sort((a, b) => b.length - a.length);
+  if (names.length === 0) return (line) => line;
+
+  const escapedNames = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const prefix = '(?:[`"][a-zA-Z0-9_]+[`"]\\.)?';
+
+  const createTableRegex = new RegExp(`^(\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+  const dropTableRegex = new RegExp(`^(\\s*DROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+  const alterTableRegex = new RegExp(`^(\\s*ALTER\\s+TABLE\\s+${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+  const truncateTableRegex = new RegExp(`^(\\s*TRUNCATE\\s+(?:TABLE\\s+)?${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+  const lockTableRegex = new RegExp(`^(\\s*LOCK\\s+TABLES?\\s+${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+  const insertIntoRegex = new RegExp(`^(\\s*(?:INSERT\\s+(?:IGNORE\\s+)?INTO|REPLACE\\s+INTO)\\s+${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+  const updateTableRegex = new RegExp(`^(\\s*UPDATE\\s+(?:LOW_PRIORITY\\s+)?(?:IGNORE\\s+)?${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+  const deleteTableRegex = new RegExp(`^(\\s*DELETE\\s+(?:LOW_PRIORITY\\s+)?(?:QUICK\\s+)?(?:IGNORE\\s+)?FROM\\s+${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+  const referencesRegex = new RegExp(`(\\bREFERENCES\\s+${prefix}[\`"]?)(${escapedNames})([\`"]?\\s*\\()`, 'gi');
+  const commentTableRegex = new RegExp(`^(\\s*--\\s*(?:Table\\s+structure|Dumping\\s+data|Constraints)\\s+for\\s+table\\s+${prefix}[\`"]?)(${escapedNames})([\`"]?.*)$`, 'i');
+
+  return function transformLine(line) {
+    let transformed = line;
+
+    if (commentTableRegex.test(transformed)) {
+      return transformed.replace(commentTableRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+
+    const trimmed = line.trim();
+    if (trimmed.startsWith('--') || trimmed.startsWith('/*') || trimmed.startsWith('#')) {
+      return line;
+    }
+
+    if (createTableRegex.test(transformed)) {
+      transformed = transformed.replace(createTableRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+    if (dropTableRegex.test(transformed)) {
+      transformed = transformed.replace(dropTableRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+    if (alterTableRegex.test(transformed)) {
+      transformed = transformed.replace(alterTableRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+    if (truncateTableRegex.test(transformed)) {
+      transformed = transformed.replace(truncateTableRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+    if (lockTableRegex.test(transformed)) {
+      transformed = transformed.replace(lockTableRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+    if (insertIntoRegex.test(transformed)) {
+      transformed = transformed.replace(insertIntoRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+    if (updateTableRegex.test(transformed)) {
+      transformed = transformed.replace(updateTableRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+    if (deleteTableRegex.test(transformed)) {
+      transformed = transformed.replace(deleteTableRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+    if (referencesRegex.test(transformed)) {
+      transformed = transformed.replace(referencesRegex, (m, p1, name, p3) => `${p1}${tableMap.get(name) || name.toLowerCase()}${p3}`);
+    }
+
+    return transformed;
+  };
+};
+
+/**
+ * Normalizes legacy SQL dump by converting table names to lowercase
+ */
+const normalizeLegacySqlFile = async (inputPath, outputPath, tableMap) => {
+  const transform = createLegacySqlTableReplacer(tableMap);
+  const rl = readline.createInterface({ input: fs.createReadStream(inputPath), crlfDelay: Infinity });
+  const writeStream = fs.createWriteStream(outputPath, { encoding: 'utf8' });
+
+  for await (const line of rl) {
+    writeStream.write(transform(line) + '\n');
+  }
+  writeStream.end();
+  await new Promise((resolve, reject) => {
+    writeStream.on('finish', resolve);
+    writeStream.on('error', reject);
+  });
+};
+
+/**
  * Validates an uploaded .sql dump file before importing.
- * Meets Step 2, Step 3, and Step 4 requirements.
+ * Supports legacy PascalCase backups safely via table normalization.
  */
 const validateUploadedSql = async (sqlFilePath, originalFileName = '') => {
   const result = {
     valid: true,
     errors: [],
     warnings: [],
-    sqlInfo: null
+    sqlInfo: null,
+    tableMap: null
   };
 
   // 1. File existence and extension check
@@ -906,16 +1038,66 @@ const validateUploadedSql = async (sqlFilePath, originalFileName = '') => {
     result.errors.push('Invalid SQL File: File is not a valid MySQL dump or appears corrupted.');
   }
 
-  // Cross-platform check: Enforce lowercase table names in SQL dump
+  // Cross-platform check: Check for PascalCase / uppercase table names in SQL dump
   const uppercaseTables = dumpParse.detectedTables.filter(t => /[A-Z]/.test(t));
+  let isLegacy = false;
+  const legacyTableMap = new Map();
+
   if (uppercaseTables.length > 0) {
-    result.valid = false;
-    result.errors.push(`Table case mismatch in SQL file: ${uppercaseTables.length} table(s) have PascalCase/uppercase names (${uppercaseTables.slice(0, 5).join(', ')}${uppercaseTables.length > 5 ? '...' : ''}). Expected all lowercase tables for Linux/Windows cross-platform compatibility.`);
+    // A. Detect duplicate lowercase collisions (e.g. dump containing both 'User' and 'user')
+    const lowerSeen = new Map();
+    const duplicateCollisions = [];
+    for (const t of dumpParse.detectedTables) {
+      const lower = t.toLowerCase();
+      if (lowerSeen.has(lower)) {
+        duplicateCollisions.push(`'${lowerSeen.get(lower)}' and '${t}' both map to '${lower}'`);
+      } else {
+        lowerSeen.set(lower, t);
+      }
+    }
+
+    if (duplicateCollisions.length > 0) {
+      result.valid = false;
+      result.errors.push(`Duplicate table collision detected: ${duplicateCollisions.join(', ')}. SQL dump cannot be safely normalized.`);
+    }
+
+    // B. Validate against expected Prisma models and system tables
+    const { modelToTable } = getExpectedPrismaTables();
+    const validLowercaseTables = new Set(modelToTable.values());
+    validLowercaseTables.add('_prisma_migrations');
+
+    const unmappedTables = [];
+    for (const t of uppercaseTables) {
+      const lower = t.toLowerCase();
+      if (!validLowercaseTables.has(lower)) {
+        unmappedTables.push(t);
+      } else {
+        legacyTableMap.set(t, lower);
+      }
+    }
+
+    if (unmappedTables.length > 0) {
+      result.valid = false;
+      result.errors.push(`Unknown or unmapped table(s) in SQL file: ${unmappedTables.join(', ')}. Cannot normalize legacy backup safely.`);
+    }
+
+    if (result.valid) {
+      isLegacy = true;
+      result.warnings.push(`Legacy SQL backup detected: ${uppercaseTables.length} table(s) have PascalCase/uppercase names. Table names will be safely normalized to the current lowercase MySQL standard before import.`);
+    }
   }
 
   if (!result.valid) {
     return result;
   }
+
+  // Convert tableDumpCounts keys to lowercase for preview consistency
+  const normalizedTableCounts = {};
+  for (const [tbl, cnt] of Object.entries(dumpParse.tableCounts)) {
+    normalizedTableCounts[tbl.toLowerCase()] = cnt;
+  }
+
+  result.tableMap = legacyTableMap.size > 0 ? Object.fromEntries(legacyTableMap) : null;
 
   // Step 4: Show SQL Preview with real row counts
   result.sqlInfo = {
@@ -924,8 +1106,13 @@ const validateUploadedSql = async (sqlFilePath, originalFileName = '') => {
     sizeBytes: stat.size,
     tablesDetected: dumpParse.detectedTables.length,
     totalRecords: dumpParse.totalRows,
-    sqlType: 'MySQL Dump',
-    tableDumpCounts: dumpParse.tableCounts
+    sqlType: isLegacy ? 'Legacy MySQL Dump (PascalCase)' : 'MySQL Dump',
+    isLegacy,
+    legacyTablesCount: uppercaseTables.length,
+    legacyNotice: isLegacy
+      ? `Legacy SQL backup detected: ${uppercaseTables.length} table(s) with PascalCase names will be safely normalized to lowercase on import.`
+      : null,
+    tableDumpCounts: normalizedTableCounts
   };
 
   return result;
@@ -972,11 +1159,25 @@ const executeSqlImport = async ({ tempFileName, originalFileName, user }) => {
     throw err;
   }
 
+  // If legacy backup, normalize table names in a temporary SQL file before running MySQL import
+  let importSqlPath = sqlFilePath;
+  let tempNormalizedPath = null;
+
+  if (validation.sqlInfo?.isLegacy && validation.tableMap) {
+    const tableMap = new Map(Object.entries(validation.tableMap));
+    tempNormalizedPath = path.join(TEMP_RESTORE_DIR, `normalized_${tempFileName}`);
+    await normalizeLegacySqlFile(sqlFilePath, tempNormalizedPath, tableMap);
+    importSqlPath = tempNormalizedPath;
+  }
+
   // STEP 3: PREPARE DATABASE BEFORE IMPORT (OPTION A / OPTION B)
   const dbConfig = parseDbConfig();
   try {
     await prepareDatabaseBeforeImport(dbConfig);
   } catch (prepErr) {
+    if (tempNormalizedPath && fs.existsSync(tempNormalizedPath)) {
+      try { fs.unlinkSync(tempNormalizedPath); } catch (e) {}
+    }
     const err = new Error(`Database preparation failed: ${prepErr.message}. Current data remains protected by safety backup ${safetyBackupResult.backup.fileName}`);
     err.status = 500;
     err.safetyBackup = safetyBackupResult.backup;
@@ -985,12 +1186,33 @@ const executeSqlImport = async ({ tempFileName, originalFileName, user }) => {
 
   // STEP 4 & 7: IMPORT PROCESS
   try {
-    await runMysqlImport(dbConfig, sqlFilePath, safetyBackupResult.backup.fileName);
+    await runMysqlImport(dbConfig, importSqlPath, safetyBackupResult.backup.fileName);
   } catch (importErr) {
+    if (tempNormalizedPath && fs.existsSync(tempNormalizedPath)) {
+      try { fs.unlinkSync(tempNormalizedPath); } catch (e) {}
+    }
     const err = new Error(importErr.message || `Database import failed. Current data remains protected by safety backup ${safetyBackupResult.backup.fileName}`);
     err.status = 500;
     err.safetyBackup = safetyBackupResult.backup;
     throw err;
+  }
+
+  // If legacy backup, align schema columns and missing tables using Prisma db push to ensure full application compatibility
+  if (validation.sqlInfo?.isLegacy) {
+    try {
+      const { execSync } = require('child_process');
+      const backendDir = path.resolve(__dirname, '..', '..');
+      execSync('cmd /c "npx prisma db push --skip-generate --accept-data-loss"', {
+        cwd: backendDir,
+        env: {
+          ...process.env,
+          DATABASE_URL: `mysql://${dbConfig.user}:${dbConfig.password}@${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`
+        },
+        timeout: 60000
+      });
+    } catch (alignErr) {
+      console.warn('[RestoreService] Post-import schema alignment notice:', alignErr.message);
+    }
   }
 
   // STEP 6: VERIFICATION AFTER RESTORE
@@ -1004,6 +1226,9 @@ const executeSqlImport = async ({ tempFileName, originalFileName, user }) => {
   );
 
   if (!verification.valid) {
+    if (tempNormalizedPath && fs.existsSync(tempNormalizedPath)) {
+      try { fs.unlinkSync(tempNormalizedPath); } catch (e) {}
+    }
     const err = new Error(`Import Verification Failed: ${verification.errors.join(' | ')}. Safety backup [${safetyBackupResult.backup.fileName}] is available for rollback.`);
     err.status = 500;
     err.verification = verification;
@@ -1078,5 +1303,7 @@ module.exports = {
   parseSqlDumpCounts,
   verifyCriticalTables,
   CRITICAL_VERIFY_MODULES,
-  TEMP_RESTORE_DIR
+  TEMP_RESTORE_DIR,
+  normalizeLegacySqlFile,
+  createLegacySqlTableReplacer
 };

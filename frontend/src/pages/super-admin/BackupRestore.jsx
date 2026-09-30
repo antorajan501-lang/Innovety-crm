@@ -6,7 +6,7 @@ import {
   Sparkles, Layers, Users, Calendar, DollarSign, FolderOpen,
   MessageSquare, History, FileText, Check, AlertTriangle, X,
   ChevronDown, ChevronUp, Search, ShieldAlert, FileCheck,
-  UploadCloud, RotateCcw, AlertOctagon, FileCode
+  UploadCloud, RotateCcw, AlertOctagon, FileCode, Info
 } from 'lucide-react';
 import api from '../../services/api';
 
@@ -1413,6 +1413,18 @@ const BackupRestore = () => {
                 </button>
               </div>
 
+              {/* Legacy SQL Compatibility Notice */}
+              {sqlPreviewData.sqlInfo?.isLegacy && (
+                <div className="p-4 rounded-2xl bg-sky-500/10 border border-sky-500/30 text-sky-900 dark:text-sky-200 text-xs space-y-1">
+                  <div className="font-black flex items-center gap-1.5 text-sky-800 dark:text-sky-300">
+                    <Info className="w-4 h-4" /> Legacy SQL Backup Detected
+                  </div>
+                  <p className="leading-relaxed">
+                    {sqlPreviewData.sqlInfo?.legacyNotice || 'Legacy SQL backup detected. Table names will be safely normalized to the current lowercase MySQL standard before import.'}
+                  </p>
+                </div>
+              )}
+
               {/* Warning Notice */}
               <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs space-y-1">
                 <div className="font-black flex items-center gap-1.5 text-amber-800 dark:text-amber-300">
@@ -1449,6 +1461,14 @@ const BackupRestore = () => {
                           {sqlPreviewData.sqlInfo?.tablesDetected}
                         </td>
                       </tr>
+                      {sqlPreviewData.sqlInfo?.isLegacy && (
+                        <tr>
+                          <td className="py-2.5 px-4 font-bold text-muted-foreground bg-muted/30">Normalization</td>
+                          <td className="py-2.5 px-4 font-bold text-emerald-600 dark:text-emerald-400">
+                            {sqlPreviewData.sqlInfo?.legacyTablesCount} PascalCase tables &rarr; lowercase mapped
+                          </td>
+                        </tr>
+                      )}
                       <tr>
                         <td className="py-2.5 px-4 font-bold text-muted-foreground bg-muted/30">SQL Type</td>
                         <td className="py-2.5 px-4 font-bold text-foreground">
