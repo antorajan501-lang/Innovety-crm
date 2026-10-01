@@ -1240,7 +1240,7 @@ const ShiftManager = ({ onShiftsCountChange }) => {
                     </div>
 
                     {/* Working Hours Section */}
-                    {!isDefaultShift && (
+                    {!isDefaultShift ? (
                       <div className="space-y-2 pt-1">
                         <div className="flex items-center justify-between">
                           <label className="font-bold text-foreground block">Working Hours</label>
@@ -1279,6 +1279,21 @@ const ShiftManager = ({ onShiftsCountChange }) => {
                             />
                           </div>
                         </div>
+                      </div>
+                    ) : (
+                      <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 space-y-1">
+                        <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 font-bold text-xs">
+                          <Clock className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          <span>Company Timing</span>
+                          {formData.startTime && formData.endTime && (
+                            <span className="text-xs font-semibold text-emerald-800 dark:text-emerald-200">
+                              ({format12Hour(formData.startTime)} – {format12Hour(formData.endTime)})
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-medium pl-6">
+                          Uses Company Attendance Settings configured in Site Settings (Default Clock-In, Clock-Out, Early Window &amp; Grace Period).
+                        </p>
                       </div>
                     )}
                   </div>

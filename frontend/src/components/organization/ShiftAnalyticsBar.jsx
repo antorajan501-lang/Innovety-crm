@@ -191,10 +191,21 @@ const ShiftAnalyticsBar = ({
                             </td>
 
                             <td className="py-3 px-4 font-semibold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                              {row.startTime} – {row.endTime}
-                              <span className="text-[10px] text-muted-foreground ml-1">
-                                ({format12Hour(row.startTime)})
-                              </span>
+                              {isDefault ? (
+                                <div className="flex flex-col">
+                                  <span className="font-bold">Company Timing</span>
+                                  <span className="text-[10px] text-muted-foreground font-medium">
+                                    ({format12Hour(row.startTime)}–{format12Hour(row.endTime)})
+                                  </span>
+                                </div>
+                              ) : (
+                                <>
+                                  {row.startTime} – {row.endTime}
+                                  <span className="text-[10px] text-muted-foreground ml-1">
+                                    ({format12Hour(row.startTime)})
+                                  </span>
+                                </>
+                              )}
                             </td>
 
                             <td className="py-3 px-4">

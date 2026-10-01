@@ -126,16 +126,33 @@ export default function ShiftCard({
           </div>
         </div>
 
-        {/* Timing: Strictly single horizontal row with no wrapping */}
-        <div className="flex items-center flex-nowrap gap-2 text-xs font-semibold whitespace-nowrap">
-          <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-bold shrink-0">
-            <Clock className="h-3.5 w-3.5 shrink-0" />
-            <span className="whitespace-nowrap">{shift.startTime}–{shift.endTime}</span>
+        {/* Timing: Dynamic company timing for Default Shift, explicit hours for Custom Shifts */}
+        {isDefault ? (
+          <div className="flex flex-col gap-0.5 text-xs font-semibold">
+            <div className="flex items-center flex-nowrap gap-1.5 text-emerald-600 dark:text-emerald-400 font-bold whitespace-nowrap">
+              <Clock className="h-3.5 w-3.5 shrink-0" />
+              <span>Company Timing</span>
+              {shift.startTime && shift.endTime && (
+                <span className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 font-medium">
+                  ({format12Hour(shift.startTime)}–{format12Hour(shift.endTime)})
+                </span>
+              )}
+            </div>
+            <span className="text-[10px] text-muted-foreground font-medium pl-5">
+              Uses Company Attendance Settings
+            </span>
           </div>
-          <span className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap shrink-0">
-            ({format12Hour(shift.startTime)}–{format12Hour(shift.endTime)})
-          </span>
-        </div>
+        ) : (
+          <div className="flex items-center flex-nowrap gap-2 text-xs font-semibold whitespace-nowrap">
+            <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-bold shrink-0">
+              <Clock className="h-3.5 w-3.5 shrink-0" />
+              <span className="whitespace-nowrap">{shift.startTime}–{shift.endTime}</span>
+            </div>
+            <span className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap shrink-0">
+              ({format12Hour(shift.startTime)}–{format12Hour(shift.endTime)})
+            </span>
+          </div>
+        )}
 
         {/* Information Row: Working Days, Member Count, Today's Status */}
         <div className="pt-0.5 flex items-center flex-wrap gap-2 text-[11px] font-semibold">

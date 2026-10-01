@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const JSZip = require('jszip');
 const prisma = require('../utils/db');
 const {
@@ -1119,6 +1119,65 @@ const validateUploadedSql = async (sqlFilePath, originalFileName = '') => {
 };
 
 /**
+ * Executes Prisma schema alignment (prisma db push) cross-platform.
+ * Works transparently on both Windows and Linux without relying on OS-specific shells like cmd.exe.
+ */
+const runPrismaSchemaAlignment = ({ backendDir, dbConfig }) => {
+  const targetDatabaseUrl = `mysql://${encodeURIComponent(dbConfig.user)}:${encodeURIComponent(dbConfig.password)}@${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`;
+
+  const env = {
+    ...process.env,
+    DATABASE_URL: targetDatabaseUrl
+  };
+
+  const args = ['db', 'push', '--skip-generate', '--accept-data-loss'];
+
+  // 1. Prefer direct Node execution with Prisma CLI JavaScript entrypoint (completely cross-platform)
+  let prismaEntrypoint = null;
+  const directPath = path.join(backendDir, 'node_modules', 'prisma', 'build', 'index.js');
+  if (fs.existsSync(directPath)) {
+    prismaEntrypoint = directPath;
+  } else {
+    try {
+      const pkgPath = require.resolve('prisma/package.json', { paths: [backendDir] });
+      const resolved = path.join(path.dirname(pkgPath), 'build', 'index.js');
+      if (fs.existsSync(resolved)) prismaEntrypoint = resolved;
+    } catch (e) {}
+  }
+
+  let result;
+  if (prismaEntrypoint) {
+    result = spawnSync(process.execPath, [prismaEntrypoint, ...args], {
+      cwd: backendDir,
+      env,
+      timeout: 120000,
+      encoding: 'utf8'
+    });
+  } else {
+    // 2. Cross-platform fallback: invokes npx without hardcoding cmd.exe
+    const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    result = spawnSync(npxCommand, ['prisma', ...args], {
+      cwd: backendDir,
+      env,
+      timeout: 120000,
+      encoding: 'utf8',
+      shell: process.platform === 'win32'
+    });
+  }
+
+  if (result.error) {
+    throw new Error(`Prisma CLI execution failed: ${result.error.message}`);
+  }
+
+  if (result.status !== 0) {
+    const errorOutput = (result.stderr || result.stdout || '').trim();
+    throw new Error(`Prisma schema alignment exited with code ${result.status}: ${errorOutput}`);
+  }
+
+  return result.stdout;
+};
+
+/**
  * Executes confirmed SQL file import.
  * Meets Step 3, Step 4, Step 5, Step 6, Step 7 requirements.
  */
@@ -1200,18 +1259,17 @@ const executeSqlImport = async ({ tempFileName, originalFileName, user }) => {
   // If legacy backup, align schema columns and missing tables using Prisma db push to ensure full application compatibility
   if (validation.sqlInfo?.isLegacy) {
     try {
-      const { execSync } = require('child_process');
       const backendDir = path.resolve(__dirname, '..', '..');
-      execSync('cmd /c "npx prisma db push --skip-generate --accept-data-loss"', {
-        cwd: backendDir,
-        env: {
-          ...process.env,
-          DATABASE_URL: `mysql://${dbConfig.user}:${dbConfig.password}@${dbConfig.host}:${dbConfig.port}/${dbConfig.database}`
-        },
-        timeout: 60000
-      });
+      runPrismaSchemaAlignment({ backendDir, dbConfig });
     } catch (alignErr) {
-      console.warn('[RestoreService] Post-import schema alignment notice:', alignErr.message);
+      console.error('[RestoreService] Post-import schema alignment failed:', alignErr.message);
+      if (tempNormalizedPath && fs.existsSync(tempNormalizedPath)) {
+        try { fs.unlinkSync(tempNormalizedPath); } catch (e) {}
+      }
+      const err = new Error(`Post-import schema alignment failed: ${alignErr.message}. Current data remains protected by safety backup [${safetyBackupResult.backup.fileName}] for rollback.`);
+      err.status = 500;
+      err.safetyBackup = safetyBackupResult.backup;
+      throw err;
     }
   }
 
@@ -1305,5 +1363,6 @@ module.exports = {
   CRITICAL_VERIFY_MODULES,
   TEMP_RESTORE_DIR,
   normalizeLegacySqlFile,
-  createLegacySqlTableReplacer
+  createLegacySqlTableReplacer,
+  runPrismaSchemaAlignment
 };

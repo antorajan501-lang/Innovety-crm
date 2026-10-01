@@ -63,8 +63,8 @@ const getEffectiveSettings = async (organizationId) => {
   }
 
   const brandingObj = (orgSettings?.branding && typeof orgSettings.branding === 'object') ? orgSettings.branding : {};
-  const effectiveClockIn = sysSettingsForOrg?.clockInTime || defaultGlobal.clockInTime || '09:00';
-  const effectiveClockOut = sysSettingsForOrg?.clockOutTime || defaultGlobal.clockOutTime || '18:00';
+  const effectiveClockIn = sysSettingsForOrg?.clockInTime || orgSettings?.clockInTime || defaultGlobal.clockInTime || '09:00';
+  const effectiveClockOut = sysSettingsForOrg?.clockOutTime || orgSettings?.clockOutTime || defaultGlobal.clockOutTime || '18:00';
 
   const effectiveAutoClockOut = sysSettingsForOrg?.autoClockOutEnabled !== undefined
     ? sysSettingsForOrg.autoClockOutEnabled

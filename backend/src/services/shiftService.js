@@ -1,4 +1,5 @@
 const prisma = require('../utils/db');
+const { getEffectiveSettings } = require('../utils/settingsResolver');
 
 const DEFAULT_WORKING_DAYS = [
   { day: 'MONDAY', isWorking: true },
@@ -32,6 +33,39 @@ const formatTime12h = (time24) => {
   if (h === 0) h = 12;
   const formattedH = h < 10 ? `0${h}` : `${h}`;
   return `${formattedH}:${m} ${ampm}`;
+};
+
+/**
+ * Dynamically enriches a shift with organization site settings if it is the Company Default shift.
+ * Custom shifts are left completely untouched.
+ */
+const enrichShiftWithOrgTiming = async (shift, organizationId = null, client = prisma) => {
+  if (!shift) return null;
+  const isDefault = shift.name === DEFAULT_SHIFT_DATA.name || Boolean(shift.isDefault);
+  if (!isDefault) {
+    return {
+      ...shift,
+      isDefault: false
+    };
+  }
+
+  const targetOrgId = organizationId || shift.organizationId;
+  const settings = await getEffectiveSettings(targetOrgId);
+
+  const dynamicStart = settings?.clockInTime || '09:00';
+  const dynamicEnd = settings?.clockOutTime || '18:00';
+
+  return {
+    ...shift,
+    startTime: dynamicStart,
+    endTime: dynamicEnd,
+    isDefault: true,
+    isCompanyTiming: true,
+    companyTimingLabel: 'Company Timing',
+    companyTimingDescription: 'Uses Company Attendance Settings',
+    earlyWindowMinutes: settings?.earlyWindowMinutes !== undefined ? settings.earlyWindowMinutes : 30,
+    gracePeriodMinutes: settings?.gracePeriodMinutes !== undefined ? settings.gracePeriodMinutes : 15
+  };
 };
 
 /**
@@ -77,12 +111,13 @@ const createDefaultShift = async (organizationId, client = prisma) => {
 
   // If no "Company Default", check if any shift exists
   if (!shift) {
+    const orgSettings = await getEffectiveSettings(organizationId);
     shift = await client.shift.create({
       data: {
         organizationId,
         name: DEFAULT_SHIFT_DATA.name,
-        startTime: DEFAULT_SHIFT_DATA.startTime,
-        endTime: DEFAULT_SHIFT_DATA.endTime,
+        startTime: orgSettings?.clockInTime || DEFAULT_SHIFT_DATA.startTime,
+        endTime: orgSettings?.clockOutTime || DEFAULT_SHIFT_DATA.endTime,
         workingDays: DEFAULT_SHIFT_DATA.workingDays,
         status: DEFAULT_SHIFT_DATA.status
       },
@@ -124,7 +159,7 @@ const createDefaultShift = async (organizationId, client = prisma) => {
     }
   }
 
-  return shift;
+  return await enrichShiftWithOrgTiming(shift, organizationId, client);
 };
 
 /**
@@ -282,35 +317,38 @@ const getCompanyShifts = async (organizationId, client = prisma) => {
     console.warn('[shiftService] Auto-ensure default shift warning:', err.message);
   });
 
-  const shifts = await client.shift.findMany({
-    where: { organizationId },
-    include: {
-      _count: {
-        select: { members: true }
-      },
-      members: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              employeeId: true,
-              role: true,
-              status: true,
-              department: true,
-              departmentRef: {
-                select: { id: true, name: true }
+  const [shifts, orgSettings] = await Promise.all([
+    client.shift.findMany({
+      where: { organizationId },
+      include: {
+        _count: {
+          select: { members: true }
+        },
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                employeeId: true,
+                role: true,
+                status: true,
+                department: true,
+                departmentRef: {
+                  select: { id: true, name: true }
+                }
               }
             }
           }
         }
-      }
-    },
-    orderBy: { createdAt: 'asc' }
-  });
+      },
+      orderBy: { createdAt: 'asc' }
+    }),
+    getEffectiveSettings(organizationId)
+  ]);
 
-  // Attach dynamically computed departments to each shift
+  // Attach dynamically computed departments and dynamic timing for Default Shift
   return shifts.map(s => {
     const deptSet = new Set();
     if (s.members && Array.isArray(s.members)) {
@@ -319,8 +357,27 @@ const getCompanyShifts = async (organizationId, client = prisma) => {
         if (d && String(d).trim()) deptSet.add(String(d).trim());
       });
     }
+
+    const isDefault = s.name === DEFAULT_SHIFT_DATA.name || Boolean(s.isDefault);
+
+    if (isDefault) {
+      return {
+        ...s,
+        startTime: orgSettings?.clockInTime || '09:00',
+        endTime: orgSettings?.clockOutTime || '18:00',
+        isDefault: true,
+        isCompanyTiming: true,
+        companyTimingLabel: 'Company Timing',
+        companyTimingDescription: 'Uses Company Attendance Settings',
+        earlyWindowMinutes: orgSettings?.earlyWindowMinutes !== undefined ? orgSettings.earlyWindowMinutes : 30,
+        gracePeriodMinutes: orgSettings?.gracePeriodMinutes !== undefined ? orgSettings.gracePeriodMinutes : 15,
+        assignedDepartments: Array.from(deptSet)
+      };
+    }
+
     return {
       ...s,
+      isDefault: false,
       assignedDepartments: Array.from(deptSet)
     };
   });
@@ -367,8 +424,10 @@ const getShiftById = async (shiftId, organizationId, client = prisma) => {
     });
   }
 
+  const enriched = await enrichShiftWithOrgTiming(shift, organizationId || shift.organizationId, client);
+
   return {
-    ...shift,
+    ...enriched,
     assignedDepartments: Array.from(deptSet)
   };
 };
@@ -390,20 +449,25 @@ const updateShift = async (shiftId, organizationId, data, client = prisma, actor
     throw new Error('The default company shift cannot be deactivated.');
   }
 
+  const isDefault = existing.name === DEFAULT_SHIFT_DATA.name || Boolean(existing.isDefault);
+
   const updatePayload = {};
   const changed = {};
 
-  if (data.name !== undefined && data.name.trim() !== existing.name) {
+  if (data.name !== undefined && data.name.trim() !== existing.name && !isDefault) {
     updatePayload.name = String(data.name).trim();
     changed.name = { from: existing.name, to: updatePayload.name };
   }
-  if (data.startTime !== undefined && data.startTime.trim() !== existing.startTime) {
-    updatePayload.startTime = String(data.startTime).trim();
-    changed.startTime = { from: existing.startTime, to: updatePayload.startTime };
-  }
-  if (data.endTime !== undefined && data.endTime.trim() !== existing.endTime) {
-    updatePayload.endTime = String(data.endTime).trim();
-    changed.endTime = { from: existing.endTime, to: updatePayload.endTime };
+  // For Default Shift: timing is controlled dynamically by Organization Site Settings, do NOT overwrite with static times
+  if (!isDefault) {
+    if (data.startTime !== undefined && data.startTime.trim() !== existing.startTime) {
+      updatePayload.startTime = String(data.startTime).trim();
+      changed.startTime = { from: existing.startTime, to: updatePayload.startTime };
+    }
+    if (data.endTime !== undefined && data.endTime.trim() !== existing.endTime) {
+      updatePayload.endTime = String(data.endTime).trim();
+      changed.endTime = { from: existing.endTime, to: updatePayload.endTime };
+    }
   }
   if (data.workingDays !== undefined) {
     updatePayload.workingDays = data.workingDays;
@@ -431,7 +495,7 @@ const updateShift = async (shiftId, organizationId, data, client = prisma, actor
     details: changed
   }, client);
 
-  return updated;
+  return await enrichShiftWithOrgTiming(updated, organizationId || updated.organizationId, client);
 };
 
 /**
@@ -639,6 +703,11 @@ const getEmployeeShift = async (userId, client = prisma, targetDate = new Date()
   const targetDayStart = new Date(target.toISOString().split('T')[0] + 'T00:00:00.000Z');
   const targetDayEnd = new Date(target.toISOString().split('T')[0] + 'T23:59:59.999Z');
 
+  const finalizeShift = async (s, targetOrgId = null) => {
+    if (!s) return null;
+    return await enrichShiftWithOrgTiming(s, targetOrgId || s.organizationId, client);
+  };
+
   // Priority 1: Active temporary override, swap, or planned schedule
   try {
     const activeSchedule = await client.shiftSchedule.findFirst({
@@ -655,12 +724,12 @@ const getEmployeeShift = async (userId, client = prisma, targetDate = new Date()
     });
 
     if (activeSchedule?.shift) {
-      return {
+      return await finalizeShift({
         ...activeSchedule.shift,
         isOverride: activeSchedule.type !== 'PERMANENT',
         scheduleType: activeSchedule.type,
         scheduleReason: activeSchedule.reason
-      };
+      }, activeSchedule.shift.organizationId);
     }
   } catch (err) {
     console.warn('[shiftService] Schedule check fallback:', err.message);
@@ -675,7 +744,7 @@ const getEmployeeShift = async (userId, client = prisma, targetDate = new Date()
   });
 
   if (member?.shift) {
-    return member.shift;
+    return await finalizeShift(member.shift, member.shift.organizationId);
   }
 
   // Priority 3: Fallback to user.shiftId if set
@@ -694,7 +763,7 @@ const getEmployeeShift = async (userId, client = prisma, targetDate = new Date()
         create: { shiftId: assignedShift.id, userId },
         update: { shiftId: assignedShift.id }
       }).catch(() => {});
-      return assignedShift;
+      return await finalizeShift(assignedShift, user?.organizationId);
     }
   }
 
@@ -706,7 +775,7 @@ const getEmployeeShift = async (userId, client = prisma, targetDate = new Date()
       create: { shiftId: defaultShift.id, userId },
       update: { shiftId: defaultShift.id }
     }).catch(() => {});
-    return defaultShift;
+    return await finalizeShift(defaultShift, user.organizationId);
   }
 
   return null;
@@ -866,28 +935,31 @@ const getShiftAnalytics = async (organizationId, client = prisma) => {
     throw new Error('Organization ID is required for analytics.');
   }
 
-  const shifts = await client.shift.findMany({
-    where: { organizationId },
-    include: {
-      members: {
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              employeeId: true,
-              department: true,
-              departmentRef: {
-                select: { id: true, name: true }
+  const [shifts, orgSettings] = await Promise.all([
+    client.shift.findMany({
+      where: { organizationId },
+      include: {
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                employeeId: true,
+                department: true,
+                departmentRef: {
+                  select: { id: true, name: true }
+                }
               }
             }
           }
         }
-      }
-    },
-    orderBy: { createdAt: 'asc' }
-  });
+      },
+      orderBy: { createdAt: 'asc' }
+    }),
+    getEffectiveSettings(organizationId)
+  ]);
 
   const now = new Date();
   const timeZone = 'Asia/Kolkata';
@@ -985,11 +1057,17 @@ const getShiftAnalytics = async (organizationId, client = prisma) => {
       }
     });
 
+    const isDefault = shift.name === DEFAULT_SHIFT_DATA.name || Boolean(shift.isDefault);
+    const effectiveStart = isDefault ? (orgSettings?.clockInTime || '09:00') : shift.startTime;
+    const effectiveEnd = isDefault ? (orgSettings?.clockOutTime || '18:00') : shift.endTime;
+
     return {
       shiftId: shift.id,
       shiftName: shift.name,
-      startTime: shift.startTime,
-      endTime: shift.endTime,
+      startTime: effectiveStart,
+      endTime: effectiveEnd,
+      isDefault,
+      isCompanyTiming: isDefault,
       status: shift.status,
       todayStatus,
       assignedCount: memberCount,

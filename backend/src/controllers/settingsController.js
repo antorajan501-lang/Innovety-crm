@@ -177,6 +177,20 @@ const updateSettings = async (req, res) => {
           }
         }).catch(e => console.warn('Sync OrganizationSettings error:', e));
       }
+
+      // Synchronize Company Default shift record in DB to stay in sync with updated site settings
+      if (clockInTime !== undefined || clockOutTime !== undefined) {
+        await prisma.shift.updateMany({
+          where: {
+            organizationId: targetOrgId,
+            name: 'Company Default'
+          },
+          data: {
+            ...(dataPayload.clockInTime ? { startTime: dataPayload.clockInTime } : {}),
+            ...(dataPayload.clockOutTime ? { endTime: dataPayload.clockOutTime } : {})
+          }
+        }).catch(e => console.warn('[settingsController] Sync Company Default shift error:', e.message));
+      }
     } else {
       const existingFirst = await prisma.systemSettings.findFirst();
       if (existingFirst) {
@@ -215,6 +229,19 @@ const updateSettings = async (req, res) => {
 
     broadcastAttendanceEvent('settings_updated', updated);
     broadcastAttendanceEvent('attendance_updated', { shiftEndAt: newShiftEndAt, clockOutTime: updated.clockOutTime });
+
+    try {
+      const { broadcastShiftUpdate } = require('../socket');
+      if (typeof broadcastShiftUpdate === 'function' && targetOrgId) {
+        broadcastShiftUpdate(targetOrgId, {
+          action: 'DEFAULT_SHIFT_TIMING_UPDATED',
+          clockInTime: updated.clockInTime,
+          clockOutTime: updated.clockOutTime
+        });
+      }
+    } catch (sockErr) {
+      console.warn('[settingsController] Shift socket broadcast warning:', sockErr.message);
+    }
 
     res.json(updated);
   } catch (error) {

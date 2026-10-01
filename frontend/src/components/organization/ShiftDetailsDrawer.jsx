@@ -145,13 +145,30 @@ const ShiftDetailsDrawer = ({
                 )}
               </div>
 
-              <div className="flex items-center gap-2 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                <Clock className="h-3.5 w-3.5 shrink-0" />
-                <span>{shift.startTime} – {shift.endTime}</span>
-                <span className="text-[11px] text-muted-foreground font-medium">
-                  ({format12Hour(shift.startTime)} – {format12Hour(shift.endTime)})
-                </span>
-              </div>
+              {isDefault ? (
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                    <Clock className="h-3.5 w-3.5 shrink-0" />
+                    <span>Company Timing</span>
+                    {shift.startTime && shift.endTime && (
+                      <span className="text-[11px] text-muted-foreground font-medium">
+                        ({format12Hour(shift.startTime)} – {format12Hour(shift.endTime)})
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground font-medium pl-5">
+                    Uses Company Attendance Settings
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  <span>{shift.startTime} – {shift.endTime}</span>
+                  <span className="text-[11px] text-muted-foreground font-medium">
+                    ({format12Hour(shift.startTime)} – {format12Hour(shift.endTime)})
+                  </span>
+                </div>
+              )}
             </div>
 
             <button
