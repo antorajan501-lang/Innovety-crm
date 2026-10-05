@@ -163,6 +163,26 @@
           "monthlyCreditDays": 1
         }
       }
+    },
+    "cmu43zvwm0000exne7d53m25e": {
+      "roles": {
+        "TEAM_LEADER": {
+          "allocationType": "ANNUAL",
+          "carryForwardEnabled": true,
+          "maxCarryForwardDays": 5,
+          "halfDayAllowed": true,
+          "workingDaysOnly": true,
+          "autoApproval": false,
+          "allowances": {}
+        }
+      },
+      "allocationType": "ANNUAL",
+      "carryForwardEnabled": true,
+      "maxCarryForwardDays": 5,
+      "halfDayAllowed": true,
+      "workingDaysOnly": true,
+      "autoApproval": false,
+      "allowances": {}
     }
   },
   "types": {

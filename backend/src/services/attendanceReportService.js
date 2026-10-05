@@ -49,15 +49,28 @@ const formatDDMMYYYY = (dateInput) => {
 };
 
 // Helper: Format Time to 12-hour hh:mm AM/PM
-const formatTime12h = (dateInput) => {
+const formatTime12h = (dateInput, timeZone = 'Asia/Kolkata') => {
   if (!dateInput) return '—';
   const d = dateInput instanceof Date ? dateInput : new Date(dateInput);
   if (isNaN(d.getTime())) return '—';
   return d.toLocaleTimeString('en-US', {
+    timeZone: timeZone || 'Asia/Kolkata',
     hour: '2-digit',
     minute: '2-digit',
     hour12: true
   });
+};
+
+// Helper: Convert 1-based column number to Excel letter (e.g. 1 -> A, 8 -> H, 27 -> AA)
+const getColLetter = (colIdx) => {
+  let letter = '';
+  let temp = colIdx;
+  while (temp > 0) {
+    const mod = (temp - 1) % 26;
+    letter = String.fromCharCode(65 + mod) + letter;
+    temp = Math.floor((temp - mod) / 26);
+  }
+  return letter;
 };
 
 // Helper: Calculate ISO Week Number
@@ -90,7 +103,7 @@ const getWeekDatesFromWeekNumber = (week, year) => {
 /**
  * 1. Generate Daily Attendance Report
  */
-const getDailyAttendanceData = async ({ organizationId, date, teamId, role, employeeName, status }) => {
+const getDailyAttendanceData = async ({ organizationId, date, teamId, role, employeeName, status, userIds: filterUserIds }) => {
   const settings = await getEffectiveSettings(organizationId);
   const timeZone = getSystemTimeZone(settings);
   const now = new Date();
@@ -136,6 +149,20 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
     const allowedUserIds = teamMembers.map(m => m.userId);
     if (team?.leaderId) allowedUserIds.push(team.leaderId);
     userWhere.id = { in: [...new Set(allowedUserIds)] };
+  }
+
+  // Member selection filter (if provided)
+  if (filterUserIds) {
+    const allowed = Array.isArray(filterUserIds)
+      ? filterUserIds
+      : String(filterUserIds).split(',').map(s => s.trim()).filter(Boolean);
+    if (allowed.length > 0) {
+      if (userWhere.id?.in) {
+        userWhere.id = { in: userWhere.id.in.filter(id => allowed.includes(id)) };
+      } else {
+        userWhere.id = { in: allowed };
+      }
+    }
   }
 
   const activeUsers = await prisma.user.findMany({
@@ -228,7 +255,7 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
       const isWFH = att.workLocation === 'HOME' || att.status === 'WORK_FROM_HOME';
       const isLate = att.status === 'LATE' || (att.lateMinutes && att.lateMinutes > 0);
 
-      loginTimeVal = att.clockIn ? formatTime12h(att.clockIn) : '—';
+      loginTimeVal = att.clockIn ? formatTime12h(att.clockIn, timeZone) : '—';
 
       if (isWFH) {
         attendanceVal = 'WFH';
@@ -304,7 +331,7 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
 /**
  * 2. Generate Weekly Attendance Report
  */
-const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamId, role, employeeName, status }) => {
+const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamId, role, employeeName, status, userIds: filterUserIds }) => {
   const settings = await getEffectiveSettings(organizationId);
   const timeZone = getSystemTimeZone(settings);
   const now = new Date();
@@ -358,6 +385,20 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
     const allowedUserIds = teamMembers.map(m => m.userId);
     if (team?.leaderId) allowedUserIds.push(team.leaderId);
     userWhere.id = { in: [...new Set(allowedUserIds)] };
+  }
+
+  // Member selection filter (if provided)
+  if (filterUserIds) {
+    const allowed = Array.isArray(filterUserIds)
+      ? filterUserIds
+      : String(filterUserIds).split(',').map(s => s.trim()).filter(Boolean);
+    if (allowed.length > 0) {
+      if (userWhere.id?.in) {
+        userWhere.id = { in: userWhere.id.in.filter(id => allowed.includes(id)) };
+      } else {
+        userWhere.id = { in: allowed };
+      }
+    }
   }
 
   const activeUsers = await prisma.user.findMany({
@@ -557,11 +598,18 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
 /**
  * 3. Generate Monthly Attendance Report
  */
-const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, role, employeeName, status }) => {
+const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, role, employeeName, status, userIds: filterUserIds }) => {
   const settings = await getEffectiveSettings(organizationId);
   const timeZone = getSystemTimeZone(settings);
   const now = new Date();
   const todayParts = getZonedParts(now, timeZone);
+
+  // Dynamic Late Policy configurations
+  const isLatePolicyEnabled = settings?.latePolicyEnabled !== false;
+  const configuredLateLimit = settings?.warningLateLimit !== undefined ? Number(settings.warningLateLimit) : 3;
+  const latePolicyAppliesTo = (settings?.latePolicyAppliesTo || 'INTERN,EMPLOYEE,TEAM_LEADER')
+    .split(',')
+    .map(r => r.trim());
 
   const targetMonth = month ? parseInt(month, 10) : todayParts.month;
   const targetYear = year ? parseInt(year, 10) : todayParts.year;
@@ -608,6 +656,20 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
     userWhere.id = { in: [...new Set(allowedUserIds)] };
   }
 
+  // Member selection filter (if provided)
+  if (filterUserIds) {
+    const allowed = Array.isArray(filterUserIds)
+      ? filterUserIds
+      : String(filterUserIds).split(',').map(s => s.trim()).filter(Boolean);
+    if (allowed.length > 0) {
+      if (userWhere.id?.in) {
+        userWhere.id = { in: userWhere.id.in.filter(id => allowed.includes(id)) };
+      } else {
+        userWhere.id = { in: allowed };
+      }
+    }
+  }
+
   const activeUsers = await prisma.user.findMany({
     where: userWhere,
     select: {
@@ -623,7 +685,7 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
 
   const userIds = activeUsers.map(u => u.id);
 
-  const [attendances, approvedLeaves, calendarOverrides, permanentHolidays] = await Promise.all([
+  const [attendances, approvedLeaves, calendarOverrides, permanentHolidays, allLeaveTypes] = await Promise.all([
     prisma.attendance.findMany({
       where: {
         date: { gte: startOfMonth, lte: endOfMonth },
@@ -660,8 +722,65 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
           ]
         } : {})
       }
+    }),
+    prisma.leaveType.findMany({
+      where: {
+        isActive: true,
+        NOT: {
+          code: { in: ['LOP', 'UNPAID', 'LOSS_OF_PAY'] }
+        }
+      },
+      orderBy: [{ createdAt: 'asc' }]
     })
   ]);
+
+  const activeLeaveTypes = allLeaveTypes;
+
+  // Helper to determine if a leave is unpaid based on existing classification
+  const isLeaveUnpaid = (leave) => {
+    if (!leave) return false;
+    const pType = (leave.payType || 'PAID').toUpperCase();
+    if (pType === 'UNPAID') return true;
+    const lType = (leave.leaveType || leave.type || '').toUpperCase();
+    if (['LOP', 'UNPAID', 'LOSS_OF_PAY'].includes(lType)) return true;
+    const matchedType = activeLeaveTypes.find(
+      t => t.code?.toUpperCase() === lType || t.name?.toUpperCase() === lType || t.id === leave.leaveType
+    );
+    if (matchedType && matchedType.isPaid === false) return true;
+    return false;
+  };
+
+  // Helper to match active leave type
+  const matchActiveLeaveType = (leave) => {
+    if (!leave) return null;
+    const raw = (leave.leaveType || leave.type || '').trim();
+    if (!raw) return null;
+    const rawUpper = raw.toUpperCase();
+
+    // 1. Direct match with activeLeaveTypes by id, code, or name
+    const found = activeLeaveTypes.find(t =>
+      t.id === raw ||
+      t.code?.toUpperCase() === rawUpper ||
+      t.name?.toUpperCase() === rawUpper
+    );
+    if (found) return found;
+
+    // 2. Common aliases
+    if (['CL', 'CASUAL'].includes(rawUpper)) {
+      return activeLeaveTypes.find(t => t.code?.toUpperCase() === 'CL' || t.name?.toUpperCase().includes('CASUAL'));
+    }
+    if (['SL', 'SICK'].includes(rawUpper)) {
+      return activeLeaveTypes.find(t => t.code?.toUpperCase() === 'SL' || t.name?.toUpperCase().includes('SICK'));
+    }
+    if (['WFH', 'WORK_FROM_HOME'].includes(rawUpper)) {
+      return activeLeaveTypes.find(t => t.code?.toUpperCase() === 'WFH' || t.name?.toUpperCase().includes('WFH'));
+    }
+    if (['EMERGENCY'].includes(rawUpper)) {
+      return activeLeaveTypes.find(t => t.code?.toUpperCase() === 'EL' || t.name?.toUpperCase().includes('EMERGENCY'));
+    }
+
+    return null;
+  };
 
   // Construct dates of the month
   const calendarDays = [];
@@ -693,9 +812,15 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
   for (const u of activeUsers) {
     let presentCount = 0;
     let lateCount = 0;
-    let leaveCount = 0;
+    let paidLeaveCount = 0;
+    let unpaidLeaveCount = 0;
     let wfhCount = 0;
     let employeeWorkingDays = 0;
+    const leaveTypeCounts = {};
+    activeLeaveTypes.forEach(t => {
+      leaveTypeCounts[t.name] = 0;
+      leaveTypeCounts[t.code] = 0;
+    });
 
     const uJoiningStr = u.joiningDate ? new Date(u.joiningDate).toISOString().split('T')[0] : null;
 
@@ -707,6 +832,14 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
 
       const att = attendances.find(a => a.userId === u.id && new Date(a.date).toISOString().split('T')[0] === dateStr);
 
+      // Check Leave
+      const leave = approvedLeaves.find(l => {
+        if (l.userId !== u.id) return false;
+        const lStart = new Date(l.startDate).toISOString().split('T')[0];
+        const lEnd = new Date(l.endDate).toISOString().split('T')[0];
+        return dateStr >= lStart && dateStr <= lEnd;
+      });
+
       if (att) {
         const isWFH = att.workLocation === 'HOME' || att.status === 'WORK_FROM_HOME';
         const isLate = att.status === 'LATE' || (att.lateMinutes && att.lateMinutes > 0);
@@ -714,7 +847,18 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
         if (isWFH) {
           wfhCount++;
         } else if (att.status === 'LEAVE') {
-          leaveCount++;
+          const unpaid = isLeaveUnpaid(leave);
+          const duration = leave && (leave.isHalfDay || leave.totalDays === 0.5) ? 0.5 : 1;
+          if (unpaid) {
+            unpaidLeaveCount += duration;
+          } else {
+            paidLeaveCount += duration;
+            const matched = matchActiveLeaveType(leave);
+            if (matched) {
+              leaveTypeCounts[matched.name] = (leaveTypeCounts[matched.name] || 0) + duration;
+              leaveTypeCounts[matched.code] = (leaveTypeCounts[matched.code] || 0) + duration;
+            }
+          }
         } else if (att.status === 'ABSENT') {
           // Absent
         } else {
@@ -723,29 +867,56 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
         }
       } else {
         // Check Leave
-        const leave = approvedLeaves.find(l => {
-          if (l.userId !== u.id) return false;
-          const lStart = new Date(l.startDate).toISOString().split('T')[0];
-          const lEnd = new Date(l.endDate).toISOString().split('T')[0];
-          return dateStr >= lStart && dateStr <= lEnd;
-        });
-
-        if (leave) {
-          if ((leave.leaveType || leave.type) === 'WFH') {
+        if (leave && !isHoliday) {
+          const lType = (leave.leaveType || leave.type || '').toUpperCase();
+          if (lType === 'WFH') {
             wfhCount++;
+            const duration = (leave.isHalfDay || leave.totalDays === 0.5) ? 0.5 : 1;
+            const wfhType = activeLeaveTypes.find(t => t.code === 'WFH' || t.name.toUpperCase().includes('WFH'));
+            if (wfhType) {
+              leaveTypeCounts[wfhType.name] = (leaveTypeCounts[wfhType.name] || 0) + duration;
+              leaveTypeCounts[wfhType.code] = (leaveTypeCounts[wfhType.code] || 0) + duration;
+            }
           } else {
-            leaveCount++;
+            const unpaid = isLeaveUnpaid(leave);
+            const duration = (leave.isHalfDay || leave.totalDays === 0.5) ? 0.5 : 1;
+            if (unpaid) {
+              unpaidLeaveCount += duration;
+            } else {
+              paidLeaveCount += duration;
+              const matched = matchActiveLeaveType(leave);
+              if (matched) {
+                leaveTypeCounts[matched.name] = (leaveTypeCounts[matched.name] || 0) + duration;
+                leaveTypeCounts[matched.code] = (leaveTypeCounts[matched.code] || 0) + duration;
+              }
+            }
           }
         }
       }
     }
 
+    const wfhType = activeLeaveTypes.find(t => t.code === 'WFH' || t.name.toUpperCase().includes('WFH'));
+    if (wfhType && wfhCount > 0) {
+      leaveTypeCounts[wfhType.name] = Math.max(leaveTypeCounts[wfhType.name] || 0, wfhCount);
+      leaveTypeCounts[wfhType.code] = Math.max(leaveTypeCounts[wfhType.code] || 0, wfhCount);
+    }
+
+    const totalLeaveCount = paidLeaveCount + unpaidLeaveCount;
+
+    // Calculate deduction-eligible lates based on dynamic Late Policy
+    const isRoleApplicable = latePolicyAppliesTo.includes(u.role);
+    const deductionLateCount = (isLatePolicyEnabled && isRoleApplicable)
+      ? Math.max(0, lateCount - configuredLateLimit)
+      : 0;
+
     // Apply status filter if passed
     if (status && status !== 'ALL') {
       const sUpper = status.toUpperCase();
-      if (sUpper === 'LATE' && lateCount === 0) continue;
+      if (sUpper === 'LATE' && deductionLateCount === 0) continue;
       if (sUpper === 'PRESENT' && presentCount === 0) continue;
-      if (sUpper === 'LEAVE' && leaveCount === 0) continue;
+      if (sUpper === 'LEAVE' && totalLeaveCount === 0) continue;
+      if (sUpper === 'PAID_LEAVE' && paidLeaveCount === 0) continue;
+      if ((sUpper === 'UNPAID_LEAVE' || sUpper === 'LOP' || sUpper === 'LOSS_OF_PAY') && unpaidLeaveCount === 0) continue;
       if (sUpper === 'WFH' && wfhCount === 0) continue;
     }
 
@@ -760,9 +931,15 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
       department: u.department || '—',
       workingDays: employeeWorkingDays,
       present: presentCount,
-      late: lateCount,
-      leave: leaveCount,
-      wfh: wfhCount
+      late: deductionLateCount,
+      totalLates: lateCount,
+      paidLeave: paidLeaveCount,
+      unpaidLeave: unpaidLeaveCount,
+      lop: unpaidLeaveCount,
+      leave: totalLeaveCount,
+      wfh: wfhCount,
+      leaveTypeCounts,
+      ...leaveTypeCounts
     });
   }
 
@@ -782,9 +959,16 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
     monthName,
     year: targetYear,
     monthYearLabel: `${monthName} ${targetYear}`,
+    leaveTypes: activeLeaveTypes.map(t => ({
+      id: t.id,
+      name: t.name,
+      code: t.code
+    })),
     summary: {
       totalWorkingDays: monthWorkingDaysCount,
-      averageAttendancePercent: avgAttendancePercent
+      averageAttendancePercent: avgAttendancePercent,
+      totalPaidLeaves: records.reduce((acc, r) => acc + (r.paidLeave || 0), 0),
+      totalLopDays: records.reduce((acc, r) => acc + (r.unpaidLeave || 0), 0)
     },
     records
   };
@@ -809,6 +993,17 @@ const generateExcelReport = async ({ type, organizationId, params }) => {
 
   if (type === 'daily') {
     const data = await getDailyAttendanceData({ organizationId, ...params });
+    if (params?.userIds) {
+      const allowed = Array.isArray(params.userIds)
+        ? params.userIds
+        : String(params.userIds).split(',').map(s => s.trim()).filter(Boolean);
+      if (allowed.length > 0) {
+        data.records = data.records.filter(r => allowed.includes(r.userId));
+      }
+    }
+    if (!data.records || data.records.length === 0) {
+      throw new Error('Please select at least one member to export.');
+    }
     const sheet = workbook.addWorksheet('Daily Attendance', {
       pageSetup: { fitToPage: true, fitToWidth: 1 }
     });
@@ -932,6 +1127,17 @@ const generateExcelReport = async ({ type, organizationId, params }) => {
 
   if (type === 'weekly') {
     const data = await getWeeklyAttendanceData({ organizationId, ...params });
+    if (params?.userIds) {
+      const allowed = Array.isArray(params.userIds)
+        ? params.userIds
+        : String(params.userIds).split(',').map(s => s.trim()).filter(Boolean);
+      if (allowed.length > 0) {
+        data.records = data.records.filter(r => allowed.includes(r.userId));
+      }
+    }
+    if (!data.records || data.records.length === 0) {
+      throw new Error('Please select at least one member to export.');
+    }
     const sheet = workbook.addWorksheet('Weekly Attendance', {
       pageSetup: { fitToPage: true, fitToWidth: 1 }
     });
@@ -1060,6 +1266,17 @@ const generateExcelReport = async ({ type, organizationId, params }) => {
 
   if (type === 'monthly') {
     const data = await getMonthlyAttendanceData({ organizationId, ...params });
+    if (params?.userIds) {
+      const allowed = Array.isArray(params.userIds)
+        ? params.userIds
+        : String(params.userIds).split(',').map(s => s.trim()).filter(Boolean);
+      if (allowed.length > 0) {
+        data.records = data.records.filter(r => allowed.includes(r.userId));
+      }
+    }
+    if (!data.records || data.records.length === 0) {
+      throw new Error('Please select at least one member to export.');
+    }
     const sheet = workbook.addWorksheet('Monthly Attendance', {
       pageSetup: { fitToPage: true, fitToWidth: 1 }
     });
@@ -1087,23 +1304,28 @@ const generateExcelReport = async ({ type, organizationId, params }) => {
       }
     }
 
+    const dynamicLeaveHeaders = (data.leaveTypes || []).map(lt => lt.name);
+    const headers = ['Members', 'Working Days', 'Present', 'Late', ...dynamicLeaveHeaders, 'Loss of Pay (LOP)'];
+    const totalCols = headers.length;
+    const lastColLetter = getColLetter(totalCols);
+
     // Row 4: Company Title
     const titleRow = sheet.getRow(4);
     titleRow.values = [data.companyName];
     titleRow.font = { name: 'Segoe UI', size: 16, bold: true, color: { argb: ORANGE_HEX } };
-    sheet.mergeCells('A4:F4');
+    sheet.mergeCells(`A4:${lastColLetter}4`);
 
     // Row 5: Report Subtitle, Date & Summary
     const subRow = sheet.getRow(5);
     subRow.values = [
-      `Monthly Attendance Report  |  ${data.monthYearLabel}  |  Total Working Days: ${data.summary.totalWorkingDays}  |  Average Attendance: ${data.summary.averageAttendancePercent}`
+      `Monthly Attendance Report  |  ${data.monthYearLabel}  |  Total Working Days: ${data.summary.totalWorkingDays}  |  Average Attendance: ${data.summary.averageAttendancePercent}  |  Total Loss of Pay (LOP): ${data.summary.totalLopDays || 0} Days`
     ];
     subRow.font = { name: 'Segoe UI', size: 10, bold: true, color: { argb: 'FF475569' } };
-    sheet.mergeCells('A5:F5');
+    sheet.mergeCells(`A5:${lastColLetter}5`);
 
     // Row 6: Table Headers
     const headerRow = sheet.getRow(6);
-    headerRow.values = ['Employee', 'Working Days', 'Present', 'Late', 'Leave', 'WFH'];
+    headerRow.values = headers;
     headerRow.height = 26;
 
     headerRow.eachCell((cell) => {
@@ -1127,13 +1349,16 @@ const generateExcelReport = async ({ type, organizationId, params }) => {
     let currentRow = 7;
     data.records.forEach((rec, idx) => {
       const row = sheet.getRow(currentRow);
+      const dynamicLeaveVals = (data.leaveTypes || []).map(lt => {
+        return rec.leaveTypeCounts?.[lt.name] ?? rec.leaveTypeCounts?.[lt.code] ?? rec[lt.name] ?? 0;
+      });
       row.values = [
         rec.employee,
         rec.workingDays,
         rec.present,
         rec.late,
-        rec.leave,
-        rec.wfh
+        ...dynamicLeaveVals,
+        rec.unpaidLeave ?? rec.lop ?? 0
       ];
       row.height = 22;
 
@@ -1161,16 +1386,23 @@ const generateExcelReport = async ({ type, organizationId, params }) => {
       currentRow++;
     });
 
-    sheet.columns = [
-      { key: 'A', width: 28 },
-      { key: 'B', width: 16 },
-      { key: 'C', width: 14 },
-      { key: 'D', width: 14 },
-      { key: 'E', width: 14 },
-      { key: 'F', width: 14 }
+    const colDefs = [
+      { key: 'A', width: 28 }, // Members
+      { key: 'B', width: 16 }, // Working Days
+      { key: 'C', width: 14 }, // Present
+      { key: 'D', width: 14 }  // Late
     ];
+    (data.leaveTypes || []).forEach((lt, i) => {
+      const colLetter = getColLetter(5 + i);
+      const width = Math.max(16, (lt.name.length || 10) + 4);
+      colDefs.push({ key: colLetter, width });
+    });
+    colDefs.push({
+      key: getColLetter(totalCols),
+      width: 18
+    });
+    sheet.columns = colDefs;
 
-    // Frozen Table Header at Row 6
     sheet.views = [
       {
         state: 'frozen',

@@ -193,27 +193,30 @@ function removeLeaveTypeFromCompany(organizationId, leaveTypeId) {
  */
 function filterLeaveTypesForCompany(allTypes, organizationId) {
   if (!Array.isArray(allTypes)) return [];
-  if (!organizationId) return allTypes;
+  if (!organizationId) {
+    return allTypes.filter((lt) => ['CL', 'SL'].includes((lt.code || '').toUpperCase()) || lt.isActive);
+  }
 
-  const companyTypeIds = getCompanyLeaveTypeIds(organizationId) || [];
+  const companyTypeIds = getCompanyLeaveTypeIds(organizationId);
   const allAssignedTypeIds = getAllAssignedLeaveTypeIds();
 
-  const filtered = allTypes.filter((lt) => {
-    // Core system leave types (CL, SL) are ALWAYS included for every company
-    const isSystemType = lt.isSystem || ['CL', 'SL'].includes((lt.code || '').toUpperCase());
+  // If company has an explicit types list configured
+  if (Array.isArray(companyTypeIds)) {
+    return allTypes.filter((lt) => {
+      // Core system leave types (CL, SL) are ALWAYS included for every company
+      if (['CL', 'SL'].includes((lt.code || '').toUpperCase())) return true;
+      // Must be explicitly assigned to this company
+      return companyTypeIds.includes(lt.id);
+    });
+  }
+
+  // Fallback for companies with no explicit types configuration yet
+  return allTypes.filter((lt) => {
+    const isSystemType = ['CL', 'SL'].includes((lt.code || '').toUpperCase());
     if (isSystemType) return true;
-
-    // If explicitly assigned to THIS company, include it
-    if (companyTypeIds.includes(lt.id)) return true;
-
-    // If explicitly assigned to ANOTHER company, exclude it
     if (allAssignedTypeIds.has(lt.id)) return false;
-
-    // Default system master types: available to companies that don't have custom types overrides yet
-    return true;
+    return Boolean(lt.isActive);
   });
-
-  return filtered;
 }
 
 function cleanupCompanyLeavePolicyReferences(organizationId, identifiers = []) {
@@ -222,12 +225,16 @@ function cleanupCompanyLeavePolicyReferences(organizationId, identifiers = []) {
     const raw = fs.readFileSync(STORE_PATH, 'utf8');
     const data = JSON.parse(raw);
     const orgIds = organizationId ? [organizationId] : Object.keys(data.policies || {});
+    const allOrgTypes = organizationId ? [organizationId] : Object.keys(data.types || {});
 
-    orgIds.forEach((org) => {
-      // Clean from types array
+    // Clean from types array across all affected organizations
+    allOrgTypes.forEach((org) => {
       if (data.types && data.types[org]) {
         data.types[org] = data.types[org].filter((id) => !identifiers.includes(id));
       }
+    });
+
+    orgIds.forEach((org) => {
       // Clean from role allowances
       const comp = data.policies && data.policies[org];
       if (comp && comp.roles) {
@@ -238,6 +245,7 @@ function cleanupCompanyLeavePolicyReferences(organizationId, identifiers = []) {
               if (ident) {
                 delete roleData.allowances[ident];
                 delete roleData.allowances[ident.toUpperCase()];
+                delete roleData.allowances[ident.toLowerCase()];
               }
             });
           }
@@ -248,6 +256,7 @@ function cleanupCompanyLeavePolicyReferences(organizationId, identifiers = []) {
           if (ident) {
             delete comp.allowances[ident];
             delete comp.allowances[ident.toUpperCase()];
+            delete comp.allowances[ident.toLowerCase()];
           }
         });
       }

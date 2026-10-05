@@ -255,6 +255,11 @@ const ensureSystemLeaveTypesSeeded = async (organizationId = null) => {
       where: { code: { in: ['CL', 'SL'] } },
       data: { isSystem: true }
     });
+
+    await prisma.leaveType.updateMany({
+      where: { code: { notIn: ['CL', 'SL'] }, isSystem: true },
+      data: { isSystem: false }
+    });
   } catch (err) {
     console.error('Error in ensureSystemLeaveTypesSeeded:', err);
   }
@@ -307,7 +312,9 @@ const getGlobalLeavePolicy = async (req, res) => {
     if (organizationId) {
       const companyTypeIds = getCompanyLeaveTypeIds(organizationId);
       if (!companyTypeIds) {
-        allLeaveTypes.forEach((lt) => addLeaveTypeToCompany(organizationId, lt.id));
+        allLeaveTypes
+          .filter((lt) => ['CL', 'SL'].includes((lt.code || '').toUpperCase()) || lt.isActive)
+          .forEach((lt) => addLeaveTypeToCompany(organizationId, lt.id));
       }
     }
 
@@ -1109,7 +1116,7 @@ const isLeavePolicyAssigned = async (lt, orgId = null) => {
   return { assigned: result.isAssigned };
 };
 
-// 6. Delete Leave Type / Policy
+// 6. Delete Leave Type
 const deleteLeaveType = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1117,14 +1124,14 @@ const deleteLeaveType = async (req, res) => {
     const lt = await prisma.leaveType.findUnique({ where: { id } });
 
     if (!lt) {
-      return res.status(404).json({ success: false, message: 'Leave policy not found.' });
+      return res.status(404).json({ success: false, message: 'Leave type not found.' });
     }
 
     const code = (lt.code || '').toUpperCase();
     const name = (lt.name || '').trim();
 
     // 1. Mandatory system policies (Casual Leave / Sick Leave) cannot be deleted
-    const isProtected = lt.isSystem || ['CL', 'SL'].includes(code) || name.toLowerCase().includes('casual leave') || name.toLowerCase().includes('sick leave');
+    const isProtected = ['CL', 'SL'].includes(code) || name.toLowerCase() === 'casual leave' || name.toLowerCase() === 'sick leave';
     if (isProtected) {
       const displayName = code === 'CL' ? 'Casual Leave' : code === 'SL' ? 'Sick Leave' : name;
       return res.status(400).json({
@@ -1133,17 +1140,93 @@ const deleteLeaveType = async (req, res) => {
       });
     }
 
-    // 2. Run assignment validation & refresh stale configuration
-    const validation = await checkLeavePolicyAssignment(lt, orgId);
+    // 2. Check whether the Leave Type is referenced by existing leave records
+    const leaveRequestsCount = await prisma.leaveRequest.count({
+      where: {
+        OR: [
+          { leaveType: id },
+          { leaveType: code },
+          { leaveType: name },
+          { leaveType: code.toLowerCase() },
+          { leaveType: name.toLowerCase() }
+        ]
+      }
+    });
 
-    if (validation.isAssigned) {
-      return res.status(400).json({
-        success: false,
-        message: 'This leave policy is currently assigned to users. Reassign or unassign it before deleting.'
+    const usedBalancesCount = await prisma.userLeaveBalance.count({
+      where: {
+        leaveTypeId: id,
+        used: { gt: 0 }
+      }
+    });
+
+    const hasHistoricalRecords = leaveRequestsCount > 0 || usedBalancesCount > 0;
+
+    // 3. Remove leave type references from company store across all organizations
+    cleanupCompanyLeavePolicyReferences(null, [id, code, name]);
+
+    // 4. Remove leave type allowances from all organization settings in database
+    const allOrgSettings = await prisma.organizationSettings.findMany();
+    for (const os of allOrgSettings) {
+      if (os.leavePolicy && typeof os.leavePolicy === 'object') {
+        let changed = false;
+        const lp = os.leavePolicy;
+        if (lp.allowances) {
+          delete lp.allowances[code];
+          delete lp.allowances[id];
+          delete lp.allowances[name];
+          changed = true;
+        }
+        if (lp.roles && typeof lp.roles === 'object') {
+          for (const roleKey of Object.keys(lp.roles)) {
+            if (lp.roles[roleKey]?.allowances) {
+              delete lp.roles[roleKey].allowances[code];
+              delete lp.roles[roleKey].allowances[id];
+              delete lp.roles[roleKey].allowances[name];
+              changed = true;
+            }
+          }
+        }
+        if (changed) {
+          await prisma.organizationSettings.update({
+            where: { id: os.id },
+            data: { leavePolicy: lp }
+          });
+        }
+      }
+    }
+
+    if (hasHistoricalRecords) {
+      // SAFE DEACTIVATION FLOW:
+      // Preserves historical leave requests, attendance records, and consumed leave balances.
+      // Deactivates the leave type and zeroes remaining available/pending allocations.
+      await prisma.leaveType.update({
+        where: { id },
+        data: { isActive: false }
+      });
+
+      await prisma.userLeaveBalance.updateMany({
+        where: { leaveTypeId: id },
+        data: { available: 0, pending: 0 }
+      });
+
+      await recalculateCompanyUserBalances(orgId);
+      broadcastLeavePolicyUpdate(orgId);
+
+      await logActivity({
+        userId: req.user.id,
+        action: 'LEAVE_TYPE_DEACTIVATED',
+        details: `Safely deactivated leave type ${lt.name} (${lt.code}) and removed from active policy due to historical records.`
+      });
+
+      return res.json({
+        success: true,
+        message: `Leave type "${lt.name}" has historical records and was safely deactivated and removed from active policy.`
       });
     }
 
-    // 4. Clean up any zero-usage / orphaned UserLeaveBalance and LeaveCreditHistory records
+    // UNUSED LEAVE TYPE DELETION FLOW:
+    // Only configured in policy with no historical usage -> safe to permanently remove.
     await prisma.userLeaveBalance.deleteMany({
       where: { leaveTypeId: id }
     });
@@ -1151,42 +1234,6 @@ const deleteLeaveType = async (req, res) => {
       where: { leaveTypeId: id }
     });
 
-    // 5. Remove from company leave policy store
-    if (orgId) {
-      removeLeaveTypeFromCompany(orgId, id);
-    }
-    const allAssignedIds = getAllAssignedLeaveTypeIds();
-    if (allAssignedIds.has(id)) {
-      const orgs = await prisma.organization.findMany({ select: { id: true } });
-      for (const org of orgs) {
-        removeLeaveTypeFromCompany(org.id, id);
-      }
-    }
-
-    // 6. Ensure stale references removed from all organization settings
-    const allOrgSettings = await prisma.organizationSettings.findMany();
-    for (const os of allOrgSettings) {
-      if (os.leavePolicy && typeof os.leavePolicy === 'object' && os.leavePolicy.roles) {
-        let changed = false;
-        const roles = os.leavePolicy.roles;
-        for (const roleKey of Object.keys(roles)) {
-          if (roles[roleKey]?.allowances) {
-            delete roles[roleKey].allowances[code];
-            delete roles[roleKey].allowances[id];
-            delete roles[roleKey].allowances[name];
-            changed = true;
-          }
-        }
-        if (changed) {
-          await prisma.organizationSettings.update({
-            where: { id: os.id },
-            data: { leavePolicy: os.leavePolicy }
-          });
-        }
-      }
-    }
-
-    // 7. Actual permanent DELETE operation from MySQL database
     await prisma.leaveType.delete({
       where: { id }
     });
@@ -1197,12 +1244,12 @@ const deleteLeaveType = async (req, res) => {
     await logActivity({
       userId: req.user.id,
       action: 'LEAVE_TYPE_DELETED',
-      details: `Permanently deleted leave policy ${lt.name} (${lt.code}).`
+      details: `Permanently deleted unused leave type ${lt.name} (${lt.code}).`
     });
 
     return res.json({
       success: true,
-      message: `Leave policy "${lt.name}" deleted successfully.`
+      message: `Leave type "${lt.name}" deleted successfully.`
     });
   } catch (error) {
     console.error('Delete leave type error:', error);

@@ -118,7 +118,8 @@ const exportAttendanceReport = async (req, res) => {
     res.end();
   } catch (error) {
     console.error('Export attendance report error:', error);
-    return res.status(500).json({
+    const isUserError = error.message && error.message.includes('Please select');
+    return res.status(isUserError ? 400 : 500).json({
       success: false,
       message: error.message || 'Failed to export attendance report to Excel.'
     });
