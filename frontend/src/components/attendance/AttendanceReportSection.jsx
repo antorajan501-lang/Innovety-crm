@@ -25,6 +25,9 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+const getSelectionStorageKey = (orgId) =>
+  orgId ? `attendance_audit_selected_members_${orgId}` : 'attendance_audit_selected_members';
+
 export default function AttendanceReportSection({ user, onClose }) {
   const { selectedOrgId, effectiveOrgId, selectedCompany } = useCompanyScope();
   const targetOrgId = selectedOrgId || effectiveOrgId || user?.organizationId;
@@ -66,6 +69,103 @@ export default function AttendanceReportSection({ user, onClose }) {
   const [reportData, setReportData] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Member selection state (remembered in browser localStorage by organization/company)
+  const [selectedUserIds, setSelectedUserIds] = useState(() => {
+    try {
+      const key = getSelectionStorageKey(targetOrgId);
+      const saved = localStorage.getItem(key);
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to load selected members from localStorage:', e);
+    }
+    return null; // null indicates uninitialized (first visit)
+  });
+
+  // Re-sync selection if organization/company changes
+  useEffect(() => {
+    try {
+      const key = getSelectionStorageKey(targetOrgId);
+      const saved = localStorage.getItem(key);
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setSelectedUserIds(parsed);
+          return;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load selected members on org change:', e);
+    }
+    setSelectedUserIds(null);
+  }, [targetOrgId]);
+
+  // If first visit for this company, default to selecting all members once records load
+  useEffect(() => {
+    if (!reportData?.records || reportData.records.length === 0) return;
+    if (selectedUserIds === null) {
+      const allIds = reportData.records.map((r) => r.userId).filter(Boolean);
+      setSelectedUserIds(allIds);
+      try {
+        const key = getSelectionStorageKey(targetOrgId);
+        localStorage.setItem(key, JSON.stringify(allIds));
+      } catch (e) {
+        console.error('Failed to save default member selection to localStorage:', e);
+      }
+    }
+  }, [reportData?.records, selectedUserIds, targetOrgId]);
+
+  const displayedRecords = reportData?.records || [];
+  const displayedUserIds = displayedRecords.map((r) => r.userId).filter(Boolean);
+  const currentSelectedIds = selectedUserIds || [];
+
+  const isAllSelected =
+    displayedUserIds.length > 0 &&
+    displayedUserIds.every((id) => currentSelectedIds.includes(id));
+
+  const selectedInDisplayCount = displayedUserIds.filter((id) =>
+    currentSelectedIds.includes(id)
+  ).length;
+
+  const saveSelection = (newIds) => {
+    setSelectedUserIds(newIds);
+    try {
+      const key = getSelectionStorageKey(targetOrgId);
+      localStorage.setItem(key, JSON.stringify(newIds));
+    } catch (e) {
+      console.error('Failed to save selected members to localStorage:', e);
+    }
+  };
+
+  const handleToggleSelectAll = () => {
+    if (isAllSelected) {
+      // Unselect all currently displayed members
+      const newSelection = currentSelectedIds.filter(
+        (id) => !displayedUserIds.includes(id)
+      );
+      saveSelection(newSelection);
+    } else {
+      // Select all currently displayed members
+      const newSelection = Array.from(
+        new Set([...currentSelectedIds, ...displayedUserIds])
+      );
+      saveSelection(newSelection);
+    }
+  };
+
+  const handleToggleMember = (userId) => {
+    if (!userId) return;
+    let newSelection;
+    if (currentSelectedIds.includes(userId)) {
+      newSelection = currentSelectedIds.filter((id) => id !== userId);
+    } else {
+      newSelection = [...currentSelectedIds, userId];
+    }
+    saveSelection(newSelection);
+  };
 
   // Fetch Teams
   useEffect(() => {
@@ -136,9 +236,19 @@ export default function AttendanceReportSection({ user, onClose }) {
 
   // Export to Excel
   const handleExport = async () => {
-    setExporting(true);
     setErrorMsg('');
     setSuccessMsg('');
+
+    // Check member selection: must have at least one displayed member selected
+    const activeSelectedInDisplay = displayedUserIds.filter((id) =>
+      currentSelectedIds.includes(id)
+    );
+    if (activeSelectedInDisplay.length === 0) {
+      setErrorMsg('Please select at least one member to export.');
+      return;
+    }
+
+    setExporting(true);
     try {
       const params = {
         type: reportType,
@@ -148,6 +258,11 @@ export default function AttendanceReportSection({ user, onClose }) {
         employeeName: employeeSearch.trim() || undefined,
         status: statusFilter !== 'ALL' ? statusFilter : undefined
       };
+
+      // If not all displayed members are selected, restrict export to only selected members
+      if (!isAllSelected) {
+        params.userIds = activeSelectedInDisplay.join(',');
+      }
 
       if (reportType === 'daily') {
         params.date = date;
@@ -201,7 +316,17 @@ export default function AttendanceReportSection({ user, onClose }) {
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
       console.error('Export report error:', err);
-      setErrorMsg(err.response?.data?.message || 'Failed to export attendance report to Excel.');
+      if (err.response?.data instanceof Blob) {
+        try {
+          const text = await err.response.data.text();
+          const parsed = JSON.parse(text);
+          setErrorMsg(parsed.message || 'Failed to export attendance report to Excel.');
+          return;
+        } catch (e) {
+          // ignore
+        }
+      }
+      setErrorMsg(err.response?.data?.message || err.message || 'Failed to export attendance report to Excel.');
     } finally {
       setExporting(false);
     }
@@ -406,10 +531,10 @@ export default function AttendanceReportSection({ user, onClose }) {
           </select>
         </div>
 
-        {/* Employee Type Filter */}
+        {/* Member Type Filter */}
         <div>
           <label className="block text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground mb-1.5">
-            Employee Type
+            Member Type
           </label>
           <select
             value={roleFilter}
@@ -442,16 +567,16 @@ export default function AttendanceReportSection({ user, onClose }) {
           </select>
         </div>
 
-        {/* Employee Name Filter */}
+        {/* Member Name Filter */}
         <div>
           <label className="block text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground mb-1.5">
-            Search Employee
+            Search Member
           </label>
           <div className="relative flex items-center">
             <Search className="absolute left-3 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
             <input
               type="text"
-              placeholder="Search by name / ID..."
+              placeholder="Search member by name / ID..."
               value={employeeSearch}
               onChange={(e) => setEmployeeSearch(e.target.value)}
               className="w-full h-10 pl-8.5 pr-3 text-xs font-medium rounded-xl border border-border/70 bg-card text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 focus:border-primary shadow-2xs"
@@ -465,7 +590,7 @@ export default function AttendanceReportSection({ user, onClose }) {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="p-4 rounded-2xl bg-muted/40 border border-border/40 text-center">
             <span className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider block">
-              Total Employees
+              Total Members
             </span>
             <span className="text-xl font-black text-foreground mt-0.5 block">
               {reportData.summary.totalEmployees}
@@ -491,7 +616,7 @@ export default function AttendanceReportSection({ user, onClose }) {
       )}
 
       {reportType === 'monthly' && reportData?.summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div className="p-4 rounded-2xl bg-muted/40 border border-border/40 text-center">
             <span className="text-[10px] font-extrabold text-muted-foreground uppercase tracking-wider block">
               Total Working Days
@@ -508,6 +633,14 @@ export default function AttendanceReportSection({ user, onClose }) {
               {reportData.summary.averageAttendancePercent}
             </span>
           </div>
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-center">
+            <span className="text-[10px] font-extrabold text-rose-600 uppercase tracking-wider block">
+              Total Loss of Pay (LOP)
+            </span>
+            <span className="text-xl font-black text-rose-600 mt-0.5 block">
+              {reportData.summary.totalLopDays ?? 0} Days
+            </span>
+          </div>
         </div>
       )}
 
@@ -516,7 +649,8 @@ export default function AttendanceReportSection({ user, onClose }) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <h4 className="text-xs font-black uppercase tracking-wider text-muted-foreground">
-              Report Data Preview ({reportData?.records?.length || 0} Records)
+              Report Data Preview ({reportData?.records?.length || 0} Records
+              {displayedRecords.length > 0 && ` • ${selectedInDisplayCount} Selected`})
             </h4>
           </div>
           <span className="text-[11px] font-semibold text-muted-foreground">
@@ -524,12 +658,36 @@ export default function AttendanceReportSection({ user, onClose }) {
           </span>
         </div>
 
-        <div className="w-full min-w-0 overflow-x-auto rounded-2xl border border-border/50 bg-card shadow-xs">
-          <table className="w-full text-xs border-collapse">
+        {(() => {
+          const dynamicLeaveTypes = reportData?.leaveTypes && reportData.leaveTypes.length > 0
+            ? reportData.leaveTypes
+            : [
+                { id: 'cl', name: 'Casual Leave', code: 'CL' },
+                { id: 'sl', name: 'Sick Leave', code: 'SL' },
+                { id: 'wfh', name: 'WFH', code: 'WFH' }
+              ];
+          const monthlyColSpan = 5 + dynamicLeaveTypes.length;
+
+          return (
+            <div className="w-full min-w-0 overflow-x-auto rounded-2xl border border-border/50 bg-card shadow-xs">
+              <table className="w-full text-xs border-collapse">
             <thead>
               {reportType === 'daily' && (
                 <tr className="border-b border-border/40 bg-muted/30 text-muted-foreground font-black uppercase text-[10px] tracking-wider whitespace-nowrap">
-                  <th className="px-5 py-3 text-left">Employee</th>
+                  <th className="px-5 py-3 text-left">
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        id="select-all-daily"
+                        checked={isAllSelected}
+                        onChange={handleToggleSelectAll}
+                        disabled={displayedRecords.length === 0}
+                        className="h-4 w-4 rounded border-border/80 text-primary focus:ring-primary/20 accent-primary cursor-pointer disabled:opacity-40"
+                        title={isAllSelected ? "Unselect all displayed members" : "Select all displayed members"}
+                      />
+                      <span>Members</span>
+                    </div>
+                  </th>
                   <th className="px-5 py-3 text-center">Attendance</th>
                   <th className="px-5 py-3 text-center">Login Time</th>
                   <th className="px-5 py-3 text-center">Login Status</th>
@@ -538,7 +696,20 @@ export default function AttendanceReportSection({ user, onClose }) {
 
               {reportType === 'weekly' && (
                 <tr className="border-b border-border/40 bg-muted/30 text-muted-foreground font-black uppercase text-[10px] tracking-wider whitespace-nowrap">
-                  <th className="px-5 py-3 text-left">Employee</th>
+                  <th className="px-5 py-3 text-left">
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        id="select-all-weekly"
+                        checked={isAllSelected}
+                        onChange={handleToggleSelectAll}
+                        disabled={displayedRecords.length === 0}
+                        className="h-4 w-4 rounded border-border/80 text-primary focus:ring-primary/20 accent-primary cursor-pointer disabled:opacity-40"
+                        title={isAllSelected ? "Unselect all displayed members" : "Select all displayed members"}
+                      />
+                      <span>Members</span>
+                    </div>
+                  </th>
                   <th className="px-5 py-3 text-center">Present</th>
                   <th className="px-5 py-3 text-center">Late</th>
                   <th className="px-5 py-3 text-center">Absent</th>
@@ -549,12 +720,29 @@ export default function AttendanceReportSection({ user, onClose }) {
 
               {reportType === 'monthly' && (
                 <tr className="border-b border-border/40 bg-muted/30 text-muted-foreground font-black uppercase text-[10px] tracking-wider whitespace-nowrap">
-                  <th className="px-5 py-3 text-left">Employee</th>
+                  <th className="px-5 py-3 text-left">
+                    <div className="flex items-center gap-2.5">
+                      <input
+                        type="checkbox"
+                        id="select-all-monthly"
+                        checked={isAllSelected}
+                        onChange={handleToggleSelectAll}
+                        disabled={displayedRecords.length === 0}
+                        className="h-4 w-4 rounded border-border/80 text-primary focus:ring-primary/20 accent-primary cursor-pointer disabled:opacity-40"
+                        title={isAllSelected ? "Unselect all displayed members" : "Select all displayed members"}
+                      />
+                      <span>Members</span>
+                    </div>
+                  </th>
                   <th className="px-5 py-3 text-center">Working Days</th>
                   <th className="px-5 py-3 text-center">Present</th>
                   <th className="px-5 py-3 text-center">Late</th>
-                  <th className="px-5 py-3 text-center">Leave</th>
-                  <th className="px-5 py-3 text-center">WFH</th>
+                  {dynamicLeaveTypes.map((lt) => (
+                    <th key={lt.id || lt.name} className="px-5 py-3 text-center">
+                      {lt.name}
+                    </th>
+                  ))}
+                  <th className="px-5 py-3 text-center">Loss of Pay (LOP)</th>
                 </tr>
               )}
             </thead>
@@ -562,27 +750,37 @@ export default function AttendanceReportSection({ user, onClose }) {
             <tbody className="divide-y divide-border/25">
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-muted-foreground font-semibold">
+                  <td colSpan={reportType === 'monthly' ? monthlyColSpan : 6} className="px-5 py-8 text-center text-muted-foreground font-semibold">
                     <RefreshCw className="h-5 w-5 animate-spin mx-auto text-primary mb-2" />
                     <span>Loading report preview...</span>
                   </td>
                 </tr>
               ) : !reportData?.records || reportData.records.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-muted-foreground font-semibold">
+                  <td colSpan={reportType === 'monthly' ? monthlyColSpan : 6} className="px-5 py-8 text-center text-muted-foreground font-semibold">
                     No attendance records match the selected filters.
                   </td>
                 </tr>
               ) : (
                 reportData.records.map((rec, idx) => (
                   <tr key={rec.userId || idx} className="hover:bg-muted/10 transition-colors">
-                    {/* Employee info column */}
+                    {/* Employee info column with selection checkbox */}
                     <td className="px-5 py-3.5 whitespace-nowrap font-bold text-foreground">
-                      <div className="flex flex-col">
-                        <span className="text-xs font-black">{rec.employee}</span>
-                        <span className="text-[10px] font-mono text-muted-foreground font-semibold">
-                          {rec.employeeId} • {rec.role?.replace('_', ' ')}
-                        </span>
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          id={`select-member-${rec.userId}`}
+                          checked={currentSelectedIds.includes(rec.userId)}
+                          onChange={() => handleToggleMember(rec.userId)}
+                          className="h-4 w-4 rounded border-border/80 text-primary focus:ring-primary/20 accent-primary cursor-pointer shrink-0"
+                          title={`Select ${rec.employee}`}
+                        />
+                        <div className="flex flex-col">
+                          <span className="text-xs font-black">{rec.employee}</span>
+                          <span className="text-[10px] font-mono text-muted-foreground font-semibold">
+                            {rec.employeeId} • {rec.role?.replace('_', ' ')}
+                          </span>
+                        </div>
                       </div>
                     </td>
 
@@ -664,11 +862,16 @@ export default function AttendanceReportSection({ user, onClose }) {
                         <td className="px-5 py-3.5 text-center font-bold text-amber-600 whitespace-nowrap">
                           {rec.late}
                         </td>
-                        <td className="px-5 py-3.5 text-center font-bold text-sky-600 whitespace-nowrap">
-                          {rec.leave}
-                        </td>
-                        <td className="px-5 py-3.5 text-center font-bold text-purple-600 whitespace-nowrap">
-                          {rec.wfh}
+                        {dynamicLeaveTypes.map((lt) => {
+                          const count = rec.leaveTypeCounts?.[lt.name] ?? rec.leaveTypeCounts?.[lt.code] ?? rec[lt.name] ?? 0;
+                          return (
+                            <td key={lt.id || lt.name} className="px-5 py-3.5 text-center font-bold text-sky-600 whitespace-nowrap">
+                              {count}
+                            </td>
+                          );
+                        })}
+                        <td className="px-5 py-3.5 text-center font-bold text-rose-600 whitespace-nowrap">
+                          {rec.unpaidLeave ?? rec.lop ?? 0}
                         </td>
                       </>
                     )}
@@ -678,6 +881,8 @@ export default function AttendanceReportSection({ user, onClose }) {
             </tbody>
           </table>
         </div>
+          );
+        })()}
       </div>
     </div>
   );

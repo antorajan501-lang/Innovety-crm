@@ -304,19 +304,21 @@ const LeavePolicySettings = () => {
     const deletedName = typeToDelete.name;
     try {
       setDeletingType(true);
-      const res = await api.delete(`/leave-policy/types/${deletedId}`);
-      // Remove the deleted policy from React state immediately after a successful API response
+      const res = await api.delete(`/leave-policy/types/${deletedId}`, {
+        params: effectiveOrgId ? { organizationId: effectiveOrgId } : {}
+      });
+      // Remove the deleted leave type from React state immediately after a successful API response
       setLeaveTypes((prev) => prev.filter((lt) => lt.id !== deletedId));
       setDeleteConfirmOpen(false);
       setTypeToDelete(null);
       setAlert({
         type: 'success',
-        text: res.data?.message || `Leave policy "${deletedName}" deleted successfully.`
+        text: res.data?.message || `Leave type "${deletedName}" deleted successfully.`
       });
       // Refresh policy list automatically in the background
       fetchPolicyData(selectedOrgId, selectedRole);
     } catch (err) {
-      const errMsg = err.response?.data?.message || err.message || 'Failed to delete leave policy.';
+      const errMsg = err.response?.data?.message || err.message || 'Failed to delete leave type.';
       setAlert({ type: 'error', text: errMsg });
       setDeleteConfirmOpen(false);
       setTypeToDelete(null);
@@ -632,13 +634,15 @@ const LeavePolicySettings = () => {
                     >
                       <Edit2 className="h-4 w-4" />
                     </button>
-                    <button
-                      onClick={() => handleDeleteClick(lt)}
-                      className="p-2 rounded-xl text-muted-foreground hover:bg-muted hover:text-rose-600 transition-colors cursor-pointer"
-                      title="Delete Leave Policy"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {!isProtected && (
+                      <button
+                        onClick={() => handleDeleteClick(lt)}
+                        className="p-2 rounded-xl text-muted-foreground hover:bg-muted hover:text-rose-600 transition-colors cursor-pointer"
+                        title="Delete Leave Type"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               );
@@ -857,9 +861,9 @@ const LeavePolicySettings = () => {
       {/* DELETE CONFIRM MODAL */}
       <ConfirmModal
         isOpen={deleteConfirmOpen}
-        title="Delete Leave Policy"
-        message={`Are you sure you want to delete the "${typeToDelete?.name}" leave policy? Employees will no longer be able to request this leave type. Existing leave history remains unaffected.`}
-        confirmText="Delete Policy"
+        title="Delete Leave Type"
+        message={`Are you sure you want to delete the "${typeToDelete?.name}" leave type? Users will no longer be able to request this leave type. Existing leave history remains unaffected.`}
+        confirmText="Delete Leave Type"
         cancelText="Cancel"
         loading={deletingType}
         onConfirm={handleConfirmDelete}
