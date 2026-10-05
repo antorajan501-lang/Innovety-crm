@@ -4,6 +4,7 @@ const fs = require('fs');
 const prisma = require('../utils/db');
 const { getEffectiveSettings } = require('../utils/settingsResolver');
 const { getSystemTimeZone, getTodayZonedDate, getZonedParts } = require('../utils/attendanceUtils');
+const shiftService = require('./shiftService');
 
 // Helper to resolve company logo path
 const getCompanyLogoPath = (organizationId) => {
@@ -183,7 +184,7 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
   const maxDate = new Date(Date.UTC(tY, tM - 1, tD, 23, 59, 59, 999));
   const userIds = activeUsers.map(u => u.id);
 
-  const [realAttendances, approvedLeaves, calendarOverrides, permanentHolidays] = await Promise.all([
+  const [realAttendances, approvedLeaves, calendarOverrides, permanentHolidays, batchShiftResolver] = await Promise.all([
     prisma.attendance.findMany({
       where: {
         date: { gte: minDate, lte: maxDate },
@@ -220,6 +221,13 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
           ]
         } : {})
       }
+    }),
+    shiftService.createBatchShiftResolver({
+      userIds,
+      organizationId,
+      startDate: minDate,
+      endDate: maxDate,
+      client: prisma
     })
   ]);
 
@@ -246,6 +254,9 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
       if (jDateStr > targetDateStr) continue;
     }
 
+    const shiftStatusInfo = batchShiftResolver.getDayStatus(u.id, targetDateObj, timeZone);
+    const isShiftHoliday = shiftStatusInfo.isHoliday;
+
     const att = attendanceMap.get(u.id);
     let attendanceVal = 'Absent';
     let loginTimeVal = '—';
@@ -257,7 +268,10 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
 
       loginTimeVal = att.clockIn ? formatTime12h(att.clockIn, timeZone) : '—';
 
-      if (isWFH) {
+      if (att.status === 'ABSENT' && (isHoliday || isShiftHoliday)) {
+        attendanceVal = 'Holiday';
+        loginStatusVal = 'Holiday';
+      } else if (isWFH) {
         attendanceVal = 'WFH';
         loginStatusVal = 'WFH';
       } else if (att.status === 'HALF_DAY') {
@@ -286,7 +300,7 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
         const isLeaveWFH = (leave.leaveType || leave.type) === 'WFH';
         attendanceVal = isLeaveWFH ? 'WFH' : 'On Leave';
         loginStatusVal = isLeaveWFH ? 'WFH' : 'On Leave';
-      } else if (isHoliday) {
+      } else if (isHoliday || isShiftHoliday) {
         attendanceVal = 'Holiday';
         loginStatusVal = 'Holiday';
       } else {
@@ -417,7 +431,7 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
   const userIds = activeUsers.map(u => u.id);
 
   // Fetch attendances, leaves & holidays for the week
-  const [attendances, approvedLeaves, calendarOverrides, permanentHolidays] = await Promise.all([
+  const [attendances, approvedLeaves, calendarOverrides, permanentHolidays, batchShiftResolver] = await Promise.all([
     prisma.attendance.findMany({
       where: {
         date: { gte: startObj, lte: endObj },
@@ -454,6 +468,13 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
           ]
         } : {})
       }
+    }),
+    shiftService.createBatchShiftResolver({
+      userIds,
+      organizationId,
+      startDate: startObj,
+      endDate: endObj,
+      client: prisma
     })
   ]);
 
@@ -478,7 +499,7 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
       isHol = true;
     }
 
-    daysInWeek.push({ dateStr: dStr, isHoliday: isHol, dayOfWeek: dow });
+    daysInWeek.push({ dateStr: dStr, isHoliday: isHol, dayOfWeek: dow, dateObj: new Date(cur) });
     cur.setUTCDate(cur.getUTCDate() + 1);
   }
 
@@ -497,9 +518,12 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
 
     const uJoiningStr = u.joiningDate ? new Date(u.joiningDate).toISOString().split('T')[0] : null;
 
-    for (const { dateStr, isHoliday } of daysInWeek) {
+    for (const { dateStr, isHoliday, dateObj } of daysInWeek) {
       if (uJoiningStr && dateStr < uJoiningStr) continue; // Skip days prior to joining
       if (dateStr > todayParts.dateStr) continue; // Skip future days
+
+      const shiftStatusInfo = batchShiftResolver.getDayStatus(u.id, dateObj, timeZone);
+      const isShiftHoliday = shiftStatusInfo.isHoliday;
 
       const att = attendances.find(a => a.userId === u.id && new Date(a.date).toISOString().split('T')[0] === dateStr);
 
@@ -514,7 +538,9 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
         if (isWFH) {
           wfhCount++;
         } else if (att.status === 'ABSENT') {
-          absentCount++;
+          if (!isHoliday && !isShiftHoliday) {
+            absentCount++;
+          }
         } else if (att.status === 'LEAVE') {
           // Counted as leave or skip
         } else {
@@ -534,7 +560,7 @@ const getWeeklyAttendanceData = async ({ organizationId, week, year, date, teamI
           if ((leave.leaveType || leave.type) === 'WFH') {
             wfhCount++;
           }
-        } else if (isHoliday) {
+        } else if (isHoliday || isShiftHoliday) {
           // Holiday, ignore
         } else {
           absentCount++;
@@ -685,7 +711,7 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
 
   const userIds = activeUsers.map(u => u.id);
 
-  const [attendances, approvedLeaves, calendarOverrides, permanentHolidays, allLeaveTypes] = await Promise.all([
+  const [attendances, approvedLeaves, calendarOverrides, permanentHolidays, allLeaveTypes, batchShiftResolver] = await Promise.all([
     prisma.attendance.findMany({
       where: {
         date: { gte: startOfMonth, lte: endOfMonth },
@@ -731,6 +757,13 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
         }
       },
       orderBy: [{ createdAt: 'asc' }]
+    }),
+    shiftService.createBatchShiftResolver({
+      userIds,
+      organizationId,
+      startDate: startOfMonth,
+      endDate: endOfMonth,
+      client: prisma
     })
   ]);
 
@@ -802,7 +835,7 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
     }
 
     if (!isHol) monthWorkingDaysCount++;
-    calendarDays.push({ dateStr: dStr, isHoliday: isHol, dayOfWeek: dow });
+    calendarDays.push({ dateStr: dStr, isHoliday: isHol, dayOfWeek: dow, dateObj: dObj });
   }
 
   let totalAttendedCountAll = 0;
@@ -824,9 +857,14 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
 
     const uJoiningStr = u.joiningDate ? new Date(u.joiningDate).toISOString().split('T')[0] : null;
 
-    for (const { dateStr, isHoliday } of calendarDays) {
+    for (const { dateStr, isHoliday, dateObj } of calendarDays) {
       if (uJoiningStr && dateStr < uJoiningStr) continue; // Skip days prior to joining
-      if (!isHoliday) employeeWorkingDays++;
+
+      const shiftStatusInfo = batchShiftResolver.getDayStatus(u.id, dateObj, timeZone);
+      const isShiftHoliday = shiftStatusInfo.isHoliday;
+
+      // Crucial: Only count as working day if NOT company holiday AND NOT shift holiday
+      if (!isHoliday && !isShiftHoliday) employeeWorkingDays++;
 
       if (dateStr > todayParts.dateStr) continue; // Skip future days
 
@@ -844,19 +882,23 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
         const isWFH = att.workLocation === 'HOME' || att.status === 'WORK_FROM_HOME';
         const isLate = att.status === 'LATE' || (att.lateMinutes && att.lateMinutes > 0);
 
-        if (isWFH) {
+        if (att.status === 'ABSENT' && (isHoliday || isShiftHoliday)) {
+          // Disregard explicit absent on holiday
+        } else if (isWFH) {
           wfhCount++;
         } else if (att.status === 'LEAVE') {
-          const unpaid = isLeaveUnpaid(leave);
-          const duration = leave && (leave.isHalfDay || leave.totalDays === 0.5) ? 0.5 : 1;
-          if (unpaid) {
-            unpaidLeaveCount += duration;
-          } else {
-            paidLeaveCount += duration;
-            const matched = matchActiveLeaveType(leave);
-            if (matched) {
-              leaveTypeCounts[matched.name] = (leaveTypeCounts[matched.name] || 0) + duration;
-              leaveTypeCounts[matched.code] = (leaveTypeCounts[matched.code] || 0) + duration;
+          if (!isHoliday && !isShiftHoliday) {
+            const unpaid = isLeaveUnpaid(leave);
+            const duration = leave && (leave.isHalfDay || leave.totalDays === 0.5) ? 0.5 : 1;
+            if (unpaid) {
+              unpaidLeaveCount += duration;
+            } else {
+              paidLeaveCount += duration;
+              const matched = matchActiveLeaveType(leave);
+              if (matched) {
+                leaveTypeCounts[matched.name] = (leaveTypeCounts[matched.name] || 0) + duration;
+                leaveTypeCounts[matched.code] = (leaveTypeCounts[matched.code] || 0) + duration;
+              }
             }
           }
         } else if (att.status === 'ABSENT') {
@@ -867,7 +909,7 @@ const getMonthlyAttendanceData = async ({ organizationId, month, year, teamId, r
         }
       } else {
         // Check Leave
-        if (leave && !isHoliday) {
+        if (leave && !isHoliday && !isShiftHoliday) {
           const lType = (leave.leaveType || leave.type || '').toUpperCase();
           if (lType === 'WFH') {
             wfhCount++;

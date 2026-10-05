@@ -18,33 +18,65 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
 
   const settings = inputSettings || effectiveSettings || {};
 
-  // Fetch assigned shift for fallback (Safeguard 2: Attendance Priority 1 -> Shift Priority 2 -> Settings Priority 3)
-  const assignedShift = await shiftService.getEmployeeShift(user.id);
+  // 1. Fetch user's assigned salary structure, holidays (both HolidayCalendar & WorkCalendar), attendances & shift resolver
+  const [structure, holidays, workCalendarOverrides, permanentHolidays, attendances, batchShiftResolver] = await Promise.all([
+    prisma.salaryStructure.findUnique({
+      where: { userId: user.id },
+      include: { template: true }
+    }),
+    prisma.holidayCalendar.findMany({
+      where: {
+        date: { gte: startDate, lte: endDate },
+        ...(user.organizationId ? { organizationId: user.organizationId } : {})
+      }
+    }),
+    prisma.workCalendar.findMany({
+      where: {
+        date: { gte: startDate, lte: endDate },
+        status: 'HOLIDAY',
+        ...(user.organizationId ? {
+          OR: [
+            { organizationId: user.organizationId },
+            { organizationId: null, createdBy: { organizationId: user.organizationId } }
+          ]
+        } : {})
+      }
+    }),
+    prisma.workCalendar.findMany({
+      where: {
+        isPermanent: true,
+        status: 'HOLIDAY',
+        recurrenceMonth: month,
+        ...(user.organizationId ? {
+          OR: [
+            { organizationId: user.organizationId },
+            { organizationId: null, createdBy: { organizationId: user.organizationId } }
+          ]
+        } : {})
+      }
+    }),
+    prisma.attendance.findMany({
+      where: {
+        userId: user.id,
+        date: { gte: startDate, lte: endDate }
+      }
+    }),
+    shiftService.createBatchShiftResolver({
+      userIds: [user.id],
+      organizationId: user.organizationId,
+      startDate,
+      endDate,
+      client: prisma
+    })
+  ]);
 
-  // 1. Fetch user's assigned salary structure (NO fallback to template)
-  const structure = await prisma.salaryStructure.findUnique({
-    where: { userId: user.id },
-    include: { template: true }
-  });
+  const holidayDatesStr = new Set([
+    ...holidays.map(h => new Date(h.date).toISOString().split('T')[0]),
+    ...workCalendarOverrides.map(w => new Date(w.date).toISOString().split('T')[0])
+  ]);
+  const permDaySet = new Set(permanentHolidays.map(p => p.recurrenceDay));
 
-  // Fetch company holidays in selected month
-  const holidays = await prisma.holidayCalendar.findMany({
-    where: {
-      date: { gte: startDate, lte: endDate },
-      ...(user.organizationId ? { organizationId: user.organizationId } : {})
-    }
-  });
-  const holidayDatesStr = new Set(holidays.map(h => new Date(h.date).toISOString().split('T')[0]));
-
-  // 2. Fetch live Attendance logs for month
-  const attendances = await prisma.attendance.findMany({
-    where: {
-      userId: user.id,
-      date: { gte: startDate, lte: endDate }
-    }
-  });
-
-  // Safeguard 2: Shift resolution for audit & display
+  const assignedShift = batchShiftResolver.getShift(user.id, startDate);
   const snapshotShiftName = attendances.find(a => a.shiftName)?.shiftName;
   const shiftUsedName = snapshotShiftName || assignedShift?.name || 'Company Default';
 
@@ -62,10 +94,13 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
     const dStr = d.toISOString().split('T')[0];
     const dayName = shiftService.getDayName(d);
     const isSunday = d.getUTCDay() === 0 || dayName === 'SUNDAY';
-    const isCompanyHoliday = holidayDatesStr.has(dStr);
+    const isCompanyHoliday = holidayDatesStr.has(dStr) || permDaySet.has(dNum);
 
-    if (isSunday || isCompanyHoliday) {
-      continue; // Sunday is permanently locked, and company calendar holidays are excluded
+    const shiftStatusInfo = batchShiftResolver.getDayStatus(user.id, d);
+    const isShiftHoliday = shiftStatusInfo.isHoliday;
+
+    if (isSunday || isCompanyHoliday || isShiftHoliday) {
+      continue; // Sunday is permanently locked, and company/shift holidays are excluded
     }
 
     const dayAtt = attendanceMap.get(dStr);
@@ -74,10 +109,9 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
         computedWorkingDays += 1;
       }
     } else {
-      const dayStatus = shiftService.getShiftDayStatus(assignedShift, dayName, d);
-      if (dayStatus === 'Working' || dayStatus === 'WFH') {
+      if (shiftStatusInfo.status === 'Working' || shiftStatusInfo.status === 'WFH') {
         computedWorkingDays += 1;
-      } else if (!assignedShift) {
+      } else if (!shiftStatusInfo.shift) {
         computedWorkingDays += 1;
       }
     }
@@ -140,6 +174,15 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
   let attWfhDays = 0;
 
   attendances.forEach(att => {
+    const attDate = new Date(att.date);
+    const attDayNum = attDate.getUTCDate();
+    const attDStr = attDate.toISOString().split('T')[0];
+    const attDayName = shiftService.getDayName(attDate);
+    const isAttSunday = attDate.getUTCDay() === 0 || attDayName === 'SUNDAY';
+    const isAttCompanyHoliday = holidayDatesStr.has(attDStr) || permDaySet.has(attDayNum);
+    const attShiftStatusInfo = batchShiftResolver.getDayStatus(user.id, attDate);
+    const isAttShiftHoliday = attShiftStatusInfo.isHoliday;
+
     if (att.status === 'PRESENT') {
       presentDays += 1;
     } else if (att.status === 'LATE') {
@@ -149,7 +192,12 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
       presentDays += 0.5;
       halfDays += 1;
     } else if (att.status === 'ABSENT') {
-      explicitAbsentDays += 1;
+      // CRITICAL REQUIREMENT:
+      // If an explicit ABSENT record exists on a shift holiday, Sunday, or company holiday,
+      // payroll MUST NOT treat it as an absent/LOP deduction!
+      if (!isAttSunday && !isAttCompanyHoliday && !isAttShiftHoliday) {
+        explicitAbsentDays += 1;
+      }
     } else if (att.status === 'WORK_FROM_HOME' || att.status === 'WFH') {
       attWfhDays += 1;
     }
@@ -185,11 +233,12 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
     let curr = new Date(lStart);
     while (curr <= lEnd) {
       const dateStr = curr.toISOString().split('T')[0];
+      const dNum = curr.getUTCDate();
       const dayName = shiftService.getDayName(curr);
       const isSunday = curr.getUTCDay() === 0 || dayName === 'SUNDAY';
-      const isCompanyHoliday = holidayDatesStr.has(dateStr);
-      const shiftStatus = shiftService.getShiftDayStatus(assignedShift, dayName, curr);
-      const isShiftHoliday = shiftStatus === 'Holiday';
+      const isCompanyHoliday = holidayDatesStr.has(dateStr) || permDaySet.has(dNum);
+      const shiftStatusInfo = batchShiftResolver.getDayStatus(user.id, curr);
+      const isShiftHoliday = shiftStatusInfo.isHoliday;
 
       if (!isSunday && !isCompanyHoliday && !isShiftHoliday) {
         if (lType === 'WFH') {
@@ -213,6 +262,10 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
 
   attendances.forEach(att => {
     const attDateStr = new Date(att.date).toISOString().split('T')[0];
+    const attDate = new Date(att.date);
+    const attDayNum = attDate.getUTCDate();
+    const attShiftStatusInfo = batchShiftResolver.getDayStatus(user.id, attDate);
+    const isHolidayOrOff = holidayDatesStr.has(attDateStr) || permDaySet.has(attDayNum) || attShiftStatusInfo.isHoliday;
 
     // Calculate overtime using Safeguard 2 hierarchy
     if (att.clockIn && att.clockOut) {
@@ -247,7 +300,7 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
       overtimeHours += (att.workingHours - 8);
     }
 
-    if (holidayDatesStr.has(attDateStr) && ['PRESENT', 'LATE', 'WORK_FROM_HOME'].includes(att.status)) {
+    if (isHolidayOrOff && ['PRESENT', 'LATE', 'WORK_FROM_HOME'].includes(att.status)) {
       holidayDaysWorked += 1;
     }
   });

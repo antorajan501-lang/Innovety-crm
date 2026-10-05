@@ -1176,6 +1176,101 @@ const getEmployeeUpcomingSchedule = async (userId, fromDate = new Date(), daysCo
   };
 };
 
+/**
+ * Creates a batch shift resolver for multiple users across a date range.
+ * Resolves Priority 1: ShiftSchedule (overrides/swaps/planned),
+ *          Priority 2: ShiftMember (permanent shift),
+ *          Priority 3: ShiftRef (legacy ShiftMaster),
+ *          Priority 4: Company Default Shift.
+ */
+const createBatchShiftResolver = async ({ userIds = [], organizationId = null, startDate = new Date(), endDate = new Date(), client = prisma }) => {
+  const minDate = startDate instanceof Date ? startDate : new Date(startDate);
+  const maxDate = endDate instanceof Date ? endDate : new Date(endDate);
+  const minDayStart = new Date(minDate.toISOString().split('T')[0] + 'T00:00:00.000Z');
+  const maxDayEnd = new Date(maxDate.toISOString().split('T')[0] + 'T23:59:59.999Z');
+
+  const [schedules, defaultShift, usersWithShifts] = await Promise.all([
+    client.shiftSchedule.findMany({
+      where: {
+        userId: { in: userIds },
+        status: 'ACTIVE',
+        startDate: { lte: maxDayEnd },
+        endDate: { gte: minDayStart }
+      },
+      include: { shift: true },
+      orderBy: { createdAt: 'desc' }
+    }),
+    organizationId ? client.shift.findFirst({
+      where: { organizationId, name: DEFAULT_SHIFT_DATA.name }
+    }) : null,
+    client.user.findMany({
+      where: { id: { in: userIds } },
+      select: {
+        id: true,
+        organizationId: true,
+        shiftAssignment: { include: { shift: true } },
+        shiftRef: true
+      }
+    })
+  ]);
+
+  const userShiftMap = new Map();
+  usersWithShifts.forEach(u => userShiftMap.set(u.id, u));
+
+  const getShift = (userId, targetDate) => {
+    if (!userId) return null;
+    const target = targetDate instanceof Date ? targetDate : new Date(targetDate);
+    const targetYMD = target.toISOString().split('T')[0];
+    const targetDayStart = new Date(targetYMD + 'T00:00:00.000Z');
+    const targetDayEnd = new Date(targetYMD + 'T23:59:59.999Z');
+
+    // Priority 1: Active ShiftSchedule for target date
+    const activeSched = schedules.find(s =>
+      s.userId === userId &&
+      new Date(s.startDate) <= targetDayEnd &&
+      new Date(s.endDate) >= targetDayStart
+    );
+    if (activeSched?.shift) {
+      return activeSched.shift;
+    }
+
+    // Priority 2: ShiftMember permanent assignment
+    const u = userShiftMap.get(userId);
+    if (u?.shiftAssignment?.shift) {
+      return u.shiftAssignment.shift;
+    }
+
+    // Priority 3: shiftRef (legacy ShiftMaster)
+    if (u?.shiftRef) {
+      return u.shiftRef;
+    }
+
+    // Priority 4: Company Default Shift
+    return defaultShift;
+  };
+
+  const getDayStatus = (userId, targetDate, timeZone = 'Asia/Kolkata') => {
+    const shift = getShift(userId, targetDate);
+    const dayName = getDayName(targetDate, timeZone);
+    const status = getShiftDayStatus(shift, dayName, targetDate);
+    return {
+      shift,
+      dayName,
+      status,
+      isHoliday: status === 'Holiday',
+      isWFH: status === 'WFH',
+      isWorking: status === 'Working'
+    };
+  };
+
+  return {
+    getShift,
+    getDayStatus,
+    isShiftHoliday: (userId, targetDate, timeZone = 'Asia/Kolkata') => getDayStatus(userId, targetDate, timeZone).isHoliday,
+    defaultShift
+  };
+};
+
 module.exports = {
   DEFAULT_SHIFT_DATA,
   DEFAULT_WORKING_DAYS,
@@ -1198,5 +1293,7 @@ module.exports = {
   getDayName,
   getShiftDayStatus,
   getEmployeeShiftWithSchedule,
-  getEmployeeUpcomingSchedule
+  getEmployeeUpcomingSchedule,
+  createBatchShiftResolver
 };
+

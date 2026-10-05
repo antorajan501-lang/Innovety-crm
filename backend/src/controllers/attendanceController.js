@@ -822,7 +822,7 @@ const getAttendanceLogs = async (req, res) => {
     const queryMinDate = new Date(Date.UTC(startYMD.year, startYMD.month - 1, startYMD.day - 1, 0, 0, 0, 0));
     const queryMaxDate = new Date(Date.UTC(endYMD.year, endYMD.month - 1, endYMD.day + 1, 23, 59, 59, 999));
 
-    const [realAttendances, approvedLeaves, calendarOverrides, permanentHolidays] = await Promise.all([
+    const [realAttendances, approvedLeaves, calendarOverrides, permanentHolidays, batchShiftResolver] = await Promise.all([
       prisma.attendance.findMany({
         where: {
           date: { gte: queryMinDate, lte: queryMaxDate },
@@ -862,6 +862,13 @@ const getAttendanceLogs = async (req, res) => {
             ]
           } : {})
         }
+      }),
+      shiftService.createBatchShiftResolver({
+        userIds,
+        organizationId: targetOrgId,
+        startDate: queryMinDate,
+        endDate: queryMaxDate,
+        client: prisma
       })
     ]);
 
@@ -935,11 +942,25 @@ const getAttendanceLogs = async (req, res) => {
           }
         }
 
+        const shiftStatusInfo = batchShiftResolver.getDayStatus(u.id, dateObj, timeZone);
+        const isShiftHoliday = shiftStatusInfo.isHoliday;
+        const shiftName = shiftStatusInfo.shift?.name || 'Shift';
+
         const key = `${u.id}_${dateStr}`;
         const realAtt = attendanceMap.get(key);
 
         // 1. Real attendance record exists
         if (realAtt) {
+          // If marked ABSENT in DB but falls on a holiday (company or shift), display as HOLIDAY
+          if (realAtt.status === 'ABSENT' && (isHoliday || isShiftHoliday)) {
+            mergedLogs.push({
+              ...realAtt,
+              status: 'HOLIDAY',
+              holidayTitle: isHoliday ? holidayTitle : `${shiftName} Holiday`,
+              date: dateObj
+            });
+            continue;
+          }
           mergedLogs.push({
             ...realAtt,
             date: dateObj // Guarantee strictly matching selected calendar date
@@ -976,8 +997,8 @@ const getAttendanceLogs = async (req, res) => {
           continue;
         }
 
-        // 3. Company holiday or weekend
-        if (isHoliday) {
+        // 3. Company holiday, weekend, or Shift holiday
+        if (isHoliday || isShiftHoliday) {
           mergedLogs.push({
             id: `holiday_${u.id}_${dateStr}`,
             isSynthetic: true,
@@ -987,7 +1008,7 @@ const getAttendanceLogs = async (req, res) => {
             clockOut: null,
             workingHours: null,
             status: 'HOLIDAY',
-            holidayTitle,
+            holidayTitle: isHoliday ? holidayTitle : `${shiftName} Holiday`,
             user: u
           });
           continue;
@@ -1269,10 +1290,10 @@ const getAttendanceHistory = async (req, res) => {
     const selMonth = parseInt(month) || (todayZoned.getUTCMonth() + 1);
     const selYear = parseInt(year) || todayZoned.getUTCFullYear();
 
-    // Fetch target user's joiningDate
+    // Fetch target user's joiningDate & organizationId
     const targetUser = await prisma.user.findUnique({
       where: { id: targetUserId },
-      select: { id: true, name: true, joiningDate: true }
+      select: { id: true, name: true, joiningDate: true, organizationId: true }
     });
 
     const targetUserJoiningMidnight = targetUser?.joiningDate
@@ -1283,18 +1304,58 @@ const getAttendanceHistory = async (req, res) => {
     const startOfMonth = new Date(Date.UTC(selYear, selMonth - 1, 1));
     const endOfMonth = new Date(Date.UTC(selYear, selMonth, 0, 23, 59, 59));
 
-    // 2. Fetch existing DB attendance records for this user in selected month
-    const dbAttendances = await prisma.attendance.findMany({
-      where: {
-        userId: targetUserId,
-        date: { gte: startOfMonth, lte: endOfMonth }
-      },
-      include: {
-        user: {
-          select: { id: true, name: true, email: true, employeeId: true, role: true, department: true }
+    // 2. Fetch existing DB attendance records, company holidays & shift resolver
+    const [dbAttendances, holidays, workCalendarOverrides, permanentHolidays, batchShiftResolver] = await Promise.all([
+      prisma.attendance.findMany({
+        where: {
+          userId: targetUserId,
+          date: { gte: startOfMonth, lte: endOfMonth }
+        },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true, employeeId: true, role: true, department: true }
+          }
         }
-      }
-    });
+      }),
+      prisma.holidayCalendar.findMany({
+        where: {
+          date: { gte: startOfMonth, lte: endOfMonth },
+          ...(targetUser?.organizationId ? { organizationId: targetUser.organizationId } : {})
+        }
+      }),
+      prisma.workCalendar.findMany({
+        where: {
+          date: { gte: startOfMonth, lte: endOfMonth },
+          status: 'HOLIDAY',
+          ...(targetUser?.organizationId ? {
+            OR: [
+              { organizationId: targetUser.organizationId },
+              { organizationId: null, createdBy: { organizationId: targetUser.organizationId } }
+            ]
+          } : {})
+        }
+      }),
+      prisma.workCalendar.findMany({
+        where: {
+          isPermanent: true,
+          status: 'HOLIDAY',
+          recurrenceMonth: selMonth,
+          ...(targetUser?.organizationId ? {
+            OR: [
+              { organizationId: targetUser.organizationId },
+              { organizationId: null, createdBy: { organizationId: targetUser.organizationId } }
+            ]
+          } : {})
+        }
+      }),
+      shiftService.createBatchShiftResolver({
+        userIds: [targetUserId],
+        organizationId: targetUser?.organizationId,
+        startDate: startOfMonth,
+        endDate: endOfMonth,
+        client: prisma
+      })
+    ]);
 
     const attMap = new Map();
     dbAttendances.forEach(a => {
@@ -1302,20 +1363,20 @@ const getAttendanceHistory = async (req, res) => {
       attMap.set(dStr, a);
     });
 
-    // 3. Fetch Company Holidays for selected month
-    const holidays = await prisma.holidayCalendar.findMany({
-      where: {
-        date: { gte: startOfMonth, lte: endOfMonth }
-      }
+    const holidayDateMap = new Map();
+    holidays.forEach(h => {
+      if (h.date) holidayDateMap.set(new Date(h.date).toISOString().split('T')[0], h.title || 'Company Holiday');
     });
-    const holidaySet = new Set(
-      holidays.map(h => new Date(h.date).toISOString().split('T')[0])
-    );
+    workCalendarOverrides.forEach(w => {
+      if (w.date) holidayDateMap.set(new Date(w.date).toISOString().split('T')[0], w.title || 'Company Holiday');
+    });
 
-    // 4. Saturday is treated as a normal working day unless explicitly configured otherwise
-    const isSaturdayWorking = true;
+    const permDayMap = new Map();
+    permanentHolidays.forEach(p => {
+      if (p.recurrenceDay) permDayMap.set(p.recurrenceDay, p.title || 'Company Holiday');
+    });
 
-    // 5. Generate all valid historical dates up to TODAY (clamped to todayZoned)
+    // 3. Generate all valid historical dates up to TODAY (clamped to todayZoned)
     const generatedLogs = [];
     const maxDate = endOfMonth < todayZoned ? endOfMonth : todayZoned;
 
@@ -1330,30 +1391,48 @@ const getAttendanceHistory = async (req, res) => {
         continue; // Skip pre-joining date (never generate ABSENT, HOLIDAY, or NOT_CHECKED_IN)
       }
       const dayOfWeek = curr.getUTCDay(); // 0 = Sunday, 6 = Saturday
-
+      const dayOfMonth = curr.getUTCDate();
       const isSunday = dayOfWeek === 0;
-      const isHoliday = holidaySet.has(dateStr);
-      const isNonWorkingSaturday = dayOfWeek === 6 && !isSaturdayWorking;
+
+      let isCompanyHoliday = false;
+      let companyHolidayTitle = '';
+      if (holidayDateMap.has(dateStr)) {
+        isCompanyHoliday = true;
+        companyHolidayTitle = holidayDateMap.get(dateStr);
+      } else if (permDayMap.has(dayOfMonth)) {
+        isCompanyHoliday = true;
+        companyHolidayTitle = permDayMap.get(dayOfMonth);
+      }
+
+      const shiftStatusInfo = batchShiftResolver.getDayStatus(targetUserId, curr, timeZone);
+      const isShiftHoliday = shiftStatusInfo.isHoliday;
+      const shiftName = shiftStatusInfo.shift?.name || 'Shift';
 
       const existingRecord = attMap.get(dateStr);
 
       if (existingRecord) {
-        generatedLogs.push(existingRecord);
-      } else if (isSunday || isHoliday || isNonWorkingSaturday) {
-        if (isHoliday) {
-          const holObj = holidays.find(h => new Date(h.date).toISOString().split('T')[0] === dateStr);
+        // If marked ABSENT in DB but falls on a holiday (company, Sunday, or shift), display as HOLIDAY
+        if (existingRecord.status === 'ABSENT' && (isSunday || isCompanyHoliday || isShiftHoliday)) {
           generatedLogs.push({
-            id: `holiday-${dateStr}`,
-            userId: targetUserId,
-            date: new Date(curr),
+            ...existingRecord,
             status: 'HOLIDAY',
-            holidayTitle: holObj?.title || 'Company Holiday',
-            clockIn: null,
-            clockOut: null,
-            workLocation: null,
-            workingHours: null
+            holidayTitle: isCompanyHoliday ? companyHolidayTitle : isSunday ? 'Sunday' : `${shiftName} Holiday`
           });
+        } else {
+          generatedLogs.push(existingRecord);
         }
+      } else if (isSunday || isCompanyHoliday || isShiftHoliday) {
+        generatedLogs.push({
+          id: `holiday-${dateStr}`,
+          userId: targetUserId,
+          date: new Date(curr),
+          status: 'HOLIDAY',
+          holidayTitle: isCompanyHoliday ? companyHolidayTitle : isSunday ? 'Sunday' : `${shiftName} Holiday`,
+          clockIn: null,
+          clockOut: null,
+          workLocation: null,
+          workingHours: null
+        });
       } else {
         const isToday = dateStr === todayZoned.toISOString().split('T')[0];
         if (isToday) {
