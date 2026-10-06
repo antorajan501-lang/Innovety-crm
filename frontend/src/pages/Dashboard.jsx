@@ -16,6 +16,7 @@ import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import { useCompanyScope } from '../context/CompanyScopeContext';
 import LeaveOverviewCard from '../components/dashboard/LeaveOverviewCard';
 import TeamPerformanceRankings from '../components/dashboard/TeamPerformanceRankings';
+import TodayAttendanceCard from '../components/dashboard/TodayAttendanceCard';
 import { useTheme } from '../context/ThemeContext';
 import {
   Users,
@@ -170,6 +171,9 @@ const Dashboard = () => {
   const [recentChatRooms, setRecentChatRooms] = useState([]);
   const [leavesList, setLeavesList] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [todayAttendanceReport, setTodayAttendanceReport] = useState(null);
+  const [todayAttendanceLoading, setTodayAttendanceLoading] = useState(true);
+  const [todayAttendanceError, setTodayAttendanceError] = useState(false);
 
   // Intern Clock-in/out state
   const [time, setTime] = useState(new Date());
@@ -228,6 +232,8 @@ const Dashboard = () => {
   const fetchDashboardData = async (orgId = effectiveOrgId) => {
     try {
       setLoading(true);
+      setTodayAttendanceLoading(true);
+      setTodayAttendanceError(false);
       const targetOrg = isSuperAdmin ? orgId : (effectiveOrgId || user?.organizationId);
       const params = targetOrg ? { organizationId: targetOrg } : {};
 
@@ -248,7 +254,31 @@ const Dashboard = () => {
         promises.push(api.get('/logs', { params: { ...params, limit: 8 } }));
       }
 
-      const results = await Promise.all(promises.map(p => p.catch(() => ({ error: true, data: null }))));
+      const isDailyAttendanceEligible = ['ADMIN', 'SUPER_ADMIN'].includes(user?.role);
+      let dailyAttendancePromise = Promise.resolve();
+      if (isDailyAttendanceEligible) {
+        dailyAttendancePromise = api
+          .get('/reports/attendance/daily', { params: { ...params, date: todayDateStr } })
+          .then((res) => {
+            setTodayAttendanceReport(res.data);
+            setTodayAttendanceError(false);
+          })
+          .catch((err) => {
+            console.error('Failed to fetch today attendance chart data:', err);
+            setTodayAttendanceReport(null);
+            setTodayAttendanceError(true);
+          })
+          .finally(() => {
+            setTodayAttendanceLoading(false);
+          });
+      } else {
+        setTodayAttendanceLoading(false);
+      }
+
+      const results = await Promise.all([
+        ...promises.map(p => p.catch(() => ({ error: true, data: null }))),
+        dailyAttendancePromise
+      ]);
 
       const tasksData = results[0].data || [];
       setAllTasks(tasksData);
@@ -703,7 +733,7 @@ const Dashboard = () => {
       variants={containerVariants}
       initial="hidden"
       animate="visible"
-      className="space-y-6 max-w-7xl mx-auto"
+      className="space-y-6 w-full mx-auto"
     >
       {/* 1. Welcome & Time Header */}
       <motion.div variants={itemVariants} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1188,6 +1218,17 @@ const Dashboard = () => {
               </div>
             </div>
           </div>
+
+          {/* 3. Today's Attendance Donut Chart Card */}
+          {['ADMIN', 'SUPER_ADMIN'].includes(user?.role) && (
+            <TodayAttendanceCard
+              reportData={todayAttendanceReport}
+              loading={todayAttendanceLoading}
+              error={todayAttendanceError}
+              dateStr={todayDateStr}
+              onRetry={() => fetchDashboardData(effectiveOrgId)}
+            />
+          )}
         </div>
 
       </motion.div>

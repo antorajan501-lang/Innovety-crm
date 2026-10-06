@@ -332,12 +332,39 @@ const getDailyAttendanceData = async ({ organizationId, date, teamId, role, empl
   const [yearNum, monthNum, dayNum] = targetDateStr.split('-');
   const formattedDate = `${dayNum}-${monthNum}-${yearNum}`;
 
+  const summary = {
+    present: 0,
+    late: 0,
+    absent: 0,
+    onLeave: 0,
+    wfh: 0,
+    holiday: 0,
+    total: records.length
+  };
+
+  for (const r of records) {
+    if (r.loginStatus === 'Late' || r.attendance === 'Late') {
+      summary.late++;
+    } else if (r.attendance === 'Present' || r.loginStatus === 'On Time') {
+      summary.present++;
+    } else if (r.attendance === 'On Leave' || r.loginStatus === 'On Leave') {
+      summary.onLeave++;
+    } else if (r.attendance === 'WFH' || r.loginStatus === 'WFH') {
+      summary.wfh++;
+    } else if (r.attendance === 'Holiday' || r.loginStatus === 'Holiday') {
+      summary.holiday++;
+    } else {
+      summary.absent++;
+    }
+  }
+
   return {
     companyName,
     reportType: 'Daily',
     date: formattedDate,
     targetDateStr,
     recordsCount: records.length,
+    summary,
     records
   };
 };

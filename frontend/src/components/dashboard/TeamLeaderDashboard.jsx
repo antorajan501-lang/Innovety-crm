@@ -800,7 +800,7 @@ export const TeamLeaderDashboard = () => {
 
   return (
     <motion.div
-      className="space-y-6 text-left font-sans w-full max-w-7xl mx-auto"
+      className="space-y-6 text-left font-sans w-full mx-auto"
       variants={containerVariants}
       initial="hidden"
       animate="visible"

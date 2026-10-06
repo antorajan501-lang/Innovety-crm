@@ -974,7 +974,7 @@ const DashboardLayout = ({ children }) => {
         </header>
 
         {/* Dynamic content rendering with unified ambient background */}
-        <main className="flex-1 flex flex-col min-h-0 min-w-0 overflow-y-auto px-4 sm:px-6 pt-2 pb-4 bg-transparent">
+        <main className="flex-1 flex flex-col min-h-0 min-w-0 overflow-y-auto px-2 sm:px-3 pt-2 pb-4 bg-transparent">
           {children}
         </main>
       </div>
