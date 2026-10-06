@@ -269,9 +269,8 @@ const updateProfile = async (req, res) => {
     const {
       name,
       phone,
+      gender,
       college,
-      department,
-      candidateType,
       degree,
       currentYearSemester,
       graduationYear,
@@ -281,7 +280,9 @@ const updateProfile = async (req, res) => {
       keySkills,
       companyName,
       designation,
-      totalExperience
+      totalExperience,
+      cgpa,
+      noticePeriod
     } = req.body;
 
     let profilePicPath = undefined;
@@ -297,24 +298,53 @@ const updateProfile = async (req, res) => {
       resumePath = `/uploads/resumes/${req.files.resume[0].filename}`;
     }
 
+    // Retrieve existing user to preserve customData and resume details
+    const existingUser = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: { customData: true, resume: true }
+    });
+
+    const existingCustom = (existingUser?.customData && typeof existingUser.customData === 'object')
+      ? { ...existingUser.customData }
+      : {};
+
+    let customDataModified = false;
+    if (cgpa !== undefined) {
+      existingCustom.cgpa = cgpa ? String(cgpa).trim() : null;
+      customDataModified = true;
+    }
+    if (noticePeriod !== undefined) {
+      existingCustom.noticePeriod = noticePeriod ? String(noticePeriod).trim() : null;
+      customDataModified = true;
+    }
+    if (req.files?.resume?.[0]) {
+      const file = req.files.resume[0];
+      existingCustom.resumeFileName = file.filename;
+      existingCustom.resumeOriginalName = file.originalname;
+      existingCustom.resumePath = resumePath;
+      existingCustom.resumeMimeType = file.mimetype;
+      existingCustom.resumeSize = file.size;
+      customDataModified = true;
+    }
+
     const data = {
-      ...(name !== undefined && { name }),
-      ...(phone !== undefined && { phone }),
-      ...(college !== undefined && { college: college || companyName || null }),
-      ...(department !== undefined && { department }),
-      ...(candidateType !== undefined && { candidateType: candidateType || null }),
-      ...(degree !== undefined && { degree: degree || null }),
-      ...(currentYearSemester !== undefined && { currentYearSemester: currentYearSemester || null }),
-      ...(graduationYear !== undefined && { graduationYear: graduationYear || null }),
+      ...(name !== undefined && { name: name ? String(name).trim() : name }),
+      ...(phone !== undefined && { phone: phone ? String(phone).trim() : null }),
+      ...(gender !== undefined && { gender: gender || null }),
+      ...(college !== undefined && { college: college ? String(college).trim() : null }),
+      ...(degree !== undefined && { degree: degree ? String(degree).trim() : null }),
+      ...(currentYearSemester !== undefined && { currentYearSemester: currentYearSemester ? String(currentYearSemester).trim() : null }),
+      ...(graduationYear !== undefined && { graduationYear: graduationYear ? String(graduationYear).trim() : null }),
       ...(internshipRole !== undefined && { internshipRole: internshipRole || null }),
       ...(internshipDuration !== undefined && { internshipDuration: internshipDuration || null }),
       ...(highestQualification !== undefined && { highestQualification: highestQualification || null }),
-      ...(keySkills !== undefined && { keySkills: keySkills || null }),
-      ...(companyName !== undefined && { companyName: companyName || college || null }),
-      ...(designation !== undefined && { designation: designation || null }),
-      ...(totalExperience !== undefined && { totalExperience: totalExperience || null }),
+      ...(keySkills !== undefined && { keySkills: keySkills ? String(keySkills).trim() : null }),
+      ...(companyName !== undefined && { companyName: companyName ? String(companyName).trim() : null }),
+      ...(designation !== undefined && { designation: designation ? String(designation).trim() : null }),
+      ...(totalExperience !== undefined && { totalExperience: totalExperience ? String(totalExperience).trim() : null }),
       ...(profilePicPath && { profilePic: profilePicPath }),
-      ...(resumePath && { resume: resumePath })
+      ...(resumePath && { resume: resumePath }),
+      ...(customDataModified && { customData: existingCustom })
     };
 
     const updatedUser = await prisma.user.update({

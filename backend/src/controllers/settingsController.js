@@ -46,11 +46,21 @@ const getSettings = async (req, res) => {
       }
     }
 
+    let orgSettings = null;
+    if (targetOrgId) {
+      orgSettings = await prisma.organizationSettings.findUnique({ where: { organizationId: targetOrgId } }).catch(() => null);
+    } else {
+      orgSettings = await prisma.organizationSettings.findFirst().catch(() => null);
+    }
+    const brandingObj = (orgSettings?.branding && typeof orgSettings.branding === 'object') ? orgSettings.branding : {};
+
     res.json({
       ...settings,
       clockInTime: settings.clockInTime || settings.internShiftStart || '09:00',
       clockOutTime: settings.clockOutTime || settings.internShiftEnd || '18:00',
-      autoClockOutEnabled: settings.autoClockOutEnabled !== undefined ? settings.autoClockOutEnabled : true
+      autoClockOutEnabled: settings.autoClockOutEnabled !== undefined ? settings.autoClockOutEnabled : true,
+      enableOvertimePay: Boolean(brandingObj.enableOvertimePay),
+      enableHolidayPay: Boolean(brandingObj.enableHolidayPay)
     });
   } catch (error) {
     console.error('Get settings error:', error);
@@ -72,7 +82,9 @@ const updateSettings = async (req, res) => {
       officeLocationName,
       clockInTime,
       clockOutTime,
-      autoClockOutEnabled
+      autoClockOutEnabled,
+      enableOvertimePay,
+      enableHolidayPay
     } = req.body;
 
     const officeLatitude = req.body.officeLatitude !== undefined ? parseFloat(req.body.officeLatitude) : undefined;
@@ -165,17 +177,30 @@ const updateSettings = async (req, res) => {
 
       // Synchronize OrganizationSettings if present for this org
       const existingOrgSet = await prisma.organizationSettings.findUnique({ where: { organizationId: targetOrgId } }).catch(() => null);
+      const currentBranding = (existingOrgSet?.branding && typeof existingOrgSet.branding === 'object') ? existingOrgSet.branding : {};
+      const newBranding = {
+        ...currentBranding,
+        ...(dataPayload.companyName ? { companyName: dataPayload.companyName } : {})
+      };
+      if (enableOvertimePay !== undefined) {
+        newBranding.enableOvertimePay = Boolean(enableOvertimePay);
+      }
+      if (enableHolidayPay !== undefined) {
+        newBranding.enableHolidayPay = Boolean(enableHolidayPay);
+      }
+
       if (existingOrgSet) {
-        const currentBranding = (existingOrgSet.branding && typeof existingOrgSet.branding === 'object') ? existingOrgSet.branding : {};
         await prisma.organizationSettings.update({
           where: { organizationId: targetOrgId },
-          data: {
-            branding: {
-              ...currentBranding,
-              ...(dataPayload.companyName ? { companyName: dataPayload.companyName } : {})
-            }
-          }
+          data: { branding: newBranding }
         }).catch(e => console.warn('Sync OrganizationSettings error:', e));
+      } else {
+        await prisma.organizationSettings.create({
+          data: {
+            organizationId: targetOrgId,
+            branding: newBranding
+          }
+        }).catch(e => console.warn('Create OrganizationSettings error:', e));
       }
 
       // Synchronize Company Default shift record in DB to stay in sync with updated site settings
@@ -200,6 +225,18 @@ const updateSettings = async (req, res) => {
         });
       } else {
         updated = await prisma.systemSettings.create({ data: dataPayload });
+      }
+
+      const firstOrg = await prisma.organizationSettings.findFirst().catch(() => null);
+      if (firstOrg) {
+        const curBranding = (firstOrg.branding && typeof firstOrg.branding === 'object') ? firstOrg.branding : {};
+        const newBranding = { ...curBranding };
+        if (enableOvertimePay !== undefined) newBranding.enableOvertimePay = Boolean(enableOvertimePay);
+        if (enableHolidayPay !== undefined) newBranding.enableHolidayPay = Boolean(enableHolidayPay);
+        await prisma.organizationSettings.update({
+          where: { id: firstOrg.id },
+          data: { branding: newBranding }
+        }).catch(() => null);
       }
     }
 
@@ -243,7 +280,11 @@ const updateSettings = async (req, res) => {
       console.warn('[settingsController] Shift socket broadcast warning:', sockErr.message);
     }
 
-    res.json(updated);
+    res.json({
+      ...updated,
+      enableOvertimePay: enableOvertimePay !== undefined ? Boolean(enableOvertimePay) : false,
+      enableHolidayPay: enableHolidayPay !== undefined ? Boolean(enableHolidayPay) : false
+    });
   } catch (error) {
     console.error('Update settings error:', error);
     res.status(500).json({ message: 'Failed to update system settings.', reason: error.message });

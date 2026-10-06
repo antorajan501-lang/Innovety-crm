@@ -138,7 +138,7 @@ const saveSalaryStructure = async (req, res) => {
 
     const gross = basic + h + d + sa + ta + ma + oa + b;
 
-    const pf = pfDeduction !== undefined ? Number(pfDeduction) : (basic * 0.12);
+    const pf = (pfDeduction !== undefined && pfDeduction !== null && pfDeduction !== '') ? Number(pfDeduction) : 0;
     const esi = esiDeduction !== undefined ? Number(esiDeduction) : 0;
     const pt = profTax !== undefined ? Number(profTax) : 200;
     const tax = incomeTax !== undefined ? Number(incomeTax) : (gross * 0.05);
@@ -309,7 +309,7 @@ const bulkAssignSalaryStructures = async (req, res) => {
 
     const gross = basic + h + d + sa + ta + ma + oa + b;
 
-    const pf = pfDeduction !== undefined ? Number(pfDeduction) : (basic * 0.12);
+    const pf = (pfDeduction !== undefined && pfDeduction !== null && pfDeduction !== '') ? Number(pfDeduction) : 0;
     const esi = esiDeduction !== undefined ? Number(esiDeduction) : 0;
     const pt = profTax !== undefined ? Number(profTax) : 200;
     const tax = incomeTax !== undefined ? Number(incomeTax) : (gross * 0.05);

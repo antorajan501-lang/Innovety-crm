@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import api, { getUploadUrl, getSocket } from '../services/api';
+import api, { getUploadUrl, getSocket, downloadFile } from '../services/api';
 import UserAvatar from '../components/common/UserAvatar';
 import CompanyBadge from '../components/common/CompanyBadge';
 import {
@@ -27,25 +27,42 @@ import {
   Eye,
   EyeOff,
   Calendar,
-  Clock
+  Clock,
+  FileText,
+  UploadCloud,
+  GraduationCap
 } from 'lucide-react';
 
 const Profile = () => {
   const { user, updateProfile, removeProfilePicture, changePassword } = useAuth();
   const location = useLocation();
 
-  // Basic Profile form
+  // Dynamic Profile form matching candidate registration types
   const [profileForm, setProfileForm] = useState({
     name: user?.name || '',
     phone: user?.phone || '',
-    schoolName: user?.schoolName || '',
-    collegeName: user?.collegeName || '',
-    companyName: user?.companyName || ''
+    gender: user?.gender || 'Male',
+    college: user?.college || '',
+    degree: user?.degree || '',
+    graduationYear: user?.graduationYear || '',
+    currentYearSemester: user?.currentYearSemester || '',
+    cgpa: user?.customData?.cgpa || '',
+    keySkills: user?.keySkills || '',
+    companyName: user?.companyName || '',
+    designation: user?.designation || '',
+    totalExperience: user?.totalExperience || '',
+    noticePeriod: user?.customData?.noticePeriod || '',
+    resume: user?.resume || ''
   });
   const [avatar, setAvatar] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [showRemoveModal, setShowRemoveModal] = useState(false);
   const [removingPic, setRemovingPic] = useState(false);
+
+  // Resume upload states
+  const [resumeFile, setResumeFile] = useState(null);
+  const [resumeError, setResumeError] = useState('');
+  const resumeInputRef = React.useRef(null);
 
   // Password change form & visibility toggles
   const [passwordForm, setPasswordForm] = useState({
@@ -151,38 +168,154 @@ const Profile = () => {
     };
   }, [location, user, fetchUserDetails]);
 
+  // Candidate type resolution (read-only for user, matches registration models)
+  const resolvedCandidateType = (() => {
+    const rawType = fullUserDetails?.candidateType || user?.candidateType;
+    if (rawType === 'Graduate') return 'Graduated';
+    if (rawType === 'Experienced Professional') return 'Professional';
+    if (rawType && ['Student', 'Graduated', 'Fresher', 'Professional'].includes(rawType)) {
+      return rawType;
+    }
+    // Fallback: if user already has companyName, assume Professional, else Student
+    if (fullUserDetails?.companyName || user?.companyName) {
+      return 'Professional';
+    }
+    return 'Student';
+  })();
+
   useEffect(() => {
-    if (user) {
+    const data = fullUserDetails || user;
+    if (data) {
       setProfileForm({
-        name: user.name || '',
-        phone: user.phone || '',
-        college: user.college || '',
-        department: user.department || ''
+        name: data.name || '',
+        phone: data.phone || '',
+        gender: data.gender || 'Male',
+        college: data.college || '',
+        degree: data.degree || '',
+        graduationYear: data.graduationYear || '',
+        currentYearSemester: data.currentYearSemester || '',
+        cgpa: data.customData?.cgpa || data.cgpa || '',
+        keySkills: data.keySkills || '',
+        companyName: data.companyName || '',
+        designation: data.designation || '',
+        totalExperience: data.totalExperience || '',
+        noticePeriod: data.customData?.noticePeriod || data.noticePeriod || '',
+        resume: data.resume || ''
       });
     }
-  }, [user]);
+  }, [fullUserDetails, user]);
+
+  const handleResumeSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setResumeError('');
+    const validExts = ['.pdf', '.doc', '.docx'];
+    const fileExt = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+
+    if (!validExts.includes(fileExt)) {
+      setResumeError('Only PDF, DOC, or DOCX files are allowed.');
+      if (resumeInputRef.current) resumeInputRef.current.value = '';
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setResumeError('File size exceeds the 5 MB limit.');
+      if (resumeInputRef.current) resumeInputRef.current.value = '';
+      return;
+    }
+
+    setResumeFile(file);
+  };
+
+  const handleRemoveResumeFile = () => {
+    setResumeFile(null);
+    setResumeError('');
+    if (resumeInputRef.current) resumeInputRef.current.value = '';
+  };
 
   const handleProfileSubmit = async (e) => {
     e.preventDefault();
+    setAlert({ type: '', text: '' });
+    setResumeError('');
+
+    // Phone validation: if provided, must be 10 digits and not start with 0
+    if (profileForm.phone) {
+      const phoneDigits = profileForm.phone.replace(/\D/g, '');
+      if (phoneDigits.length !== 10 || phoneDigits.startsWith('0')) {
+        setAlert({ type: 'error', text: 'Phone number must contain exactly 10 digits and cannot start with 0.' });
+        return;
+      }
+    }
+
+    // Graduation year validation if entered
+    if (profileForm.graduationYear) {
+      const yr = parseInt(profileForm.graduationYear, 10);
+      const currentYear = new Date().getFullYear();
+      if (isNaN(yr) || profileForm.graduationYear.trim().length !== 4 || yr < 1980 || yr > currentYear + 6) {
+        setAlert({ type: 'error', text: `Graduation Year must be a 4-digit year between 1980 and ${currentYear + 6}.` });
+        return;
+      }
+    }
+
+    // Total experience validation if entered
+    if (profileForm.totalExperience) {
+      const exp = parseFloat(profileForm.totalExperience);
+      if (isNaN(exp) || exp < 0) {
+        setAlert({ type: 'error', text: 'Total Experience must be a valid non-negative number (e.g. 2.5).' });
+        return;
+      }
+    }
+
     setLoading(true);
 
     const formData = new FormData();
-    formData.append('name', profileForm.name);
-    formData.append('phone', profileForm.phone);
-    formData.append('college', profileForm.college);
-    formData.append('department', profileForm.department);
+    formData.append('name', (profileForm.name || '').trim());
+    formData.append('phone', (profileForm.phone || '').trim());
+    formData.append('gender', profileForm.gender || 'Male');
+
+    if (resolvedCandidateType === 'Student') {
+      formData.append('college', (profileForm.college || '').trim());
+      formData.append('degree', (profileForm.degree || '').trim());
+      formData.append('graduationYear', (profileForm.graduationYear || '').trim());
+      formData.append('currentYearSemester', (profileForm.currentYearSemester || '').trim());
+    } else if (resolvedCandidateType === 'Graduated') {
+      formData.append('college', (profileForm.college || '').trim());
+      formData.append('degree', (profileForm.degree || '').trim());
+      formData.append('graduationYear', (profileForm.graduationYear || '').trim());
+      formData.append('cgpa', (profileForm.cgpa || '').trim());
+      formData.append('keySkills', (profileForm.keySkills || '').trim());
+    } else if (resolvedCandidateType === 'Fresher') {
+      formData.append('college', (profileForm.college || '').trim());
+      formData.append('degree', (profileForm.degree || '').trim());
+      formData.append('graduationYear', (profileForm.graduationYear || '').trim());
+      formData.append('keySkills', (profileForm.keySkills || '').trim());
+    } else if (resolvedCandidateType === 'Professional') {
+      formData.append('companyName', (profileForm.companyName || '').trim());
+      formData.append('totalExperience', (profileForm.totalExperience || '').trim());
+      formData.append('designation', (profileForm.designation || '').trim());
+      formData.append('noticePeriod', (profileForm.noticePeriod || '').trim());
+      formData.append('keySkills', (profileForm.keySkills || '').trim());
+    }
+
     if (avatar) {
       formData.append('profilePic', avatar);
+    }
+    if (resumeFile) {
+      formData.append('resume', resumeFile);
     }
 
     const res = await updateProfile(formData);
     setLoading(false);
 
     if (res.success) {
-      setAlert({ type: 'success', text: res.message });
+      setAlert({ type: 'success', text: res.message || 'Profile information updated successfully.' });
       setAvatar(null);
+      setResumeFile(null);
+      if (resumeInputRef.current) resumeInputRef.current.value = '';
+      fetchUserDetails();
     } else {
-      setAlert({ type: 'error', text: res.message });
+      setAlert({ type: 'error', text: res.message || 'Failed to update profile.' });
     }
   };
 
@@ -497,57 +630,378 @@ const Profile = () => {
         </div>
 
         {/* Editing Info fields Form */}
+        {/* Personal Information Form Card */}
         <div className="md:col-span-2 rounded-3xl border border-border/60 bg-card p-6 sm:p-8 shadow-md text-left">
-          <h3 className="text-sm font-extrabold uppercase tracking-wide text-foreground mb-5 border-b border-border/40 pb-3 flex items-center gap-2">
-            <User className="h-4 w-4 text-primary" />
-            <span>Personal Information</span>
-          </h3>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5 border-b border-border/40 pb-3">
+            <h3 className="text-sm font-extrabold uppercase tracking-wide text-foreground flex items-center gap-2">
+              <User className="h-4 w-4 text-primary" />
+              <span>Personal Information</span>
+            </h3>
 
-          <form onSubmit={handleProfileSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-muted-foreground">Full Name</label>
-                <input
-                  type="text"
-                  value={profileForm.name}
-                  onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-                  className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                  placeholder="Enter full name"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-muted-foreground">Phone Number</label>
-                <input
-                  type="text"
-                  value={profileForm.phone}
-                  onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
-                  className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                  placeholder="Enter phone number"
-                />
+            {/* Read-Only Candidate Type Badge */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-muted-foreground uppercase tracking-wider">Candidate Type:</span>
+              <span className="text-xs font-black px-3 py-1 rounded-full bg-primary/10 text-primary border border-primary/20 shadow-xs uppercase tracking-wide">
+                {resolvedCandidateType}
+              </span>
+            </div>
+          </div>
+
+          <form onSubmit={handleProfileSubmit} className="space-y-5">
+            {/* 1. Common Editable Fields */}
+            <div>
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-muted-foreground block mb-2">
+                Basic Contact & Identity
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="flex flex-col gap-1.5 sm:col-span-1">
+                  <label className="text-xs font-bold text-muted-foreground">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={profileForm.name}
+                    onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
+                    className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                    placeholder="Enter full name"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5 sm:col-span-1">
+                  <label className="text-xs font-bold text-muted-foreground">Phone Number *</label>
+                  <input
+                    type="text"
+                    required
+                    value={profileForm.phone}
+                    onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
+                    className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                    placeholder="10-digit mobile number"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5 sm:col-span-1">
+                  <label className="text-xs font-bold text-muted-foreground">Gender</label>
+                  <select
+                    value={profileForm.gender || 'Male'}
+                    onChange={(e) => setProfileForm({ ...profileForm, gender: e.target.value })}
+                    className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all cursor-pointer"
+                  >
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-muted-foreground">College / University</label>
-                <input
-                  type="text"
-                  value={profileForm.college}
-                  onChange={(e) => setProfileForm({ ...profileForm, college: e.target.value })}
-                  className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                  placeholder="Enter college name"
-                />
+            {/* 2. Dynamic Type-Specific Fields */}
+            <div className="pt-3 border-t border-border/40">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                  {resolvedCandidateType === 'Professional' ? (
+                    <Briefcase className="h-3.5 w-3.5" />
+                  ) : (
+                    <GraduationCap className="h-3.5 w-3.5" />
+                  )}
+                  <span>{resolvedCandidateType} Credentials</span>
+                </span>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-muted-foreground">Department</label>
-                <input
-                  type="text"
-                  value={profileForm.department}
-                  onChange={(e) => setProfileForm({ ...profileForm, department: e.target.value })}
-                  className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
-                  placeholder="Enter department"
-                />
+
+              {/* STUDENT FIELDS */}
+              {resolvedCandidateType === 'Student' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">College / Institution *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.college}
+                      onChange={(e) => setProfileForm({ ...profileForm, college: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. Stanford / MIT"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Degree / Stream *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.degree}
+                      onChange={(e) => setProfileForm({ ...profileForm, degree: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. B.Tech Computer Science"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Graduation Year *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.graduationYear}
+                      onChange={(e) => setProfileForm({ ...profileForm, graduationYear: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. 2026"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Current Semester / Year *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.currentYearSemester}
+                      onChange={(e) => setProfileForm({ ...profileForm, currentYearSemester: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. 3rd Year / 6th Semester"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* GRADUATED FIELDS */}
+              {resolvedCandidateType === 'Graduated' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">College / Institution *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.college}
+                      onChange={(e) => setProfileForm({ ...profileForm, college: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. Oxford University"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Degree / Stream *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.degree}
+                      onChange={(e) => setProfileForm({ ...profileForm, degree: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. M.Sc Information Technology"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Graduation Year *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.graduationYear}
+                      onChange={(e) => setProfileForm({ ...profileForm, graduationYear: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. 2024"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Percentage / CGPA *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.cgpa}
+                      onChange={(e) => setProfileForm({ ...profileForm, cgpa: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. 8.5 CGPA / 85%"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 sm:col-span-2">
+                    <label className="text-xs font-bold text-muted-foreground">Skills / Technologies *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.keySkills}
+                      onChange={(e) => setProfileForm({ ...profileForm, keySkills: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. React.js, Node.js, Python, PostgreSQL"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* FRESHER FIELDS */}
+              {resolvedCandidateType === 'Fresher' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">College / Institution *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.college}
+                      onChange={(e) => setProfileForm({ ...profileForm, college: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. Anna University"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Degree / Stream *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.degree}
+                      onChange={(e) => setProfileForm({ ...profileForm, degree: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. B.E Computer Science"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Graduation Year *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.graduationYear}
+                      onChange={(e) => setProfileForm({ ...profileForm, graduationYear: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. 2025"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Skills / Technologies *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.keySkills}
+                      onChange={(e) => setProfileForm({ ...profileForm, keySkills: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. JavaScript, React, SQL, HTML/CSS"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* PROFESSIONAL FIELDS (NO COLLEGE / UNIVERSITY) */}
+              {resolvedCandidateType === 'Professional' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Current / Previous Company *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.companyName}
+                      onChange={(e) => setProfileForm({ ...profileForm, companyName: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. Acme Innovations Corp"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Total Experience (Years) *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.totalExperience}
+                      onChange={(e) => setProfileForm({ ...profileForm, totalExperience: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. 3.5"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Current / Last Designation *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.designation}
+                      onChange={(e) => setProfileForm({ ...profileForm, designation: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. Senior Frontend Engineer"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-muted-foreground">Notice Period *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.noticePeriod}
+                      onChange={(e) => setProfileForm({ ...profileForm, noticePeriod: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. 30 Days / Immediate"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 sm:col-span-2">
+                    <label className="text-xs font-bold text-muted-foreground">Skills / Technologies *</label>
+                    <input
+                      type="text"
+                      required
+                      value={profileForm.keySkills}
+                      onChange={(e) => setProfileForm({ ...profileForm, keySkills: e.target.value })}
+                      className="w-full rounded-2xl border border-border/70 bg-background px-4 py-2.5 text-xs font-semibold text-foreground focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+                      placeholder="e.g. React, TypeScript, Node.js, AWS, Docker"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 3. Resume / CV Attachment Section */}
+            <div className="pt-3 border-t border-border/40">
+              <label className="text-xs font-bold text-muted-foreground block mb-2">
+                Resume / Curriculum Vitae (PDF, DOC, DOCX)
+              </label>
+
+              <input
+                ref={resumeInputRef}
+                type="file"
+                accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={handleResumeSelect}
+                className="hidden"
+                id="resume-upload-input"
+              />
+
+              <div className="flex flex-wrap items-center gap-3">
+                <label
+                  htmlFor="resume-upload-input"
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-border/70 bg-muted/30 hover:bg-muted/60 text-foreground text-xs font-bold cursor-pointer transition-all active:scale-95 shadow-xs"
+                >
+                  <UploadCloud className="h-4 w-4 text-primary" />
+                  <span>{resumeFile ? 'Change Selected File' : profileForm.resume ? 'Replace Uploaded Resume' : 'Choose Resume Document'}</span>
+                </label>
+
+                {profileForm.resume && !resumeFile && (
+                  <button
+                    type="button"
+                    onClick={() => downloadFile(profileForm.resume)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary text-xs font-bold transition-all cursor-pointer"
+                    title="Download / View current resume"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    <span>View Stored Resume</span>
+                  </button>
+                )}
+
+                {resumeFile && (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-semibold">
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    <span className="truncate max-w-[200px]">{resumeFile.name}</span>
+                    <span className="text-[10px] text-muted-foreground">({(resumeFile.size / (1024 * 1024)).toFixed(2)} MB)</span>
+                    <button
+                      type="button"
+                      onClick={handleRemoveResumeFile}
+                      className="p-0.5 hover:text-rose-500 transition-colors ml-1 cursor-pointer"
+                      title="Cancel file selection"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
+
+              {resumeError && (
+                <p className="text-[11px] text-rose-500 font-semibold mt-1.5 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                  <span>{resumeError}</span>
+                </p>
+              )}
             </div>
 
             {avatar && (
@@ -558,9 +1012,9 @@ const Profile = () => {
               <button
                 type="submit"
                 disabled={loading}
-                className="rounded-full bg-primary px-6 py-3 text-xs font-bold text-white shadow-md shadow-primary/20 hover:bg-primary-hover active:scale-95 transition-all disabled:opacity-50"
+                className="rounded-full bg-primary px-6 py-3 text-xs font-bold text-white shadow-md shadow-primary/20 hover:bg-primary-hover active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
               >
-                Save Information Changes
+                {loading ? 'Saving...' : 'Save Information Changes'}
               </button>
             </div>
           </form>

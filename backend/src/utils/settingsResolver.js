@@ -39,7 +39,9 @@ const getEffectiveSettings = async (organizationId) => {
     latePolicyEnabled: globalSettings?.latePolicyEnabled !== undefined ? globalSettings.latePolicyEnabled : true,
     warningLateLimit: globalSettings?.warningLateLimit ?? 3,
     deductionPerLate: globalSettings?.deductionPerLate || '1_DAY_SALARY',
-    latePolicyAppliesTo: globalSettings?.latePolicyAppliesTo || 'INTERN,EMPLOYEE,TEAM_LEADER'
+    latePolicyAppliesTo: globalSettings?.latePolicyAppliesTo || 'INTERN,EMPLOYEE,TEAM_LEADER',
+    enableOvertimePay: false,
+    enableHolidayPay: false
   };
 
   if (!organizationId) {
@@ -95,7 +97,9 @@ const getEffectiveSettings = async (organizationId) => {
       : (orgSettings?.latePolicy?.enabled !== undefined ? orgSettings.latePolicy.enabled : defaultGlobal.latePolicyEnabled),
     warningLateLimit: sysSettingsForOrg?.warningLateLimit ?? orgSettings?.latePolicy?.warningLateLimit ?? defaultGlobal.warningLateLimit,
     deductionPerLate: sysSettingsForOrg?.deductionPerLate || orgSettings?.latePolicy?.deductionPerLate || defaultGlobal.deductionPerLate,
-    latePolicyAppliesTo: sysSettingsForOrg?.latePolicyAppliesTo || orgSettings?.latePolicy?.appliesTo || defaultGlobal.latePolicyAppliesTo
+    latePolicyAppliesTo: sysSettingsForOrg?.latePolicyAppliesTo || orgSettings?.latePolicy?.appliesTo || defaultGlobal.latePolicyAppliesTo,
+    enableOvertimePay: Boolean(brandingObj.enableOvertimePay),
+    enableHolidayPay: Boolean(brandingObj.enableHolidayPay)
   };
 };
 

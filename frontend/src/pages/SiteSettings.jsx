@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../services/api';
-import { Save, Shield, Clock, Mail, Building, CheckCircle2, MapPin, Navigation, AlertCircle, ToggleLeft, ToggleRight, Check, Sparkles } from 'lucide-react';
+import { Save, Shield, Clock, Mail, Building, CheckCircle2, MapPin, Navigation, AlertCircle, ToggleLeft, ToggleRight, Check, Sparkles, DollarSign } from 'lucide-react';
 import CompanyScopeSelector from '../components/common/CompanyScopeSelector';
 import { useCompanyScope } from '../context/CompanyScopeContext';
 
@@ -23,7 +23,9 @@ const SiteSettings = () => {
     allowedRadiusMeters: 200,
     officeLocationName: 'Company Headquarters',
     earlyWindowMinutes: 30,
-    gracePeriodMinutes: 15
+    gracePeriodMinutes: 15,
+    enableOvertimePay: false,
+    enableHolidayPay: false
   });
 
   const [loading, setLoading] = useState(false);
@@ -45,7 +47,9 @@ const SiteSettings = () => {
           companyName: selectedCompany?.name || res.data.companyName || 'Company Workspace',
           clockInTime: res.data.clockInTime || res.data.internShiftStart || '09:00',
           clockOutTime: res.data.clockOutTime || res.data.internShiftEnd || '18:00',
-          autoClockOutEnabled: res.data.autoClockOutEnabled !== undefined ? res.data.autoClockOutEnabled : true
+          autoClockOutEnabled: res.data.autoClockOutEnabled !== undefined ? res.data.autoClockOutEnabled : true,
+          enableOvertimePay: Boolean(res.data.enableOvertimePay),
+          enableHolidayPay: Boolean(res.data.enableHolidayPay)
         });
       }
       setLoading(false);
@@ -74,6 +78,20 @@ const SiteSettings = () => {
     setSettings(prev => ({
       ...prev,
       autoClockOutEnabled: !prev.autoClockOutEnabled
+    }));
+  };
+
+  const handleToggleOvertimePay = () => {
+    setSettings(prev => ({
+      ...prev,
+      enableOvertimePay: !prev.enableOvertimePay
+    }));
+  };
+
+  const handleToggleHolidayPay = () => {
+    setSettings(prev => ({
+      ...prev,
+      enableHolidayPay: !prev.enableHolidayPay
     }));
   };
 
@@ -175,7 +193,9 @@ const SiteSettings = () => {
         internShiftStart: settings.clockInTime,
         internShiftEnd: settings.clockOutTime,
         tlShiftStart: settings.clockInTime,
-        tlShiftEnd: settings.clockOutTime
+        tlShiftEnd: settings.clockOutTime,
+        enableOvertimePay: Boolean(settings.enableOvertimePay),
+        enableHolidayPay: Boolean(settings.enableHolidayPay)
       };
 
       const res = await api.put('/settings', payload);
@@ -386,6 +406,64 @@ const SiteSettings = () => {
                 onChange={handleChange}
                 className="bg-muted/20 border border-border rounded-xl p-3 text-xs font-semibold text-foreground"
               />
+            </div>
+          </div>
+
+          {/* Section 4: Payroll Compensation Policies */}
+          <div className="rounded-2xl border border-border/40 bg-card p-6 shadow-premium">
+            <div className="flex items-center gap-2 border-b border-border/30 pb-4 mb-6">
+              <DollarSign className="h-5 w-5 text-primary" />
+              <h2 className="text-sm font-bold uppercase tracking-tight">Payroll Compensation Settings</h2>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Toggle 1: Enable Overtime Pay */}
+              <div className="flex flex-col gap-2 justify-center p-4 rounded-xl border border-border/40 bg-muted/10">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-foreground block">Enable Overtime Pay</label>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Calculate and disburse overtime pay for hours worked beyond assigned shift schedule.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleOvertimePay}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition-all shrink-0 ${
+                      settings.enableOvertimePay
+                        ? 'bg-primary/10 border-primary/40 text-primary'
+                        : 'bg-muted/30 border-border text-muted-foreground'
+                    }`}
+                  >
+                    <span>{settings.enableOvertimePay ? 'ENABLED' : 'DISABLED'}</span>
+                    {settings.enableOvertimePay ? <ToggleRight className="h-5 w-5 text-primary" /> : <ToggleLeft className="h-5 w-5" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Toggle 2: Enable Holiday Pay */}
+              <div className="flex flex-col gap-2 justify-center p-4 rounded-xl border border-border/40 bg-muted/10">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <label className="text-xs font-bold text-foreground block">Enable Holiday Pay</label>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      Calculate and disburse holiday compensation when employees work on scheduled shift or official holidays.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleHolidayPay}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold transition-all shrink-0 ${
+                      settings.enableHolidayPay
+                        ? 'bg-primary/10 border-primary/40 text-primary'
+                        : 'bg-muted/30 border-border text-muted-foreground'
+                    }`}
+                  >
+                    <span>{settings.enableHolidayPay ? 'ENABLED' : 'DISABLED'}</span>
+                    {settings.enableHolidayPay ? <ToggleRight className="h-5 w-5 text-primary" /> : <ToggleLeft className="h-5 w-5" />}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 

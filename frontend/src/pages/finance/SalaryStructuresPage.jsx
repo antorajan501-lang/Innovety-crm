@@ -196,12 +196,14 @@ export default function SalaryStructuresPage() {
     setShowModal(true);
   };
 
-  // Helper to apply Template Values
   const applyTemplateValues = (tmpl, targetUserId = formData.userId) => {
     if (!tmpl) return;
     const basic = Number(tmpl.basicSalary) || 0;
     const gross = basic + Number(tmpl.hra || 0) + Number(tmpl.da || 0) + Number(tmpl.specialAllowance || 0) + Number(tmpl.travelAllowance || 0) + Number(tmpl.medicalAllowance || 0) + Number(tmpl.bonus || 0) + Number(tmpl.otherAllowances || 0);
-    const pf = (basic * Number(tmpl.pfRatePercent || 12)) / 100;
+    const pfRate = (tmpl.pfRatePercent !== undefined && tmpl.pfRatePercent !== null && tmpl.pfRatePercent !== '')
+      ? Number(tmpl.pfRatePercent)
+      : 12;
+    const pf = (basic * pfRate) / 100;
     const esi = (gross * Number(tmpl.esiRatePercent || 0)) / 100;
     const tax = (gross * Number(tmpl.incomeTaxPercent || 0)) / 100;
 

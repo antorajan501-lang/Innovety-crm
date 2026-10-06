@@ -674,21 +674,34 @@ const editUser = async (req, res) => {
       });
     }
 
+    let customDataModified = false;
+    const existingCustom = (typeof existingUser.customData === 'object' && existingUser.customData) ? { ...existingUser.customData } : {};
+
+    if (req.body.cgpa !== undefined) {
+      existingCustom.cgpa = req.body.cgpa ? String(req.body.cgpa).trim() : null;
+      customDataModified = true;
+    }
+    if (req.body.noticePeriod !== undefined) {
+      existingCustom.noticePeriod = req.body.noticePeriod ? String(req.body.noticePeriod).trim() : null;
+      customDataModified = true;
+    }
+
     if (req.files?.resume?.[0]) {
       const file = req.files.resume[0];
       const resumePath = `/uploads/resumes/${file.filename}`;
       data.resume = resumePath;
-      const existingCustom = (typeof existingUser.customData === 'object' && existingUser.customData) ? existingUser.customData : {};
-      data.customData = {
-        ...existingCustom,
-        resumeFileName: file.filename,
-        resumeOriginalName: file.originalname,
-        resumePath: resumePath,
-        resumeMimeType: file.mimetype,
-        resumeSize: file.size
-      };
+      existingCustom.resumeFileName = file.filename;
+      existingCustom.resumeOriginalName = file.originalname;
+      existingCustom.resumePath = resumePath;
+      existingCustom.resumeMimeType = file.mimetype;
+      existingCustom.resumeSize = file.size;
+      customDataModified = true;
     } else if (req.body.resume !== undefined) {
       data.resume = req.body.resume || null;
+    }
+
+    if (customDataModified) {
+      data.customData = existingCustom;
     }
 
     if (req.files?.profilePic?.[0]) {

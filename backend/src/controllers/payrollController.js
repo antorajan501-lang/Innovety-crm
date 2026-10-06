@@ -160,9 +160,6 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
       holidayDaysWorked: 0,
       holidayPay: 0,
       lateDeduction: 0,
-      totalLates: 0,
-      deductibleLates: 0,
-      warningLimit: 3,
       qrCodeHash: null
     };
   }
@@ -256,54 +253,63 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
   const wfhDays = attWfhDays + leaveWfhDays;
   const unpaidAbsentDays = explicitAbsentDays + (halfDays * 0.5) + unpaidLeaveDays;
 
-  // 4. Overtime & Holiday Work Calculations (Safeguard 2: Attendance first, Shift second, Settings fallback)
+  // 4. Overtime & Holiday Work Calculations (Controlled by Site Settings toggles)
+  const isOvertimePayEnabled = Boolean(effectiveSettings.enableOvertimePay);
+  const isHolidayPayEnabled = Boolean(effectiveSettings.enableHolidayPay);
+
   let overtimeHours = 0;
   let holidayDaysWorked = 0;
 
-  attendances.forEach(att => {
-    const attDateStr = new Date(att.date).toISOString().split('T')[0];
-    const attDate = new Date(att.date);
-    const attDayNum = attDate.getUTCDate();
-    const attShiftStatusInfo = batchShiftResolver.getDayStatus(user.id, attDate);
-    const isHolidayOrOff = holidayDatesStr.has(attDateStr) || permDaySet.has(attDayNum) || attShiftStatusInfo.isHoliday;
+  if (isOvertimePayEnabled || isHolidayPayEnabled) {
+    attendances.forEach(att => {
+      const attDateStr = new Date(att.date).toISOString().split('T')[0];
+      const attDate = new Date(att.date);
+      const attDayNum = attDate.getUTCDate();
+      const attShiftStatusInfo = batchShiftResolver.getDayStatus(user.id, attDate);
+      const isHolidayOrOff = holidayDatesStr.has(attDateStr) || permDaySet.has(attDayNum) || attShiftStatusInfo.isHoliday;
 
-    // Calculate overtime using Safeguard 2 hierarchy
-    if (att.clockIn && att.clockOut) {
-      // Priority 1: Attendance record snapshot shiftEndAt
-      if (att.shiftEndAt && new Date(att.clockOut) > new Date(att.shiftEndAt)) {
-        const otDiff = (new Date(att.clockOut).getTime() - new Date(att.shiftEndAt).getTime()) / (1000 * 60 * 60);
-        if (otDiff > 0) overtimeHours += otDiff;
-      } else if (att.scheduledStartTime && att.scheduledEndTime && att.workingHours) {
-        const [sH, sM] = att.scheduledStartTime.split(':').map(Number);
-        const [eH, eM] = att.scheduledEndTime.split(':').map(Number);
-        let schedMins = (eH * 60 + eM) - (sH * 60 + sM);
-        if (schedMins < 0) schedMins += 1440;
-        const schedHrs = schedMins / 60;
-        if (att.workingHours > schedHrs) {
-          overtimeHours += (att.workingHours - schedHrs);
+      // Calculate overtime using Safeguard 2 hierarchy if enabled
+      if (isOvertimePayEnabled) {
+        if (att.clockIn && att.clockOut) {
+          // Priority 1: Attendance record snapshot shiftEndAt
+          if (att.shiftEndAt && new Date(att.clockOut) > new Date(att.shiftEndAt)) {
+            const otDiff = (new Date(att.clockOut).getTime() - new Date(att.shiftEndAt).getTime()) / (1000 * 60 * 60);
+            if (otDiff > 0) overtimeHours += otDiff;
+          } else if (att.scheduledStartTime && att.scheduledEndTime && att.workingHours) {
+            const [sH, sM] = att.scheduledStartTime.split(':').map(Number);
+            const [eH, eM] = att.scheduledEndTime.split(':').map(Number);
+            let schedMins = (eH * 60 + eM) - (sH * 60 + sM);
+            if (schedMins < 0) schedMins += 1440;
+            const schedHrs = schedMins / 60;
+            if (att.workingHours > schedHrs) {
+              overtimeHours += (att.workingHours - schedHrs);
+            }
+          } else if (assignedShift?.startTime && assignedShift?.endTime && att.workingHours) {
+            // Priority 2: Assigned shift fallback
+            const [sH, sM] = assignedShift.startTime.split(':').map(Number);
+            const [eH, eM] = assignedShift.endTime.split(':').map(Number);
+            let schedMins = (eH * 60 + eM) - (sH * 60 + sM);
+            if (schedMins < 0) schedMins += 1440;
+            const schedHrs = schedMins / 60;
+            if (att.workingHours > schedHrs) {
+              overtimeHours += (att.workingHours - schedHrs);
+            }
+          } else if (att.workingHours && att.workingHours > 8) {
+            // Priority 3: Standard company 8h fallback
+            overtimeHours += (att.workingHours - 8);
+          }
+        } else if (att.workingHours && att.workingHours > 8) {
+          overtimeHours += (att.workingHours - 8);
         }
-      } else if (assignedShift?.startTime && assignedShift?.endTime && att.workingHours) {
-        // Priority 2: Assigned shift fallback
-        const [sH, sM] = assignedShift.startTime.split(':').map(Number);
-        const [eH, eM] = assignedShift.endTime.split(':').map(Number);
-        let schedMins = (eH * 60 + eM) - (sH * 60 + sM);
-        if (schedMins < 0) schedMins += 1440;
-        const schedHrs = schedMins / 60;
-        if (att.workingHours > schedHrs) {
-          overtimeHours += (att.workingHours - schedHrs);
-        }
-      } else if (att.workingHours && att.workingHours > 8) {
-        // Priority 3: Standard company 8h fallback
-        overtimeHours += (att.workingHours - 8);
       }
-    } else if (att.workingHours && att.workingHours > 8) {
-      overtimeHours += (att.workingHours - 8);
-    }
 
-    if (isHolidayOrOff && ['PRESENT', 'LATE', 'WORK_FROM_HOME'].includes(att.status)) {
-      holidayDaysWorked += 1;
-    }
-  });
+      if (isHolidayPayEnabled) {
+        if (isHolidayOrOff && ['PRESENT', 'LATE', 'WORK_FROM_HOME'].includes(att.status)) {
+          holidayDaysWorked += 1;
+        }
+      }
+    });
+  }
 
   const dailyPay = workingDays > 0 ? (structure.grossSalary / workingDays) : 0;
   const leaveDeduction = Math.round(unpaidAbsentDays * dailyPay);
@@ -335,8 +341,8 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
     }
   }
 
-  const overtimePay = Math.round(overtimeHours * (settings.overtimeHourlyRate || 150));
-  const holidayPay = Math.round(holidayDaysWorked * dailyPay * (settings.holidayPayMultiplier || 2.0));
+  const overtimePay = isOvertimePayEnabled ? Math.round(overtimeHours * (settings.overtimeHourlyRate || 150)) : 0;
+  const holidayPay = isHolidayPayEnabled ? Math.round(holidayDaysWorked * dailyPay * (settings.holidayPayMultiplier || 2.0)) : 0;
 
   const totalEarnings = structure.grossSalary + overtimePay + holidayPay;
   const totalDeductions = structure.pfDeduction + structure.esiDeduction + structure.profTax + structure.incomeTax + structure.otherDeductions + leaveDeduction + lateDeduction;
@@ -383,9 +389,6 @@ const calculateUserPayroll = async (user, month, year, inputSettings) => {
     holidayDaysWorked,
     holidayPay,
     lateDeduction,
-    totalLates: lateCount,
-    deductibleLates,
-    warningLimit: warningLateLimit,
     qrCodeHash
   };
 };
@@ -487,10 +490,11 @@ const processPayrollBatch = async (req, res) => {
 
     // Upsert payslip items
     for (const psData of payslipsData) {
+      const { totalLates, deductibleLates, warningLimit, ...payload } = psData;
       await prisma.payslip.upsert({
-        where: { batchId_userId: { batchId: batch.id, userId: psData.userId } },
-        update: { ...psData, organizationId: targetOrgId || null, status: 'PREVIEW' },
-        create: { ...psData, batchId: batch.id, organizationId: targetOrgId || null, status: 'PREVIEW' }
+        where: { batchId_userId: { batchId: batch.id, userId: payload.userId } },
+        update: { ...payload, organizationId: targetOrgId || null, status: 'PREVIEW' },
+        create: { ...payload, batchId: batch.id, organizationId: targetOrgId || null, status: 'PREVIEW' }
       });
     }
 
